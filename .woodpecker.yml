@@ -1,0 +1,30 @@
+include:
+  - .env
+
+steps:
+  - name: backend lint
+    image: python:3.12-slim
+    commands:
+      - pip install -i https://package-mirror.liara.ir/repository/pypi/simple ruff mypy > /dev/null
+      - pip install -i https://package-mirror.liara.ir/repository/pypi/simple -r backend/requirements.txt > /dev/null
+      - ruff check backend/app backend/tests scripts
+      - mypy backend/app
+
+  - name: backend tests
+    image: python:3.12-slim
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////drone/src/data/ci-test.db
+      SECRET_KEY: ci-secret-key
+      UPLOAD_DIR: /drone/src/data/ci-uploads
+    commands:
+      - pip install -i https://package-mirror.liara.ir/repository/pypi/simple -r backend/requirements.txt -r backend/requirements-dev.txt > /dev/null
+      - pytest backend/tests -q
+
+  - name: frontend lint & build
+    image: node:22-alpine
+    environment:
+      npm_config_registry: https://package-mirror.liara.ir/repository/npm/
+    commands:
+      - cd frontend && npm ci --fetch-timeout=120000 || npm install --fetch-timeout=120000
+      - npm run lint
+      - npm run build

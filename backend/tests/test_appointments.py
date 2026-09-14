@@ -1,0 +1,349 @@
+"""Appointments, transactions, attachments: CRUD, role gating, file safety."""
+
+import io
+
+from tests.conftest import auth, login, make_user
+
+
+async def _mk_patient(client, token, nid="1234567890") -> int:
+    r = await client.post(
+        "/api/v1/patients",
+        json={
+            "national_id": nid,
+            "first_name": "Test",
+            "last_name": "Testi",
+            "year_of_birth": "1990",
+            "gender": 0,
+        },
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+    return r.json()["id"]
+
+
+async def _mk_appt(client, token, patient_id, at="2026-09-10T10:30:00+03:30") -> dict:
+    r = await client.post(
+        f"/api/v1/patients/{patient_id}/appointments",
+        json={"scheduled_at": at, "cm": "chief", "hx": "history", "rx": "plan"},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+async def test_appointment_flow(client):
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    appt = await _mk_appt(client, token, pid)
+
+    assert appt["patient_first_name"] == "Test"
+    assert appt["cm"] == "chief"
+
+    # date-range listing in APP_TIMEZONE
+    r = await client.get(
+        "/api/v1/appointments",
+        params={"date_from": "2026-09-10", "date_to": "2026-09-10"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+
+    # range outside
+    r = await client.get(
+        "/api/v1/appointments",
+        params={"date_from": "2026-01-01", "date_to": "2026-01-02"},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 0
+
+    # reversed range → 422 with clear message (legacy silent reset fixed)
+    r = await client.get(
+        "/api/v1/appointments",
+        params={"date_from": "2026-09-11", "date_to": "2026-09-10"},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+
+    # update notes (doctor+)
+    r = await client.patch(
+        f"/api/v1/appointments/{appt['id']}",
+        json={"rx": "updated plan"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["rx"] == "updated plan"
+
+    # patient filter
+    r = await client.get(
+        "/api/v1/appointments", params={"patient_id": pid}, headers=auth(token)
+    )
+    assert r.json()["total"] == 1
+
+
+async def test_transactions(client):
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    appt = await _mk_appt(client, token, pid)
+
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/transactions",
+        json={"description": "visit", "amount": 500000, "pos": True},
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+    t1 = r.json()
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/transactions",
+        json={"description": "lab", "amount": 200000, "pos": False},
+        headers=auth(token),
+    )
+    t2 = r.json()
+
+    r = await client.get(
+        f"/api/v1/appointments/{appt['id']}/transactions", headers=auth(token)
+    )
+    assert r.json()["total"] == 2
+
+    # negative amount rejected
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/transactions",
+        json={"description": "bad", "amount": -1},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+
+    # update & delete
+    r = await client.patch(
+        f"/api/v1/appointments/transactions/{t1['id']}",
+        json={"amount": 600000},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["amount"] == 600000
+    r = await client.delete(
+        f"/api/v1/appointments/transactions/{t2['id']}", headers=auth(token)
+    )
+    assert r.status_code == 204
+    r = await client.get(
+        f"/api/v1/appointments/{appt['id']}/transactions", headers=auth(token)
+    )
+    assert r.json()["total"] == 1
+
+
+async def test_attachments_upload_download_edit(client):
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    appt = await _mk_appt(client, token, pid)
+
+    # multipart upload — description/notes arrive as FORM fields (antd Upload "data"),
+    # not query params; they must be persisted on create, not silently dropped
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        data={"description": "lab report", "notes": "pre-op"},
+        files={"file": ("report.pdf", io.BytesIO(b"%PDF-1.4 test bytes"), "application/pdf")},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    att = r.json()
+    assert att["original_filename"] == "report.pdf"
+    assert att["size_bytes"] == 19
+    assert att["missing_file"] is False
+    assert att["description"] == "lab report"
+    assert att["notes"] == "pre-op"
+
+    # Edit description/notes — legacy system silently dropped these edits
+    r = await client.patch(
+        f"/api/v1/appointments/files/{att['id']}",
+        json={"description": "lab report v2", "notes": "updated"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["description"] == "lab report v2"
+    assert r.json()["notes"] == "updated"
+
+    # list carries notes (shown in the UI as a collapsible box)
+    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    assert r.json()[0]["description"] == "lab report v2"
+    assert r.json()[0]["notes"] == "updated"
+
+    # download with correct content type
+    r = await client.get(
+        f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token)
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/pdf")
+    assert r.content == b"%PDF-1.4 test bytes"
+
+    # delete removes row + physical file
+
+    r = await client.delete(
+        f"/api/v1/appointments/files/{att['id']}", headers=auth(token)
+    )
+    assert r.status_code == 204
+    r = await client.get(
+        f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token)
+    )
+    assert r.status_code == 404
+
+
+async def test_note_only_file(client):
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    appt = await _mk_appt(client, token, pid)
+
+    # create name+note without a physical file
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files/note",
+        json={"description": "شرح در جلسه", "notes": "بیمار گزارش را نفرستاد"},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    att = r.json()
+    assert att["description"] == "شرح در جلسه"
+    assert att["notes"] == "بیمار گزارش را نفرستاد"
+    assert att["original_filename"] is None
+    assert att["missing_file"] is False
+
+    # listed among the appointment's files
+    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()[0]["id"] == att["id"]
+    assert r.json()[0]["original_filename"] is None
+
+    # download → 404 (note-only), not a crash
+    r = await client.get(
+        f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token)
+    )
+    assert r.status_code == 404
+
+    # soft delete → trash restore round-trip works with no physical file
+    r = await client.delete(f"/api/v1/appointments/files/{att['id']}", headers=auth(token))
+    assert r.status_code == 204
+    r = await client.get("/api/v1/admin/trash/attachments", headers=auth(token))
+    assert r.json()["total"] == 1
+    r = await client.post(
+        f"/api/v1/admin/trash/attachments/{att['id']}/restore", headers=auth(token)
+    )
+    assert r.status_code == 200
+    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    assert r.json()[0]["id"] == att["id"]
+
+    # receptionist cannot create (doctor+)
+    await make_user(client, token, "recep1", role="receptionist")
+    recep, _ = await login(client, "recep1", "passw0rd123")
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files/note",
+        json={"description": "x"},
+        headers=auth(recep),
+    )
+    assert r.status_code == 403
+
+
+async def test_receptionist_role_gating(client):
+    admin_token, _ = await login(client)
+    await make_user(client, admin_token, "recep1", role="receptionist")
+    await make_user(client, admin_token, "drhouse", role="doctor")
+    recep, _ = await login(client, "recep1", "passw0rd123")
+    doctor, _ = await login(client, "drhouse", "passw0rd123")
+
+    pid = await _mk_patient(client, admin_token)
+    appt = await _mk_appt(client, admin_token, pid)
+
+    # receptionist sees appointment but medical fields (cm/hx/px/rx) blanked
+    r = await client.get(f"/api/v1/appointments/{appt['id']}", headers=auth(recep))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cm"] == ""
+    assert body["rx"] == ""
+    assert body["hx"] == ""
+    assert body["px"] == ""
+
+    # receptionist cannot edit appointment (doctor+)
+    r = await client.patch(
+        f"/api/v1/appointments/{appt['id']}",
+        json={"notes": "hack"},
+        headers=auth(recep),
+    )
+    assert r.status_code == 403
+
+    # receptionist cannot upload files
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        files={"file": ("x.txt", io.BytesIO(b"nope"), "text/plain")},
+        headers=auth(recep),
+    )
+    assert r.status_code == 403
+
+    # doctor can edit notes
+    r = await client.patch(
+        f"/api/v1/appointments/{appt['id']}",
+        json={"notes": "doc note"},
+        headers=auth(doctor),
+    )
+    assert r.status_code == 200
+    # receptionist can see the (non-medical) notes field but never cm/hx/px/rx
+    r = await client.get(f"/api/v1/appointments/{appt['id']}", headers=auth(recep))
+    assert r.json()["notes"] == "doc note"
+    assert r.json()["cm"] == ""
+
+    # receptionist CAN manage transactions
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/transactions",
+        json={"description": "visit", "amount": 100},
+        headers=auth(recep),
+    )
+    assert r.status_code == 201
+
+    # but not stats (doctor+)
+    r = await client.get(
+        "/api/v1/stats/summary",
+        params={"date_from": "2026-01-01", "date_to": "2026-12-31"},
+        headers=auth(recep),
+    )
+    assert r.status_code == 403
+
+
+async def test_stats_summary(client):
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    await _mk_appt(client, token, pid, at="2026-09-10T09:00:00+03:30")
+    appt2 = await _mk_appt(client, token, pid, at="2026-09-11T09:00:00+03:30")
+
+    for appt, amount, pos in ((appt2, 500000, True), (appt2, 100000, False)):
+        r = await client.post(
+            f"/api/v1/appointments/{appt['id']}/transactions",
+            json={"description": "visit", "amount": amount, "pos": pos},
+            headers=auth(token),
+        )
+        assert r.status_code == 201
+
+    r = await client.get(
+        "/api/v1/stats/summary",
+        params={"date_from": "2026-09-10", "date_to": "2026-09-11"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["num_appointments"] == 2
+    assert body["total_amount"] == 600000
+    assert body["pos_amount"] == 500000
+    assert body["cash_amount"] == 100000
+    assert body["num_transactions"] == 2
+
+    # CSV export
+    r = await client.get(
+        "/api/v1/stats/summary.csv",
+        params={"date_from": "2026-09-10", "date_to": "2026-09-11"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert "visit,1,500000" in r.text or "visit" in r.text
+
+    # reversed dates → 422
+    r = await client.get(
+        "/api/v1/stats/summary",
+        params={"date_from": "2026-09-11", "date_to": "2026-09-10"},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
