@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_at_least
-from app.core.enums import UserRole
+from app.api.deps import get_current_user, require_perm
 from app.core.errors import ConflictError
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -40,7 +39,7 @@ def _make_router(prefix: str, model) -> APIRouter:
         body: NamedCreateIn,
         request: Request,
         db: AsyncSession = Depends(get_db),
-        user: User = Depends(require_at_least(UserRole.DOCTOR)),
+        user: User = Depends(require_perm("taxonomies.write")),
     ):
         name = body.name.strip()
         if not name:
@@ -72,7 +71,7 @@ def _make_router(prefix: str, model) -> APIRouter:
         body: NamedRenameIn,
         request: Request,
         db: AsyncSession = Depends(get_db),
-        user: User = Depends(require_at_least(UserRole.DOCTOR)),
+        user: User = Depends(require_perm("taxonomies.write")),
     ):
         obj = await db.scalar(
             select(model).where(model.id == obj_id, model.deleted_at.is_(None))
@@ -111,7 +110,7 @@ def _make_router(prefix: str, model) -> APIRouter:
         obj_id: int,
         request: Request,
         db: AsyncSession = Depends(get_db),
-        user: User = Depends(require_at_least(UserRole.DOCTOR)),
+        user: User = Depends(require_perm("taxonomies.write")),
     ):
         """Soft delete: hidden from lists/patient filters; M2M links kept so
         restoring is lossless."""

@@ -9,9 +9,30 @@ export interface User {
   id: number
   username: string
   full_name: string
-  role: 'admin' | 'doctor' | 'receptionist'
+  role_id: number
+  role_name: string
+  permissions: string[]
   is_active: boolean
   created_at: string
+}
+
+export interface Role {
+  id: number
+  name: string
+  is_system: boolean
+  permissions: string[]
+  user_count: number
+  created_at: string
+}
+
+export interface PermissionItem {
+  key: string
+  label: string
+}
+
+export interface PermissionGroup {
+  group: string
+  items: PermissionItem[]
 }
 
 export interface Page<T> {

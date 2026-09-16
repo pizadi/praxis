@@ -130,16 +130,16 @@ function TaxonomyPanel({
 }
 
 export default function TaxonomiesPage() {
-  const { isDoctor } = useUser()
+  const { hasPerm } = useUser()
   return (
     <div>
       <Typography.Title level={3}>برچسب‌ها و تشخیص‌ها</Typography.Title>
       <Row gutter={16}>
         <Col span={12}>
-          <TaxonomyPanel kind="tags" title="برچسب‌ها" color="blue" canEdit={isDoctor} />
+          <TaxonomyPanel kind="tags" title="برچسب‌ها" color="blue" canEdit={hasPerm('taxonomies.write')} />
         </Col>
         <Col span={12}>
-          <TaxonomyPanel kind="diagnoses" title="تشخیص‌ها" color="red" canEdit={isDoctor} />
+          <TaxonomyPanel kind="diagnoses" title="تشخیص‌ها" color="red" canEdit={hasPerm('taxonomies.write')} />
         </Col>
       </Row>
     </div>

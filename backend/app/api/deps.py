@@ -10,22 +10,15 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.enums import UserRole
 from app.core.security import decode_token
 from app.core.tokens import token_cache, utc_now
 from app.db.session import get_db
 from app.models import RefreshToken, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
-
-# Static role hierarchy for "at least" checks
-_ROLE_ORDER = {
-    UserRole.RECEPTIONIST: 0,
-    UserRole.DOCTOR: 1,
-    UserRole.ADMIN: 2,
-}
 
 
 async def get_current_user(
@@ -62,17 +55,18 @@ async def get_current_user(
         user_id = int(payload["sub"])
     except (KeyError, ValueError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
-    user = await db.scalar(select(User).where(User.id == user_id))
+    stmt = select(User).where(User.id == user_id).options(selectinload(User.role))
+    user = await db.scalar(stmt)
     if user is None or not user.is_active or user.deleted_at is not None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User inactive or gone")
     return user
 
 
-def require_role(*allowed: UserRole):
-    """Dependency factory: allow any of the given roles (exact match)."""
+def require_perm(*perms: str):
+    """Dependency factory: allow if the user has ANY of the given permissions."""
 
     async def checker(user: User = Depends(get_current_user)) -> User:
-        if user.role not in allowed:
+        if not user.has_perm(*perms):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",
@@ -82,26 +76,7 @@ def require_role(*allowed: UserRole):
     return checker
 
 
-def require_at_least(minimum: UserRole):
-    """Dependency factory: role hierarchy check (admin > doctor > receptionist)."""
-
-    async def checker(user: User = Depends(get_current_user)) -> User:
-        if _ROLE_ORDER[user.role] < _ROLE_ORDER[minimum]:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions",
-            )
-        return user
-
-    return checker
-
-
-require_admin = require_role(UserRole.ADMIN)
-require_doctor = require_role(UserRole.DOCTOR, UserRole.ADMIN)
-
-
-def can_view_medical_notes(user: User) -> bool:
-    return user.role in (UserRole.DOCTOR, UserRole.ADMIN)
+require_admin = require_perm("users.manage")
 
 
 # --- File storage helpers -----------------------------------------------------

@@ -1,15 +1,17 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_admin
 from app.api.pagination import Page, paginate
-from app.core.enums import UserRole
 from app.core.errors import ConflictError
 from app.core.security import hash_password
 from app.core.tokens import utc_now
 from app.db.session import get_db
-from app.models import User
+from app.models import Role, User
 from app.schemas import UserCreateIn, UserOut, UserUpdateIn
 from app.services import audit
 
@@ -17,7 +19,11 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 async def _get_or_404(db: AsyncSession, user_id: int) -> User:
-    stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))
+    stmt = (
+        select(User)
+        .where(User.id == user_id, User.deleted_at.is_(None))
+        .options(selectinload(User.role))
+    )
     user = await db.scalar(stmt)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -34,6 +40,7 @@ async def list_users(
     stmt = (
         select(User)
         .where(User.deleted_at.is_(None))
+        .options(selectinload(User.role))
         .order_by(User.id)
     )
     items, total = await paginate(db, stmt, limit=limit, offset=offset)
@@ -59,15 +66,18 @@ async def create_user(
     )
     if exists:
         raise ConflictError("Username already taken", code="username_taken")
+    role = await db.get(Role, body.role_id)
+    if role is None or role.deleted_at is not None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Role not found")
     user = User(
         username=body.username,
         full_name=body.full_name,
         password_hash=hash_password(body.password),
-        role=body.role,
+        role_id=body.role_id,
     )
     db.add(user)
     await db.commit()
-    await db.refresh(user)
+    await db.refresh(user, ["role"])
     await audit.log_action(
         db,
         user=actor,
@@ -75,7 +85,7 @@ async def create_user(
         action=audit.CREATE,
         entity_type="user",
         entity_id=user.id,
-        summary=f"{user.username} ({user.role.value})",
+        summary=f"{user.username} ({user.role_name})",
     )
     return user
 
@@ -98,22 +108,29 @@ async def update_user(
     actor: User = Depends(require_admin),
 ):
     user = await _get_or_404(db, user_id)
-    before = {
-        f: getattr(user, f)
-        for f in ("full_name", "role", "is_active")
-        if getattr(body, f) is not None
-    }
+    before: dict[str, Any] = {}
+    if body.full_name is not None:
+        before["full_name"] = user.full_name
+    if body.role_id is not None:
+        before["role_name"] = user.role_name
+    if body.is_active is not None:
+        before["is_active"] = user.is_active
     if body.full_name is not None:
         user.full_name = body.full_name
-    if body.role is not None:
-        user.role = body.role
+    if body.role_id is not None and body.role_id != user.role_id:
+        role = await db.get(Role, body.role_id)
+        if role is None or role.deleted_at is not None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Role not found")
+        user.role_id = body.role_id
     if body.is_active is not None:
         user.is_active = body.is_active
     if body.password is not None:
         user.password_hash = hash_password(body.password)
     await db.commit()
-    await db.refresh(user)
-    changed = audit.diff_details(before, {f: getattr(user, f) for f in before}, list(before))
+    await db.refresh(user, ["role"])
+    after_fields = {f: getattr(user, f) for f in before}
+    after_fields["role_name"] = user.role_name
+    changed = audit.diff_details(before, after_fields, list(after_fields))
     if body.password is not None:
         changed["password"] = {"old": "•", "new": "•"}
     await audit.log_action(
@@ -141,20 +158,21 @@ async def delete_user(
     user = await _get_or_404(db, user_id)
     if user.id == current.id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot delete yourself")
-    # refuse deleting the last live admin
-    admins = (
-        await db.scalars(
-            select(User).where(
-                User.role == UserRole.ADMIN,
-                User.is_active.is_(True),
-                User.deleted_at.is_(None),
+    # refuse deleting the last live admin (the system 'admin' role)
+    if user.role.is_system and user.role.name == "admin":
+        admins = (
+            await db.scalars(
+                select(User).where(
+                    User.role_id == user.role_id,
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                )
             )
-        )
-    ).all()
-    if user.role == UserRole.ADMIN and len(admins) <= 1:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot delete the last admin"
-        )
+        ).all()
+        if len(admins) <= 1:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot delete the last admin"
+            )
     from app.api.deps import revoke_user_tokens
 
     user.deleted_at = utc_now()
@@ -168,6 +186,6 @@ async def delete_user(
         action=audit.DELETE,
         entity_type="user",
         entity_id=user.id,
-        summary=f"{user.username} ({user.role.value})",
+        summary=f"{user.username} ({user.role_name})",
     )
     return None

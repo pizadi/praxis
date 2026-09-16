@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Button, Typography, theme as antdTheme } from 'antd'
 import { LogoutOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 
-import { clearAuth, type StoredUser } from '../api/client'
+import { clearAuth, hasPerm, type StoredUser } from '../api/client'
 import { useTheme } from './ThemeContext'
 
 const { Header, Content, Sider } = Layout
@@ -11,15 +11,18 @@ const { Header, Content, Sider } = Layout
 const ITEMS = [
   { key: '/', label: 'داشبورد' },
   { key: '/schedule', label: 'برنامه روزانه' },
-  { key: '/payments', label: 'پرداخت‌های امروز' },
+  { key: '/payments', label: 'پرداخت‌های امروز', perm: 'payments.view' },
   { key: '/patients', label: 'بیماران' },
   { key: '/taxonomies', label: 'برچسب‌ها و تشخیص‌ها' },
-  { key: '/stats', label: 'آمار' },
+  { key: '/stats', label: 'آمار', perm: 'stats.view' },
 ]
 
-export const UserCtx = createContext<{ user: StoredUser; isDoctor: boolean }>({
-  user: { id: 0, username: '', full_name: '', role: 'receptionist' },
-  isDoctor: false,
+export const UserCtx = createContext<{
+  user: StoredUser
+  hasPerm: (...perms: string[]) => boolean
+}>({
+  user: { id: 0, username: '', full_name: '', role_id: 0, role_name: '', permissions: [] },
+  hasPerm: () => false,
 })
 
 export function useUser() {
@@ -36,8 +39,7 @@ export default function AppLayout({ user, onLogout }: Props) {
   const location = useLocation()
   const { isDark, toggle } = useTheme()
   const { token } = antdTheme.useToken()
-  const isDoctor = user.role === 'doctor' || user.role === 'admin'
-  const isAdmin = user.role === 'admin'
+  const can = (...perms: string[]) => hasPerm(user, ...perms)
 
   const selected =
     ITEMS.map((i) => i.key)
@@ -51,7 +53,7 @@ export default function AppLayout({ user, onLogout }: Props) {
   }
 
   return (
-    <UserCtx.Provider value={{ user, isDoctor }}>
+    <UserCtx.Provider value={{ user, hasPerm: can }}>
       <Layout style={{ minHeight: '100vh' }}>
         <Header
           style={{
@@ -67,8 +69,7 @@ export default function AppLayout({ user, onLogout }: Props) {
           </Typography.Title>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <Typography.Text>
-              {user.full_name || user.username} (
-              {user.role === 'admin' ? 'مدیر' : user.role === 'doctor' ? 'پزشک' : 'پذیرش'})
+              {user.full_name || user.username} ({user.role_name})
             </Typography.Text>
             <Button
               icon={isDark ? <SunOutlined /> : <MoonOutlined />}
@@ -86,11 +87,12 @@ export default function AppLayout({ user, onLogout }: Props) {
               mode="inline"
               selectedKeys={[selected]}
               items={[
-                ...ITEMS,
-                ...(isDoctor ? [{ key: '/trash', label: 'سبد بازیافت' }] : []),
-                ...(isAdmin ? [{ key: '/users', label: 'کاربران' }] : []),
-                ...(isAdmin ? [{ key: '/backup', label: 'پشتیبان‌گیری' }] : []),
-                ...(isAdmin ? [{ key: '/audit', label: 'گزارش اقدامات' }] : []),
+                ...ITEMS.filter((i) => !i.perm || can(i.perm)),
+                ...(can('trash.view') ? [{ key: '/trash', label: 'سبد بازیافت' }] : []),
+                ...(can('users.manage') ? [{ key: '/users', label: 'کاربران' }] : []),
+                ...(can('roles.manage') ? [{ key: '/roles', label: 'نقش‌ها و دسترسی‌ها' }] : []),
+                ...(can('backup.manage') ? [{ key: '/backup', label: 'پشتیبان‌گیری' }] : []),
+                ...(can('audit.view') ? [{ key: '/audit', label: 'گزارش اقدامات' }] : []),
               ]}
               onClick={({ key }) => navigate(key)}
               style={{ borderInlineEnd: 'none', paddingTop: 12 }}

@@ -16,7 +16,18 @@ export interface StoredUser {
   id: number
   username: string
   full_name: string
-  role: 'admin' | 'doctor' | 'receptionist'
+  role_id: number
+  role_name: string
+  permissions: string[]
+}
+
+export function hasPerm(
+  user: StoredUser | null,
+  ...perms: string[]
+): boolean {
+  if (!user) return false
+  const held = new Set(user.permissions ?? [])
+  return perms.some((p) => held.has(p))
 }
 
 export function getAccessToken(): string | null {

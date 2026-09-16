@@ -4,9 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_at_least
+from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate_rows
-from app.core.enums import UserRole
 from app.db.session import APP_TZ, get_db
 from app.models import Appointment, Patient, Transaction, User
 from app.schemas import PatientPaymentOut, PaymentTypeStat
@@ -27,7 +26,7 @@ async def list_payments(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("payments.view")),
 ):
     """Payments (transactions) whose appointment falls on the given day.
 
@@ -77,7 +76,7 @@ async def list_payments(
 async def payments_summary(
     date: dt.date | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("payments.view")),
 ):
     """Per-description aggregates (count, total, POS/cash split) for one day.
 

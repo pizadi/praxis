@@ -20,7 +20,7 @@ import { useUser } from './AppLayout'
  * (for doctors) an inline edit form for description + notes.
  */
 export default function FileNotesExpanded({ file }: { file: Attachment }) {
-  const { isDoctor } = useUser()
+  const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
@@ -73,7 +73,7 @@ export default function FileNotesExpanded({ file }: { file: Attachment }) {
       >
         {file.notes.trim() ? file.notes : 'بدون یادداشت'}
       </Typography.Paragraph>
-      {isDoctor && (
+      {hasPerm('files.write') && (
         <Button size="small" onClick={() => setEditing(true)}>
           ویرایش شرح و یادداشت
         </Button>

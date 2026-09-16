@@ -12,8 +12,8 @@ from app.models.system import (
     AuditLog,
     LoginAudit,
     RefreshToken,
+    Role,
     User,
-    UserRole,
 )
 
 __all__ = [
@@ -26,8 +26,8 @@ __all__ = [
     "LoginAudit",
     "Patient",
     "RefreshToken",
+    "Role",
     "Tag",
     "Transaction",
     "User",
-    "UserRole",
 ]

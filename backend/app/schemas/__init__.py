@@ -5,12 +5,11 @@ while the DB itself stays permissive for dirty legacy rows.
 """
 
 import datetime as dt
+import json
 import re
 import typing as t
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-from app.core.enums import UserRole
 
 NATIONAL_ID_RE = re.compile(r"^[0-9]{10}$")
 YEAR_RE = re.compile(r"^[0-9]{4}$")
@@ -42,7 +41,9 @@ class UserOut(BaseModel):
     id: int
     username: str
     full_name: str
-    role: UserRole
+    role_id: int
+    role_name: str
+    permissions: list[str] = []
     is_active: bool
     created_at: dt.datetime
 
@@ -51,14 +52,43 @@ class UserCreateIn(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(default="", max_length=128)
-    role: UserRole = UserRole.RECEPTIONIST
+    role_id: int
 
 
 class UserUpdateIn(BaseModel):
     full_name: str | None = Field(default=None, max_length=128)
-    role: UserRole | None = None
+    role_id: int | None = None
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
+
+
+# --- Roles ----------------------------------------------------------------------
+
+
+class RoleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    is_system: bool
+    permissions: list[str] = []
+    user_count: int = 0
+    created_at: dt.datetime
+
+    @classmethod
+    def json_sorted(cls, perms: list[str]) -> str:
+        """Canonical (deduplicated, sorted) JSON storage for a permission set."""
+        return json.dumps(sorted(set(perms)), ensure_ascii=False)
+
+
+class RoleCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class RoleUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    permissions: list[str] | None = None
 
 
 # --- Tags & diagnoses ----------------------------------------------------------

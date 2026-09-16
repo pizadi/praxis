@@ -7,14 +7,36 @@ from fastapi.responses import ORJSONResponse
 
 from app.api.v1 import api_router
 from app.core.config import settings
-from app.core.enums import UserRole
 from app.core.errors import register_error_handlers
 from app.db.session import SessionLocal
-from app.models import User
+from app.models import Role, User
+
+
+async def ensure_system_roles(session) -> None:
+    """Seed the three system roles if missing (idempotent; also used by tests)."""
+    import json
+
+    from sqlalchemy import select
+
+    from app.core.permissions import SYSTEM_ROLES
+
+    for name, perms in SYSTEM_ROLES.items():
+        exists = await session.scalar(
+            select(Role).where(Role.name == name, Role.deleted_at.is_(None))
+        )
+        if exists is None:
+            session.add(
+                Role(
+                    name=name,
+                    is_system=True,
+                    permissions_json=json.dumps(perms, ensure_ascii=False),
+                )
+            )
+    await session.commit()
 
 
 async def bootstrap_admin() -> None:
-    """Create the initial admin account if the users table is empty.
+    """Seed system roles and create the initial admin account if none exist.
 
     Tolerates an unmigrated database (fresh start before `alembic upgrade head`)
     so the API can still boot and /health reports degradation.
@@ -26,15 +48,21 @@ async def bootstrap_admin() -> None:
 
     try:
         async with SessionLocal() as session:
+            await ensure_system_roles(session)
             count = await session.scalar(select(func.count()).select_from(User))
             if count:
                 return
+            admin_role = await session.scalar(
+                select(Role).where(Role.name == "admin", Role.deleted_at.is_(None))
+            )
+            if admin_role is None:
+                raise SQLAlchemyError("admin role missing")
             session.add(
                 User(
                     username=settings.bootstrap_admin_username,
                     full_name="System Administrator",
                     password_hash=hash_password(settings.bootstrap_admin_password),
-                    role=UserRole.ADMIN,
+                    role_id=admin_role.id,
                 )
             )
             await session.commit()

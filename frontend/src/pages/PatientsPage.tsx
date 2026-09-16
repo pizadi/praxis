@@ -52,7 +52,7 @@ export default function PatientsPage() {
   // advanced filters (all applied SQL-side; digits normalized to ASCII)
   const [filters, setFilters] = useState<PatientFilters>(EMPTY_FILTERS)
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const { user } = useUser()
+  const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Patient | null>(null)
@@ -312,7 +312,7 @@ export default function PatientsPage() {
                     >
                       ویرایش
                     </Button>
-                    {user.role === 'admin' && (
+                    {hasPerm('patients.delete') && (
                       <Popconfirm
                         title="بیمار به سبد بازیافت منتقل شود؟ (نوبت‌ها و فایل‌ها پنهان می‌شوند)"
                         onConfirm={() => remove.mutate(p.id)}

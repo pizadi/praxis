@@ -15,9 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import delete_stored_file, require_admin, require_at_least
+from app.api.deps import delete_stored_file, require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.enums import UserRole
 from app.core.errors import ConflictError
 from app.db.session import get_db
 from app.models import (
@@ -25,6 +24,7 @@ from app.models import (
     Attachment,
     Diagnosis,
     Patient,
+    Role,
     Tag,
     Transaction,
     User,
@@ -34,7 +34,10 @@ from app.services import audit
 
 router = APIRouter(prefix="/admin/trash", tags=["trash"])
 
-TYPES = ("patients", "appointments", "transactions", "attachments", "tags", "diagnoses", "users")
+TYPES = (
+    "patients", "appointments", "transactions", "attachments", "tags",
+    "diagnoses", "users", "roles",
+)
 
 
 def _get_model(type_name: str):
@@ -46,6 +49,7 @@ def _get_model(type_name: str):
         "tags": Tag,
         "diagnoses": Diagnosis,
         "users": User,
+        "roles": Role,
     }
     if type_name not in mapping:
         raise HTTPException(
@@ -69,7 +73,7 @@ async def list_trash(
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.DOCTOR)),
+    _: User = Depends(require_perm("trash.view")),
 ):
     model = _get_model(type)
 
@@ -116,6 +120,9 @@ async def list_trash(
         elif isinstance(row, User):
             title = row.username
             subtitle = row.full_name
+        elif isinstance(row, Role):
+            title = row.name
+            subtitle = f"{len(row.permissions)} permissions"
 
         items.append(
             TrashItemOut(
@@ -146,7 +153,7 @@ async def _unique_conflict_exists(db: AsyncSession, model, row) -> bool:
             )
         )
         return bool(dup)
-    if isinstance(row, (Tag, Diagnosis)):
+    if isinstance(row, (Tag, Diagnosis, Role)):
         dup = await db.scalar(
             select(func.count())
             .select_from(type(row))
@@ -177,7 +184,7 @@ async def restore_item(
     obj_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("trash.restore")),
 ):
     model = _get_model(type)
     row = await db.get(model, obj_id)
@@ -232,6 +239,9 @@ async def restore_item(
     elif isinstance(row, User):
         title = row.username
         subtitle = row.full_name
+    elif isinstance(row, Role):
+        title = row.name
+        subtitle = f"{len(row.permissions)} permissions"
     elif isinstance(row, Appointment):
         title = f"appointment {row.id}"
         subtitle = str(row.scheduled_at)
@@ -258,7 +268,7 @@ async def purge_item(
     obj_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin),
+    user: User = Depends(require_perm("trash.purge")),
 ):
     """PERMANENTLY delete one trash item (admin only).
 

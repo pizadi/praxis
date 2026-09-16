@@ -40,7 +40,7 @@ import FileNotesExpanded from './FileNotesExpanded'
  * patient detail page's main pane.
  */
 export default function AppointmentPanel({ appointmentId }: { appointmentId: number }) {
-  const { isDoctor } = useUser()
+  const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
   const [, setSearchParams] = useSearchParams()
@@ -170,7 +170,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
     <>
       <Tabs
         tabBarExtraContent={
-          isDoctor && (
+          hasPerm('appointments.delete') && (
             <Popconfirm
               title="نوبت به سبد بازیافت منتقل شود؟"
               onConfirm={() => deleteAppt.mutate()}
@@ -185,7 +185,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
         {
           key: 'notes',
           label: 'یادداشت‌ها',
-          children: isDoctor ? (
+          children: hasPerm('medical_notes.view') ? (
             <Form
               form={notesForm}
               layout="vertical"
@@ -232,7 +232,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
           label: `فایل‌ها (${files.data?.length ?? 0})`,
           children: (
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              {isDoctor && (
+              {hasPerm('files.write') && (
                 <Card
                   title="افزودن فایل"
                   size="small"
@@ -285,7 +285,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
                 size="small"
                 expandable={{
                   expandedRowRender: (f) => <FileNotesExpanded file={f} />,
-                  rowExpandable: (f) => isDoctor || !!f.notes.trim(),
+                  rowExpandable: (f) => hasPerm('medical_notes.view') || !!f.notes.trim(),
                 }}
                 columns={[
                   {
@@ -325,7 +325,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
                         >
                           دانلود
                         </Button>
-                        {isDoctor && (
+                        {hasPerm('files.delete') && (
                           <Popconfirm
                             title="فایل به سبد بازیافت منتقل شود؟"
                             onConfirm={() => delFile.mutate(f.id)}

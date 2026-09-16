@@ -53,12 +53,12 @@ export default function PatientDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { user } = useUser()
+  const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
 
-  const isAdmin = user.role === 'admin'
-  const isDoctor = user.role === 'doctor' || user.role === 'admin'
+  const isAdmin = hasPerm('patients.delete')
+  const isDoctor = hasPerm('appointments.delete')
 
   // selected appointment comes from the URL (?appt=123) so schedule/dashboard
   // links can deep-link straight into a patient + open appointment

@@ -26,7 +26,8 @@ async def test_login_and_me(client):
     r = await client.get("/api/v1/auth/me", headers=auth(access))
     assert r.status_code == 200
     assert r.json()["username"] == "admin"
-    assert r.json()["role"] == "admin"
+    assert r.json()["role_name"] == "admin"
+    assert "users.manage" in r.json()["permissions"]
 
 
 async def test_refresh_rotation(client):
@@ -81,9 +82,11 @@ async def test_user_crud_and_roles(client):
     assert r.json()["total"] == 3
 
     # Duplicate username → 409
+    roles = (await client.get("/api/v1/roles", headers=auth(token))).json()
+    doctor_role_id = next(r["id"] for r in roles["items"] if r["name"] == "doctor")
     r = await client.post(
         "/api/v1/users",
-        json={"username": "drhouse", "password": "passw0rd123", "role": "doctor"},
+        json={"username": "drhouse", "password": "passw0rd123", "role_id": doctor_role_id},
         headers=auth(token),
     )
     assert r.status_code == 409

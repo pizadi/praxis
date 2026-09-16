@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_at_least
+from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.enums import UserRole
 from app.core.errors import ConflictError
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -62,7 +61,7 @@ async def list_patients(
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("patients.read")),
 ):
     """Search patients. All filtering happens in SQL.
 
@@ -140,7 +139,7 @@ async def create_patient(
     body: PatientCreateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("patients.create")),
 ):
     dup = await db.scalar(
         select(Patient).where(
@@ -180,7 +179,7 @@ async def create_patient(
 async def get_patient(
     patient_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("patients.read")),
 ):
     return await _get_or_404(db, patient_id)
 
@@ -191,7 +190,7 @@ async def update_patient(
     body: PatientUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("patients.update")),
 ):
     patient = await _get_or_404(db, patient_id)
     data = body.model_dump(exclude_unset=True)
@@ -253,7 +252,7 @@ async def delete_patient(
     patient_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.ADMIN)),
+    user: User = Depends(require_perm("patients.delete")),
 ):
     """Soft delete: stamps deleted_at; appointments/files/txns become invisible
     through join filtering and come back on restore. Physical files untouched.

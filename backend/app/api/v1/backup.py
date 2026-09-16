@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import require_admin
+from app.api.deps import require_perm
 from app.core.config import settings
 from app.core.errors import ConflictError
 from app.core.tokens import utc_now
@@ -198,7 +198,7 @@ def _start_job() -> bool:
 @router.post("", status_code=202)
 async def start_backup(
     db=Depends(get_db),
-    user: User = Depends(require_admin),
+    user: User = Depends(require_perm("backup.manage")),
 ):
     if not _start_job():
         raise ConflictError("A backup is already running", code="backup_running")
@@ -214,12 +214,12 @@ async def start_backup(
 
 
 @router.get("")
-async def backup_status(_: User = Depends(require_admin)):
+async def backup_status(_: User = Depends(require_perm("backup.manage"))):
     return _backup_state()
 
 
 @router.get("/download")
-async def download_backup(_: User = Depends(require_admin)):
+async def download_backup(_: User = Depends(require_perm("backup.manage"))):
     st = _backup_state()
     if st["status"] != "ready" or not _file_path:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="No ready backup file")
@@ -230,7 +230,7 @@ async def download_backup(_: User = Depends(require_admin)):
 @router.delete("", status_code=204)
 async def discard_backup(
     db=Depends(get_db),
-    user: User = Depends(require_admin),
+    user: User = Depends(require_perm("backup.manage")),
 ):
     global _file_path
     with _status_lock:
