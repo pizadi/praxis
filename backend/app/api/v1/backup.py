@@ -34,11 +34,14 @@ router = APIRouter(prefix="/admin/backup", tags=["backup"])
 
 # domain tables in FK-safe dump order
 DUMP_TABLES = (
+    "roles",
     "tags",
     "diagnoses",
+    "questionnaire_templates",
     "users",
     "patients",
     "appointments",
+    "questionnaire_responses",
     "transactions",
     "attachments",
     "patient_tags",

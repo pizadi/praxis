@@ -24,6 +24,8 @@ from app.models import (
     Attachment,
     Diagnosis,
     Patient,
+    QuestionnaireResponse,
+    QuestionnaireTemplate,
     Role,
     Tag,
     Transaction,
@@ -36,7 +38,8 @@ router = APIRouter(prefix="/admin/trash", tags=["trash"])
 
 TYPES = (
     "patients", "appointments", "transactions", "attachments", "tags",
-    "diagnoses", "users", "roles",
+    "diagnoses", "users", "roles", "questionnaire_templates",
+    "questionnaire_responses",
 )
 
 
@@ -50,6 +53,8 @@ def _get_model(type_name: str):
         "diagnoses": Diagnosis,
         "users": User,
         "roles": Role,
+        "questionnaire_templates": QuestionnaireTemplate,
+        "questionnaire_responses": QuestionnaireResponse,
     }
     if type_name not in mapping:
         raise HTTPException(
@@ -123,6 +128,15 @@ async def list_trash(
         elif isinstance(row, Role):
             title = row.name
             subtitle = f"{len(row.permissions)} permissions"
+        elif isinstance(row, QuestionnaireTemplate):
+            title = row.name
+        elif isinstance(row, QuestionnaireResponse):
+            tpl = await db.get(QuestionnaireTemplate, row.template_id)
+            pat = await db.get(Patient, row.patient_id)
+            title = tpl.name if tpl is not None else f"response {row.id}"
+            if pat is not None:
+                subtitle = f"{pat.first_name} {pat.last_name}"
+                parent_deleted = pat.deleted_at is not None
 
         items.append(
             TrashItemOut(
@@ -204,6 +218,12 @@ async def restore_item(
             raise ConflictError(
                 "Restore the parent appointment first", code="parent_still_deleted"
             )
+    elif isinstance(row, QuestionnaireResponse):
+        pat = await db.get(Patient, row.patient_id)
+        if pat is not None and pat.deleted_at is not None:
+            raise ConflictError(
+                "Restore the parent patient first", code="parent_still_deleted"
+            )
 
     if await _unique_conflict_exists(db, model, row):
         kind = type.strip("s").capitalize() if hasattr(type, "strip") else type
@@ -251,6 +271,11 @@ async def restore_item(
     elif isinstance(row, Attachment):
         title = row.description or (row.original_filename or f"attachment {row.id}")
         subtitle = row.original_filename or ""
+    elif isinstance(row, QuestionnaireTemplate):
+        title = row.name
+    elif isinstance(row, QuestionnaireResponse):
+        tpl = await db.get(QuestionnaireTemplate, row.template_id)
+        title = tpl.name if tpl is not None else f"response {row.id}"
 
     return TrashItemOut(
         id=row.id,

@@ -91,6 +91,9 @@ export default function AppLayout({ user, onLogout }: Props) {
                 ...(can('trash.view') ? [{ key: '/trash', label: 'سبد بازیافت' }] : []),
                 ...(can('users.manage') ? [{ key: '/users', label: 'کاربران' }] : []),
                 ...(can('roles.manage') ? [{ key: '/roles', label: 'نقش‌ها و دسترسی‌ها' }] : []),
+                ...(can('questionnaires.templates')
+                  ? [{ key: '/questionnaires', label: 'قالب پرسش‌نامه‌ها' }]
+                  : []),
                 ...(can('backup.manage') ? [{ key: '/backup', label: 'پشتیبان‌گیری' }] : []),
                 ...(can('audit.view') ? [{ key: '/audit', label: 'گزارش اقدامات' }] : []),
               ]}

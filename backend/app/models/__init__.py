@@ -5,6 +5,8 @@ from app.models.domain import (
     Diagnosis,
     Gender,
     Patient,
+    QuestionnaireResponse,
+    QuestionnaireTemplate,
     Tag,
     Transaction,
 )
@@ -25,6 +27,8 @@ __all__ = [
     "Gender",
     "LoginAudit",
     "Patient",
+    "QuestionnaireResponse",
+    "QuestionnaireTemplate",
     "RefreshToken",
     "Role",
     "Tag",

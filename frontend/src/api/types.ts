@@ -124,3 +124,23 @@ export interface StatsSummary {
   num_transactions: number
   by_description: DescriptionStat[]
 }
+
+export interface QuestionnaireTemplate {
+  id: number
+  name: string
+  description: string
+  format: import('../lib/questionnaire').FormatDoc
+  created_at: string
+  updated_at: string
+}
+
+export interface QuestionnaireResponse {
+  id: number
+  patient_id: number
+  template_id: number
+  template_name: string
+  answers: import('../lib/questionnaire').Answers
+  created_by_username: string | null
+  created_at: string
+  updated_at: string
+}
