@@ -38,6 +38,7 @@ Verify order: ruff → mypy → pytest → (if frontend touched) tsc/eslint/buil
 - `login()` in conftest returns `(access_token, refresh_token)` — `recep, _ = await login(...)` then `auth(recep)`, **not** `recep[0]` (that's the first character of the token → 401).
 - When testing a create endpoint, assert persisted fields on the **create response** — the multipart upload bug survived the whole suite because only post-PATCH values were checked.
 - Repo-root `.env` (gitignored, real values) sets `BOOTSTRAP_ADMIN_*` — pydantic reads `env_file=".env"` **relative to CWD**, so behavior differs between running from repo root vs `backend/`. In tests this is masked by conftest env vars; be careful with manual scripts.
+- **SQLAlchemy `Enum` columns persist the member NAME, not the value** (`users.role` was `'ADMIN'/'DOCTOR'/'RECEPTIONIST'` — uppercase). Any migration/script reading legacy enum columns as raw strings must match case-insensitively; this bit the roles backfill once (silently downgraded every user to receptionist — the fallback mapped unmapped rows). Migrations that transform data must fail loudly on unexpected values instead of defaulting.
 
 ## Environment / network gotchas
 
