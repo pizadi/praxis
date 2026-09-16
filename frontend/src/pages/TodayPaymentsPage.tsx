@@ -21,6 +21,14 @@ export interface PatientPayment {
   pos: boolean
 }
 
+interface PaymentTypeStat {
+  description: string
+  count: number
+  total_amount: number
+  pos_amount: number
+  cash_amount: number
+}
+
 function shiftDay(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00`) // midday avoids DST boundary issues
   d.setDate(d.getDate() + days)
@@ -34,6 +42,12 @@ export default function TodayPaymentsPage() {
     queryKey: ['payments', date],
     queryFn: async () =>
       (await api.get<Page<PatientPayment>>('/payments', { params: { date } })).data,
+  })
+
+  const summary = useQuery({
+    queryKey: ['payments-summary', date],
+    queryFn: async () =>
+      (await api.get<PaymentTypeStat[]>('/payments/summary', { params: { date } })).data,
   })
 
   const items = data?.items ?? []
@@ -71,6 +85,21 @@ export default function TodayPaymentsPage() {
               </Card>
             </Col>
           </Row>
+          <Table<PaymentTypeStat>
+            rowKey="description"
+            size="small"
+            loading={summary.isLoading}
+            dataSource={summary.data ?? []}
+            locale={{ emptyText: 'پرداختی در این روز ثبت نشده است' }}
+            pagination={false}
+            columns={[
+              { title: 'نوع پرداخت', dataIndex: 'description' },
+              { title: 'تعداد', dataIndex: 'count', render: (n: number) => toFaDigits(n) },
+              { title: 'جمع کل', dataIndex: 'total_amount', render: formatMoney },
+              { title: 'کارت‌خوان', dataIndex: 'pos_amount', render: formatMoney },
+              { title: 'نقدی', dataIndex: 'cash_amount', render: formatMoney },
+            ]}
+          />
           <Table<PatientPayment>
             rowKey="id"
             size="small"

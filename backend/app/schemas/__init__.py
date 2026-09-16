@@ -277,6 +277,16 @@ class PatientPaymentOut(BaseModel):
     pos: bool
 
 
+class PaymentTypeStat(BaseModel):
+    """Per-payment-type (description) aggregates for one day."""
+
+    description: str
+    count: int
+    total_amount: int
+    pos_amount: int
+    cash_amount: int
+
+
 # --- Stats ---------------------------------------------------------------------------
 
 

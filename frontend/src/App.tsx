@@ -15,6 +15,7 @@ import TaxonomiesPage from './pages/TaxonomiesPage'
 import StatsPage from './pages/StatsPage'
 import UsersPage from './pages/UsersPage'
 import TrashPage from './pages/TrashPage'
+import BackupPage from './pages/BackupPage'
 import AuditPage from './pages/AuditPage'
 
 export default function App() {
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/taxonomies" element={<TaxonomiesPage />} />
         <Route path="/stats" element={<StatsPage />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/backup" element={<BackupPage />} />
         <Route path="/trash" element={<TrashPage />} />
         <Route path="/audit" element={<AuditPage />} />
       </Route>

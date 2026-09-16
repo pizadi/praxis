@@ -10,10 +10,8 @@ import { JalaliRangePicker } from '../components/JalaliDates'
 
 export default function StatsPage() {
   const { isDoctor } = useUser()
-  const [range, setRange] = useState<[string, string]>([
-    new Date(Date.now() - 29 * 86400_000).toISOString().slice(0, 10),
-    new Date().toISOString().slice(0, 10),
-  ])
+  const today = new Date().toISOString().slice(0, 10)
+  const [range, setRange] = useState<[string, string]>([today, today])
 
   const { data, isLoading } = useQuery({
     queryKey: ['stats', range],

@@ -129,7 +129,7 @@ async def test_patient_search_all_in_sql(client):
 
     # per-field searches
     r = await client.get(
-        "/api/v1/patients", params={"first_name": "parham"}, headers=auth(token)
+        "/api/v1/patients", params={"first_name": "test"}, headers=auth(token)
     )
     assert r.json()["total"] == 3
 

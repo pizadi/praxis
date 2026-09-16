@@ -8,7 +8,6 @@ import {
   Col,
   Form,
   Input,
-  Modal,
   Popconfirm,
   Radio,
   Row,
@@ -25,10 +24,11 @@ import {
   DownloadOutlined,
   FileTextOutlined,
   InboxOutlined,
+  SaveOutlined,
 } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 
-import { API_BASE, api, apiError, getAccessToken } from '../api/client'
+import { api, apiError } from '../api/client'
 import type { Appointment, Attachment, Page, Transaction } from '../api/types'
 import { fileSize, formatMoney } from '../lib/jalali'
 import { useUser } from './AppLayout'
@@ -65,8 +65,8 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
 
   const [notesForm] = Form.useForm<Appointment>()
   const [txnForm] = Form.useForm<{ description: string; amount: number; pos: boolean }>()
-  const [noteFileOpen, setNoteFileOpen] = useState(false)
-  const [noteFileForm] = Form.useForm<{ description: string; notes: string }>()
+  const [addFileForm] = Form.useForm<{ description: string; notes: string }>()
+  const [addFileList, setAddFileList] = useState<UploadFile[]>([])
 
   const saveNotes = useMutation({
     mutationFn: async (values: Partial<Appointment>) =>
@@ -107,6 +107,32 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
     onError: (err) => message.error(apiError(err).message),
   })
 
+  const addFile = useMutation({
+    mutationFn: async (payload: { values: { description: string; notes: string }; file?: File }) => {
+      if (payload.file) {
+        const fd = new FormData()
+        fd.append('file', payload.file)
+        fd.append('description', payload.values.description ?? '')
+        fd.append('notes', payload.values.notes ?? '')
+        return (await api.post(`/appointments/${appointmentId}/files`, fd)).data
+      }
+      return (
+        await api.post(`/appointments/${appointmentId}/files/note`, {
+          description: payload.values.description ?? '',
+          notes: payload.values.notes ?? '',
+        })
+      ).data
+    },
+    onSuccess: async () => {
+      message.success('ثبت شد')
+      addFileForm.resetFields()
+      setAddFileList([])
+      await qc.invalidateQueries({ queryKey: ['appointment-files', appointmentId] })
+      await qc.invalidateQueries({ queryKey: ['patient-files'] })
+    },
+    onError: (err) => message.error(apiError(err).message),
+  })
+
   const deleteAppt = useMutation({
     mutationFn: async () => api.delete(`/appointments/${appointmentId}`),
     onSuccess: async () => {
@@ -119,24 +145,8 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
     onError: (err) => message.error(apiError(err).message),
   })
 
-  const addNoteFile = useMutation({
-    mutationFn: async (values: { description: string; notes: string }) =>
-      api.post(`/appointments/${appointmentId}/files/note`, values),
-    onSuccess: async () => {
-      message.success('ثبت شد')
-      setNoteFileOpen(false)
-      noteFileForm.resetFields()
-      await qc.invalidateQueries({ queryKey: ['appointment-files', appointmentId] })
-    },
-    onError: (err) => message.error(apiError(err).message),
-  })
-
-  const openNoteFileModal = () => {
-    noteFileForm.resetFields()
-    setNoteFileOpen(true)
-  }
-
-  const downloadFile = async (fileId: number, name: string | null) => {    try {
+  const downloadFile = async (fileId: number, name: string | null) => {
+    try {
       const res = await api.get(`/appointments/files/${fileId}/download`, {
         responseType: 'blob',
       })
@@ -149,36 +159,6 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
     } catch (err) {
       message.error(apiError(err).message)
     }
-  }
-
-  const [uploadDesc, setUploadDesc] = useState('')
-  const [uploadNotes, setUploadNotes] = useState('')
-
-  const uploadProps = {
-    name: 'file',
-    action: `${API_BASE}/appointments/${appointmentId}/files`,
-    headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
-    // resolved at submit time so the current input values are always sent
-    data: () => ({ description: uploadDesc, notes: uploadNotes }),
-    onChange(info: { file: UploadFile }) {
-      if (info.file.status === 'done') {
-        message.success('فایل بارگذاری شد')
-        setUploadDesc('')
-        setUploadNotes('')
-        qc.invalidateQueries({ queryKey: ['appointment-files', appointmentId] })
-      } else if (info.file.status === 'error') {
-        // antd gives us the raw XHR; surface the backend's error envelope
-        let msg = 'بارگذاری ناموفق'
-        try {
-          const xhr = info.file.xhr as XMLHttpRequest | undefined
-          const body = xhr?.responseText ? JSON.parse(xhr.responseText) : null
-          msg = body?.error?.message ?? msg
-        } catch {
-          // keep the default message
-        }
-        message.error(msg)
-      }
-    },
   }
 
   if (appt.isLoading || !appt.data) {
@@ -253,33 +233,50 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
           children: (
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
               {isDoctor && (
-                <Space direction="vertical" style={{ width: '100%' }} size="small">
-                  <Input
-                    placeholder="شرح فایل (اختیاری)"
-                    maxLength={128}
-                    value={uploadDesc}
-                    onChange={(e) => setUploadDesc(e.target.value)}
-                  />
-                  <Input.TextArea
-                    placeholder="یادداشت فایل (اختیاری)"
-                    rows={2}
-                    maxLength={10000}
-                    value={uploadNotes}
-                    onChange={(e) => setUploadNotes(e.target.value)}
-                  />
-                  <Upload.Dragger {...uploadProps}>
-                    <p className="ant-upload-drag-icon">
-                      <InboxOutlined />
-                    </p>
-                    <p className="ant-upload-text">فایل را اینجا رها کنید</p>
-                  </Upload.Dragger>
-                  <Button
-                    icon={<FileTextOutlined />}
-                    onClick={openNoteFileModal}
+                <Card
+                  title="افزودن فایل"
+                  size="small"
+                  styles={{ body: { paddingTop: 12 } }}
+                >
+                  <Form
+                    form={addFileForm}
+                    layout="vertical"
+                    onFinish={(v: { description: string; notes: string }) => {
+                      const f = addFileList[0]?.originFileObj
+                      if (f) addFile.mutate({ values: v, file: f })
+                      else addFile.mutate({ values: v })
+                    }}
                   >
-                    ثبت شرح و یادداشت بدون فایل
-                  </Button>
-                </Space>
+                    <Form.Item
+                      name="description"
+                      label="شرح"
+                      rules={[{ required: true, message: 'شرح الزامی است' }]}
+                    >
+                      <Input maxLength={128} placeholder="مثلاً گزارش آزمایش" />
+                    </Form.Item>
+                    <Form.Item name="notes" label="یادداشت">
+                      <Input.TextArea rows={2} maxLength={10000} placeholder="اختیاری" />
+                    </Form.Item>
+                    <Form.Item label="فایل (اختیاری — بدون فایل، فقط شرح و یادداشت ثبت می‌شود)">
+                      <Upload
+                        maxCount={1}
+                        fileList={addFileList}
+                        beforeUpload={() => false}
+                        onChange={({ fileList }) => setAddFileList(fileList.slice(-1))}
+                      >
+                        <Button icon={<InboxOutlined />}>انتخاب فایل…</Button>
+                      </Upload>
+                    </Form.Item>
+                    <Button
+                      type="primary"
+                      htmlType="submit"
+                      loading={addFile.isPending}
+                      icon={<SaveOutlined />}
+                    >
+                      ذخیره
+                    </Button>
+                  </Form>
+                </Card>
               )}
               <Table<Attachment>
                 rowKey="id"
@@ -428,35 +425,6 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
         },
       ]}
     />
-      <Modal
-        open={noteFileOpen}
-        title="ثبت شرح و یادداشت بدون فایل"
-        okText="ثبت"
-        cancelText="انصراف"
-        onCancel={() => setNoteFileOpen(false)}
-        confirmLoading={addNoteFile.isPending}
-        onOk={() => noteFileForm.submit()}
-        destroyOnHidden
-      >
-        <Form
-          form={noteFileForm}
-          layout="vertical"
-          onFinish={(v: { description: string; notes: string }) =>
-            addNoteFile.mutate({ description: v.description, notes: v.notes ?? '' })
-          }
-        >
-          <Form.Item
-            name="description"
-            label="شرح"
-            rules={[{ required: true, message: 'شرح الزامی است' }]}
-          >
-            <Input maxLength={128} placeholder="مثلاً گزارش آزمایش" />
-          </Form.Item>
-          <Form.Item name="notes" label="یادداشت">
-            <Input.TextArea rows={3} maxLength={10000} placeholder="اختیاری" />
-          </Form.Item>
-        </Form>
-      </Modal>
     </>
   )
 }

@@ -8,7 +8,10 @@ storage, prints a data-quality report, and verifies counts/sums automatically.
 Design constraints:
 - Idempotent: safe to re-run; upserts keyed on preserved PKs.
 - Non-destructive: never writes to the source SQLite file.
-- 1:1 mapping: no renaming/normalization of legacy values (phase-2 backlog).
+- 1:1 mapping: no renaming/normalization of legacy values, with ONE
+  documented exception — transaction descriptions are translated from the
+  legacy English types ("Visit"/"Spiro"/"Other") to their current Persian
+  variants (ویزیت/اسپیرو/سایر); unmatched values are kept as-is.
 - Halts ONLY on duplicate national IDs (ambiguous — needs manual resolution).
 
 Usage:
@@ -44,6 +47,20 @@ PHONE_RE = re.compile(r"^[0-9]+$")
 
 # Legacy Django app used local (Tehran) time in naive datetimes.
 SOURCE_TZ = dt.timezone(dt.timedelta(hours=3, minutes=30), "Asia/Tehran")
+
+# Legacy transaction descriptions were English; the new UI uses Persian.
+# Match is case-insensitive after whitespace-strip ("visit", " Visit ", …).
+LEGACY_TXN_DESCRIPTIONS = {
+    "visit": "ویزیت",
+    "spiro": "اسپیرو",
+    "other": "سایر",
+}
+
+
+def normalize_txn_description(raw: Any) -> str:
+    """Translate legacy English payment types to their Persian variants."""
+    desc = str(raw or "").strip()
+    return LEGACY_TXN_DESCRIPTIONS.get(desc.casefold(), desc)
 
 
 @dataclasses.dataclass
@@ -374,7 +391,7 @@ async def import_rows(
             {
                 "id": t.get("id"),
                 "appointment_id": t.get("appointment_id"),
-                "description": t.get("description"),
+                "description": normalize_txn_description(t.get("description")),
                 "amount": int(t.get("amount") or 0),
                 "pos": bool(t.get("pos")),
             }
@@ -795,6 +812,18 @@ async def main() -> int:
     print("\n=== IMPORT ===")
     for name, c in counts.items():
         print(c.row(name))
+
+    # Payment-type translation report (legacy English → Persian)
+    buckets: dict[str, int] = {}
+    for t in tables["transactions"]:
+        translated = normalize_txn_description(t.get("description"))
+        buckets[translated] = buckets.get(translated, 0) + 1
+    print("\n=== PAYMENT TYPE TRANSLATION (legacy → current) ===")
+    for legacy_en, persian in LEGACY_TXN_DESCRIPTIONS.items():
+        n = buckets.pop(persian, 0)
+        print(f"  {legacy_en:<8} → {persian}: {n} rows")
+    for desc, n in sorted(buckets.items(), key=lambda kv: -kv[1]):
+        print(f"  (kept as-is) {desc!r}: {n} rows")
 
     # File relocation + metadata
     print("\n=== FILE RELOCATION ===")

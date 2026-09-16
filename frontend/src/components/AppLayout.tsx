@@ -89,6 +89,7 @@ export default function AppLayout({ user, onLogout }: Props) {
                 ...ITEMS,
                 ...(isDoctor ? [{ key: '/trash', label: 'سبد بازیافت' }] : []),
                 ...(isAdmin ? [{ key: '/users', label: 'کاربران' }] : []),
+                ...(isAdmin ? [{ key: '/backup', label: 'پشتیبان‌گیری' }] : []),
                 ...(isAdmin ? [{ key: '/audit', label: 'گزارش اقدامات' }] : []),
               ]}
               onClick={({ key }) => navigate(key)}

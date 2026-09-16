@@ -32,6 +32,7 @@ import {
 
 import { api, apiError } from '../api/client'
 import type {
+  Appointment,
   AppointmentBrief,
   Attachment,
   NamedRef,
@@ -103,15 +104,19 @@ export default function PatientDetailPage() {
 
   const addAppt = useMutation({
     mutationFn: async (values: { scheduled_at: string; notes?: string }) =>
-      api.post(`/patients/${id}/appointments`, {
-        scheduled_at: values.scheduled_at,
-        notes: values.notes ?? '',
-      }),
-    onSuccess: async () => {
+      (
+        await api.post<Appointment>(`/patients/${id}/appointments`, {
+          scheduled_at: values.scheduled_at,
+          notes: values.notes ?? '',
+        })
+      ).data,
+    onSuccess: async (created) => {
       message.success('نوبت ثبت شد')
       setNewApptOpen(false)
       apptForm.resetFields()
       await qc.invalidateQueries({ queryKey: ['patient-appointments', id] })
+      // open the new appointment's details right away (sidebar shows it selected)
+      selectAppt(created.id)
     },
     onError: (err) => message.error(apiError(err).message),
   })

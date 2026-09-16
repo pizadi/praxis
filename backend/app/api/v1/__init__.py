@@ -5,6 +5,7 @@ from app.api.v1 import (
     attachments,
     audit,
     auth,
+    backup,
     meta,
     patients,
     payments,
@@ -27,4 +28,5 @@ api_router.include_router(taxonomies.router)
 api_router.include_router(stats.router)
 api_router.include_router(trash.router)
 api_router.include_router(audit.router)
+api_router.include_router(backup.router)
 api_router.include_router(meta.router)
