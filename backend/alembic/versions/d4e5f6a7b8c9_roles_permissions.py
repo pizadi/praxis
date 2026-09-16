@@ -102,14 +102,23 @@ def upgrade() -> None:
     )
 
     op.add_column("users", sa.Column("role_id", sa.Integer(), nullable=True))
+    # CAUTION: the legacy users.role column was a SQLAlchemy Enum, which
+    # persists the member NAME ('ADMIN'/'DOCTOR'/'RECEPTIONIST' — uppercase),
+    # not the value. Match case-insensitively against the seeded role names.
     op.execute(
-        "UPDATE users SET role_id = (SELECT id FROM roles WHERE roles.name = users.role)"
+        "UPDATE users SET role_id = (SELECT id FROM roles"
+        " WHERE lower(roles.name) = lower(users.role))"
     )
-    # rows that referenced an unknown role string cannot be auto-mapped
-    op.execute(
-        "UPDATE users SET role_id = (SELECT id FROM roles WHERE roles.name = 'receptionist')"
-        " WHERE role_id IS NULL"
-    )
+    # rows that referenced an unknown role string cannot be auto-mapped —
+    # fail loudly rather than silently downgrade anyone to a lesser role
+    unmapped = op.get_bind().execute(
+        sa.text("SELECT username FROM users WHERE role_id IS NULL")
+    ).fetchall()
+    if unmapped:
+        raise RuntimeError(
+            f"users with unmappable legacy role values: {[r[0] for r in unmapped]}; "
+            "map them to a role manually before migrating"
+        )
     op.alter_column("users", "role_id", nullable=False, existing_type=sa.Integer())
     with op.batch_alter_table("users") as batch:
         batch.drop_column("role")
