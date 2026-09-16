@@ -44,7 +44,24 @@ docker compose up -d --build
 
 On the Pi: mount `pgdata` and `uploads` volumes on an SSD, not the SD card.
 
-## Roles
+## Roles & permissions
+
+Access control is **permission-based**. Each role row (in `roles`) holds a
+permission set (JSON array of keys from the catalog in
+`backend/app/core/permissions.py`); every endpoint checks
+`require_perm(...)` instead of a fixed hierarchy.
+
+- Three **system roles** are seeded at startup — `admin` (all permissions),
+  `doctor`, `receptionist` — reproducing the legacy hierarchy exactly.
+- The **admin role is locked** (cannot be edited or deleted) so the instance
+  can never lock itself out of role management; doctor/receptionist are
+  editable but undeletable.
+- Admins create custom roles at `/roles` (grouped permission checkboxes),
+  and assign them to users at `/users`. A role in use refuses deletion.
+- Permission changes apply immediately (permissions are read from the DB per
+  request, not baked into tokens).
+- Medical fields (CM/HX/PX/RX) are blanked server-side unless the user holds
+  `medical_notes.view` — not just hidden in the UI.
 
 | Ability                        | receptionist | doctor | admin |
 | ------------------------------ | :----------: | :----: | :---: |
@@ -53,27 +70,48 @@ On the Pi: mount `pgdata` and `uploads` volumes on an SSD, not the SD card.
 | Medical notes (CM/HX/PX/RX)    |      ❌      |   ✅   |   ✅   |
 | Edit appointments / files      |      ❌      |   ✅   |   ✅   |
 | Transactions                   |      ✅      |   ✅   |   ✅   |
+| Questionnaires: fill / read    |      ✅      |   ✅   |   ✅   |
 | Stats                          |      ❌      |   ✅   |   ✅   |
 | Tags / diagnoses               |     read     |   ✅   |   ✅   |
 | Delete patients, manage users  |      ❌      |   ❌   |   ✅   |
+| Custom roles / permissions     |      ❌      |   ❌   |   ✅   |
 | Trash: view / restore          |      ❌      |   ✅   |   ✅   |
 | Trash: permanent purge         |      ❌      |   ❌   |   ✅   |
 | Audit trail                     |      ❌      |   ❌   |   ✅   |
 
-Receptionist requests return appointments with medical fields blanked —
-enforced server-side in the serializer, not just hidden in the UI.
+## Questionnaires
+
+Admin-defined questionnaire **templates** (`/questionnaires`) whose format
+is a validated JSON document: number questions (range/integer), multiple-
+choice questions with optional **graded** options (scores), and string
+questions (single/multi-line). Templates can be built graphically or
+uploaded as a JSON file — every write path (builder, upload, API) validates
+identically server-side, and a downloadable example JSON is provided.
+
+Filled **responses** belong to a **patient** (not an appointment): from the
+patient page's پرسش‌نامه‌ها segment — list/add/edit/delete, multiple
+responses per template allowed. Answers are stored as raw nullable JSON and
+validated against the template at write time (unknown keys and
+type/range/choice violations are rejected; empty is always allowed —
+`required` is a form-level constraint only).
+
+There is deliberately **no snapshot**: rendering merges stored answers with
+the *current* template — questions removed from the template are ignored,
+new questions render as null, and values that no longer validate render as
+missing with a warning banner and a confirm-dialog button that clears the
+invalid fields (server-revalidated PATCH).
 
 ## Soft deletes & trash
 
 All deletions are **soft** (`deleted_at` timestamp). A deleted patient hides
-its whole subtree (appointments/files/payments) through join filtering; the
-trash panel (`/trash`, doctor+admin) lists directly-deleted rows with
-Jalali timestamps, restores them (subtree rules enforced — a child refuses
-restore while its parent is deleted, with a clear 409), and offers
+its whole subtree (appointments/files/payments/questionnaires) through join
+filtering; the trash panel (`/trash`, doctor+admin) lists directly-deleted
+rows with Jalali timestamps, restores them (subtree rules enforced — a child
+refuses restore while its parent is deleted, with a clear 409), and offers
 admin-only permanent purge, the only action that unlinks physical files.
-Unique values (national ID, tag/diagnosis/user names) are enforced only
-among live rows via partial unique indexes, so a deleted value can be
-reused; restoring then conflicts only if a live duplicate exists.
+Unique values (national ID, tag/diagnosis/user/role/template names) are
+enforced only among live rows via partial unique indexes, so a deleted value
+can be reused; restoring then conflicts only if a live duplicate exists.
 
 ## Patient search
 
@@ -165,7 +203,7 @@ A synthetic legacy DB for testing the migration itself:
 
 ```bash
 cd backend
-../.venv/bin/python -m pytest tests -q      # 17 tests
+../.venv/bin/python -m pytest tests -q      # 49 tests
 ../.venv/bin/ruff check app tests ../scripts
 ../.venv/bin/mypy app
 
@@ -188,13 +226,17 @@ Do a **restore drill** monthly: `gunzip -c db-DATE.sql.gz | docker exec -i clini
 
 ```
 backend/app
-  api/v1/        routers (auth, users, patients, appointments, attachments,
-                 transactions, taxonomies, stats, meta)
-  api/deps.py    auth deps, role guards, file-storage safety
-  core/          config, security (JWT/argon2), errors, tokens
+  api/v1/        routers (auth, users, roles, patients, appointments,
+                 attachments, transactions, taxonomies, questionnaires,
+                 stats, trash, audit, backup, meta)
+  api/deps.py    auth deps, permission guards, file-storage safety
+  core/          config, security (JWT/argon2), errors, tokens,
+                 permissions (catalog + system role sets)
   db/session.py  engine + APP_TZ
-  models/        domain.py (1:1 legacy schema), system.py (users/auth)
+  models/        domain.py (1:1 legacy schema + questionnaires),
+                 system.py (users/roles/auth/audit)
   schemas/       Pydantic v2 request/response models
+  services/      audit trail, questionnaire format/answer validation
 backend/alembic  migrations (baseline: b7eee1c1aa98)
 backend/tests    pytest suite (isolated SQLite, per-test drop/create)
 frontend/src     pages, api client with refresh-token rotation, Jalali utils
