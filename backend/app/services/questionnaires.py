@@ -13,6 +13,7 @@ merges and flags invalid values — see schemas/render helpers.
 import json
 import re
 import typing as t
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -105,9 +106,9 @@ class QuestionnaireFormat(BaseModel):
 
     version: int = 1
     title: str = Field(default="", max_length=256)
-    questions: list[NumberQuestion | ChoiceQuestion | StringQuestion] = Field(
-        min_length=1, max_length=200
-    )
+    questions: list[
+        Annotated[NumberQuestion | ChoiceQuestion | StringQuestion, Field(discriminator="type")]
+    ] = Field(min_length=1, max_length=200)
 
     @field_validator("questions")
     @classmethod

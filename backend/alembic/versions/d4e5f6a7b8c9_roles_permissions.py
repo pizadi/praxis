@@ -64,14 +64,14 @@ def upgrade() -> None:
         "roles",
         sa.column("name", sa.String),
         sa.column("is_system", sa.Boolean),
-        sa.column("permissions", sa.Text),
+        sa.column("permissions_json", sa.Text),
     )
     op.create_table(
         "roles",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
         sa.Column("is_system", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("permissions", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("permissions_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
@@ -95,7 +95,7 @@ def upgrade() -> None:
             {
                 "name": name,
                 "is_system": True,
-                "permissions": json.dumps(perms, ensure_ascii=False),
+                "permissions_json": json.dumps(perms, ensure_ascii=False),
             }
             for name, perms in SYSTEM_ROLES.items()
         ],

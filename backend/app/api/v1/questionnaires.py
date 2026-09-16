@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
+from app.core.errors import BusinessRuleError
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Patient, QuestionnaireResponse, QuestionnaireTemplate, User
@@ -127,9 +128,8 @@ async def validate_template_format(
     try:
         fmt = parse_format(body.format)
     except Exception as exc:  # json or pydantic — both are client errors
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid questionnaire format: {exc}",
+        raise BusinessRuleError(
+            f"Invalid questionnaire format: {exc}", code="invalid_format"
         ) from None
     return QuestionnaireTemplateOut.model_validate(
         {
@@ -167,9 +167,8 @@ async def create_template(
     try:
         fmt = parse_format(body.format)
     except Exception as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid questionnaire format: {exc}",
+        raise BusinessRuleError(
+            f"Invalid questionnaire format: {exc}", code="invalid_format"
         ) from None
     t = QuestionnaireTemplate(
         name=body.name,
@@ -234,9 +233,8 @@ async def update_template(
         try:
             fmt = parse_format(body.format)
         except Exception as exc:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid questionnaire format: {exc}",
+            raise BusinessRuleError(
+                f"Invalid questionnaire format: {exc}", code="invalid_format"
             ) from None
         t.format_json = fmt.dumps()
     await db.commit()
@@ -295,9 +293,10 @@ async def _validate_answers_or_422(
     fmt = parse_format(t.format_json)
     errors = fmt.validate_answers(answers)
     if errors:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"message": "Invalid answers", "fields": errors},
+        raise BusinessRuleError(
+            "Invalid answers for this questionnaire",
+            code="invalid_answers",
+            details={"fields": errors},
         )
     return t
 
