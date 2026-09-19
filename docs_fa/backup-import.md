@@ -9,7 +9,8 @@
 - کانتینر api باینری `pg_dump` ندارد — دیتابیس با psycopg2 و
   `COPY ... TO STDOUT` به‌ازای هر جدول ریخته می‌شود (به‌ترتیب FK، با
   اسنپ‌شات REPEATABLE READ). DSN از `postgresql+asyncpg://` به
-  `postgresql://` ساده تبدیل می‌شود (psycopg2 خام_scheme میزانده را نمی‌فهمد).
+  `postgresql://` ساده تبدیل می‌شود (psycopg2 خام پیشوندهای dialect مثل
+  `+asyncpg` را در DSN نمی‌فهمد).
 - جداول در `SpooledTemporaryFile` و فایل‌های بارگذاری‌شده به‌صورت
   استریم بایگانی می‌شوند — آرشیو هرگز کامل در حافظه نیست.
 - دیتابیس SQLite (توسعه) به‌صورت فایل خام بایگانی می‌شود.

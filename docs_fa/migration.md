@@ -54,6 +54,12 @@ systemctl start old-patients  # سامانهٔ قدیمی همین‌طور به
 .venv/bin/python scripts/verify_import.py   # ALL CHECKS PASSED = قطع‌سوییچ امن
 ```
 
+> **هشدار:** DSN مقصد در `verify_import.py` به‌صورت ثابت درون اسکریپت است
+> (`postgresql+psycopg2://clinic:testpass@localhost:5432/clinic` — کانتینر
+> تست روی پورت 5432). پیش از استفاده روی استک واقعی، DSN را در ابتدای
+> اسکریپت ویرایش کنید (استک compose پورت **5434** را می‌دهد) و هرگز آن را
+> روی دیتابیسی که قابل کوئری‌زدن نیست اجرا نکنید.
+
 دیتابیس قدیمیِ ساختگی برای تست خودِ مهاجرت:
 `python3 scripts/make_test_legacy_db.py /tmp/legacy.db`
 

@@ -33,6 +33,10 @@ artifact) — NOT note-only.
   purge reclaims after the grace period.
 - The partial unique index `uq_attachments_stored_filename_live` tolerates
   multiple NULLs, so note-only rows never collide.
+- Uploads are **streamed** to disk in chunks with the size cap
+  (`MAX_UPLOAD_BYTES`, default 50 MB) enforced mid-read — an oversized
+  upload is rejected (413) without ever buffering the whole body in memory,
+  and no partial file is left behind.
 - Read paths filter the whole parent chain: a file is visible only if
   itself + appointment + patient are alive.
 

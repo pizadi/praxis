@@ -31,7 +31,7 @@ docker compose up -d --build
 
 ```bash
 # pg_dump شبانه با نگه‌داری ۱۴ روزه + فایل‌های بارگذاری‌شده
-0 2 * * *  docker exec clinic-db-1 pg_dump -U clinic clinic | gzip > /ssd/backups/db-$(date +\%F).sql.gz && find /ssd/backups -name 'db-*.sql.gz' -mtime +14 -delete
+0 2 * * *  docker exec new-patients-db-1 pg_dump -U clinic clinic | gzip > /ssd/backups/db-$(date +\%F).sql.gz && find /ssd/backups -name 'db-*.sql.gz' -mtime +14 -delete
 30 2 * * * rsync -a /ssd/clinic-data/uploads/ /ssd/backups/uploads/
 ```
 

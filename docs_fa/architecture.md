@@ -17,8 +17,8 @@
 ```
 backend/app
   api/v1/        روترها: auth، users، roles، patients، appointments،
-                 attachments، transactions، taxonomies، questionnaires،
-                 stats، trash، audit، backup، meta
+                 attachments، transactions، payments، taxonomies،
+                 questionnaires، stats، trash، audit، backup، meta
   api/deps.py    وابستگی‌های احراز هویت، نگهبان دسترسی، امنیت فایل
   core/          پیکربندی، امنیت (JWT/argon2)، خطاها، توکن‌ها،
                  کاتالوگ دسترسی‌ها + نقش‌های سیستمی
@@ -28,7 +28,8 @@ backend/app
   schemas/       مدل‌های Pydantic v2 ورودی/خروجی
   services/      لاگ اقدامات، اعتبارسنجی قالب پرسش‌نامه، فرمول نمره،
                  واردسازی پشتیبان، پاک‌سازی فایل‌های بی‌صاحب
-  alembic/       مهاجرت‌ها (فقط افزودنی؛ هنگام بوت کانتینر اعمال می‌شود)
+  alembic/       مهاجرت‌ها (هنگام بوت کانتینر اعمال می‌شوند؛ برای اجرای
+                 مجدد روی DB زنده امن — جز حذف‌های مستندِ ستون‌های قدیمی، افزودنی)
 frontend/src
   pages/         یک صفحه به ازای هر مسیر (رابط کاربری فارسی/راست‌چین)
   components/    پنل‌های مشترک (AppointmentPanel، FileDetailPane، ...)
