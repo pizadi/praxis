@@ -11,6 +11,13 @@ Version history:
          import with tarball versioning + rollback, automatic uploads
          purge, route-level + tab-close unsaved-changes guard,
          documentation (docs/ + docs_fa/ + README_fa)
+  1.2.1.dev1  security audit fixes: per-username login lockout (429
+         login_locked), timing-equalized login, logout audited + called by
+         the UI, refresh-token revocation on password change/deactivation,
+         streamed uploads with mid-read size cap, partial-backup import
+         fix, SQLite identifier escaping, CLINIC_ENV in compose, nginx
+         headers, UTC-"today" fix (server /meta/today), dark-mode color
+         tokens, Persian role display names
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1.dev1"
