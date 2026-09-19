@@ -9,4 +9,4 @@ Version history:
          close-behavior hardening
 """
 
-__version__ = "1.2.0.dev1"
+__version__ = "1.2.0.dev2"

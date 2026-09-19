@@ -8,13 +8,44 @@ import { useTheme } from './ThemeContext'
 
 const { Header, Content, Sider } = Layout
 
-const ITEMS = [
-  { key: '/', label: 'داشبورد' },
-  { key: '/schedule', label: 'برنامه روزانه' },
-  { key: '/payments', label: 'پرداخت‌های امروز', perm: 'payments.view' },
-  { key: '/patients', label: 'بیماران' },
-  { key: '/taxonomies', label: 'برچسب‌ها و تشخیص‌ها' },
-  { key: '/stats', label: 'آمار', perm: 'stats.view' },
+type MenuItem = { key: string; label: string; perm?: string }
+
+/** Sidebar sections; each group hides entirely when none of its items is
+ * permitted for the current user. */
+const GROUPS: { title: string; items: MenuItem[] }[] = [
+  {
+    title: 'عملیات روزانه',
+    items: [
+      { key: '/', label: 'داشبورد' },
+      { key: '/schedule', label: 'برنامه روزانه' },
+      { key: '/patients', label: 'بیماران' },
+      { key: '/taxonomies', label: 'برچسب‌ها و تشخیص‌ها' },
+    ],
+  },
+  {
+    title: 'مالی',
+    items: [
+      { key: '/payments', label: 'پرداخت‌های امروز', perm: 'payments.view' },
+      { key: '/stats', label: 'آمار', perm: 'stats.view' },
+    ],
+  },
+  {
+    title: 'پرسش‌نامه‌ها',
+    items: [
+      { key: '/questionnaires', label: 'قالب پرسش‌نامه‌ها', perm: 'questionnaires.templates' },
+      { key: '/questionnaire-responses', label: 'گزارش پاسخ‌ها', perm: 'questionnaires.read' },
+    ],
+  },
+  {
+    title: 'مدیریت',
+    items: [
+      { key: '/users', label: 'کاربران', perm: 'users.manage' },
+      { key: '/roles', label: 'نقش‌ها و دسترسی‌ها', perm: 'roles.manage' },
+      { key: '/trash', label: 'سبد بازیافت', perm: 'trash.view' },
+      { key: '/backup', label: 'پشتیبان‌گیری', perm: 'backup.manage' },
+      { key: '/audit', label: 'گزارش اقدامات', perm: 'audit.view' },
+    ],
+  },
 ]
 
 export const UserCtx = createContext<{
@@ -42,8 +73,8 @@ export default function AppLayout({ user, onLogout }: Props) {
   const can = (...perms: string[]) => hasPerm(user, ...perms)
 
   const selected =
-    ITEMS.map((i) => i.key)
-      .filter((k) => location.pathname.startsWith(k) && k !== '/')
+    GROUPS.flatMap((g) => g.items.map((i) => i.key))
+      .filter((k) => k !== '/' && location.pathname.startsWith(k))
       .sort((a, b) => b.length - a.length)[0] ?? '/'
 
   const doLogout = () => {
@@ -92,20 +123,13 @@ export default function AppLayout({ user, onLogout }: Props) {
             <Menu
               mode="inline"
               selectedKeys={[selected]}
-              items={[
-                ...ITEMS.filter((i) => !i.perm || can(i.perm)),
-                ...(can('trash.view') ? [{ key: '/trash', label: 'سبد بازیافت' }] : []),
-                ...(can('users.manage') ? [{ key: '/users', label: 'کاربران' }] : []),
-                ...(can('roles.manage') ? [{ key: '/roles', label: 'نقش‌ها و دسترسی‌ها' }] : []),
-                ...(can('questionnaires.templates')
-                  ? [{ key: '/questionnaires', label: 'قالب پرسش‌نامه‌ها' }]
-                  : []),
-                ...(can('questionnaires.read')
-                  ? [{ key: '/questionnaire-responses', label: 'گزارش پاسخ‌ها' }]
-                  : []),
-                ...(can('backup.manage') ? [{ key: '/backup', label: 'پشتیبان‌گیری' }] : []),
-                ...(can('audit.view') ? [{ key: '/audit', label: 'گزارش اقدامات' }] : []),
-              ]}
+              items={GROUPS.map((g) => ({
+                type: 'group' as const,
+                label: g.title,
+                children: g.items
+                  .filter((i) => !i.perm || can(i.perm))
+                  .map(({ key, label }) => ({ key, label })),
+              })).filter((g) => g.children.length > 0)}
               onClick={({ key }) => navigate(key)}
               style={{ borderInlineEnd: 'none', paddingTop: 12 }}
             />
