@@ -17,6 +17,15 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.scoring import (
+    MAX_FORMULA_LENGTH,
+    Formula,
+    FormulaError,
+    evaluate_formula,
+    parse_formula,
+    validate_refs,
+)
+
 KEY_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 QUESTION_TYPES = ("number", "choice", "string")
@@ -109,6 +118,9 @@ class QuestionnaireFormat(BaseModel):
     questions: list[
         Annotated[NumberQuestion | ChoiceQuestion | StringQuestion, Field(discriminator="type")]
     ] = Field(min_length=1, max_length=200)
+    # optional arithmetic formula over question keys for a total score
+    # ("" = no scoring); validated below, evaluated by score_of()
+    score_formula: str = Field(default="", max_length=MAX_FORMULA_LENGTH)
 
     @field_validator("questions")
     @classmethod
@@ -119,6 +131,16 @@ class QuestionnaireFormat(BaseModel):
             raise ValueError(f"duplicate question keys: {dupes}")
         return qs
 
+    @model_validator(mode="after")
+    def formula_ok(self) -> "QuestionnaireFormat":
+        if self.score_formula:
+            try:
+                formula = parse_formula(self.score_formula)
+                validate_refs(formula, {q.key: q.type for q in self.questions})
+            except FormulaError as exc:
+                raise ValueError(f"score formula: {exc}") from None
+        return self
+
     # --- lookups ----------------------------------------------------------
 
     @property
@@ -127,6 +149,49 @@ class QuestionnaireFormat(BaseModel):
 
     def question(self, key: str) -> NumberQuestion | ChoiceQuestion | StringQuestion | None:
         return next((q for q in self.questions if q.key == key), None)
+
+    # --- score formula ------------------------------------------------------
+
+    @property
+    def has_scoring(self) -> bool:
+        return bool(self.score_formula)
+
+    def parsed_formula(self) -> Formula | None:
+        """Parsed score formula (formats are validated, so this never raises)."""
+        if not self.score_formula:
+            return None
+        return parse_formula(self.score_formula)
+
+    def score_of(self, answers: dict) -> float | None:
+        """Evaluate score_formula against raw answers.
+
+        None when the template has no formula, or the formula cannot be
+        computed (missing/invalid referenced answer, chosen option without a
+        score, division by zero). Never raises on odd answer values.
+        """
+        formula = self.parsed_formula()
+        if formula is None:
+            return None
+        return evaluate_formula(formula, lambda key: self._operand(key, answers))
+
+    def _operand(self, key: str, answers: dict) -> float | None:
+        """Numeric contribution of one question to the formula (None if N/A)."""
+        q = self.question(key)
+        if q is None:
+            return None
+        v = answers.get(key)
+        if q.type == "number":
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return None
+            return float(v)
+        if q.type == "choice":
+            if not isinstance(v, str):
+                return None
+            opt = next((o for o in q.options if o.value == v), None)
+            if opt is None or opt.score is None:
+                return None
+            return float(opt.score)
+        return None
 
     # --- answer validation --------------------------------------------------
 

@@ -139,13 +139,14 @@ export default function UsersPage() {
       <Modal
         open={open}
         title={editing ? 'ویرایش کاربر' : 'کاربر جدید'}
+        maskClosable={false}
         onCancel={() => {
           setOpen(false)
           setEditing(null)
         }}
         onOk={() => form.submit()}
         confirmLoading={save.isPending}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
           {!editing && (

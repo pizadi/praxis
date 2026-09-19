@@ -100,6 +100,8 @@ export interface Attachment {
   appointment_id: number
   description: string
   notes: string
+  /** server-side storage name (UUID) — changes when the content is replaced */
+  stored_filename: string | null
   original_filename: string | null
   mime_type: string | null
   size_bytes: number | null
@@ -143,4 +145,8 @@ export interface QuestionnaireResponse {
   created_by_username: string | null
   created_at: string
   updated_at: string
+}
+
+export interface QuestionnaireResponseReport extends QuestionnaireResponse {
+  patient_national_id: string
 }

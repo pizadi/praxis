@@ -1,5 +1,17 @@
-import { useMemo } from 'react'
-import { Alert, Button, Descriptions, Form, Input, InputNumber, Popconfirm, Radio, Space, Typography } from 'antd'
+import { useEffect, useMemo } from 'react'
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Popconfirm,
+  Radio,
+  Space,
+  Typography,
+  type FormInstance,
+} from 'antd'
 import { ClearOutlined, EditOutlined } from '@ant-design/icons'
 
 import type { Answers, FormatDoc, Question } from '../lib/questionnaire'
@@ -105,9 +117,15 @@ function QuestionnaireCells({ merged }: { merged: ReturnType<typeof mergeRespons
           </Typography.Text>
         </Descriptions.Item>
       )}
-      {merged.totalScore !== null && (
+      {merged.scored && (
         <Descriptions.Item label="جمع نمره">
-          <Typography.Text strong>{merged.totalScore}</Typography.Text>
+          {merged.totalScore !== null ? (
+            <Typography.Text strong>{merged.totalScore}</Typography.Text>
+          ) : (
+            <Typography.Text type="secondary">
+              — (پاسخ همهٔ پرسش‌های مؤثر بر نمره لازم است)
+            </Typography.Text>
+          )}
         </Descriptions.Item>
       )}
     </Descriptions>
@@ -145,20 +163,32 @@ function ValueText({ question, value }: { question: Question; value: unknown }) 
 
 /**
  * Dynamic fill/edit form rendered from a template format. Submits the
- * answers object (nulls for untouched optional questions).
+ * answers object (nulls for untouched optional questions). The form
+ * instance is owned by the parent so server-side per-field errors can be
+ * fed back into it; validation is explicit (Persian per-field messages),
+ * NOT the silent min/max clamping of InputNumber.
  */
 export function QuestionnaireForm({
   format,
   initialAnswers,
   submitting,
   onFinish,
+  form,
 }: {
   format: FormatDoc
   initialAnswers?: Answers
   submitting?: boolean
   onFinish: (answers: Answers) => void
+  form: FormInstance<Record<string, unknown>>
 }) {
-  const [form] = Form.useForm<Record<string, unknown>>()
+  // the form store outlives this component (parent-owned instance) — reset
+  // whenever the format or the seeded answers change so stale values/errors
+  // never leak across responses
+  const fmtKey = (format.questions ?? []).map((q) => q.key).join('|')
+  useEffect(() => {
+    form.resetFields()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, fmtKey, initialAnswers])
 
   const finish = (values: Record<string, unknown>) => {
     // only include keys the user touched with a value; untouched stay absent
@@ -171,13 +201,7 @@ export function QuestionnaireForm({
   }
 
   return (
-    <Form
-      form={form}
-      layout="vertical"
-      onFinish={finish}
-      initialValues={initialAnswers ?? {}}
-      key={format.questions?.map((q) => q.key).join('|')}
-    >
+    <Form form={form} layout="vertical" onFinish={finish} initialValues={initialAnswers ?? {}}>
       {(format.questions ?? []).map((q) => (
         <Form.Item
           key={q.key}
@@ -191,13 +215,7 @@ export function QuestionnaireForm({
           rules={questionRule(q)}
         >
           {q.type === 'number' ? (
-            <InputNumber
-              style={{ width: 200 }}
-              min={q.min ?? undefined}
-              max={q.max ?? undefined}
-              precision={q.integer ? 0 : undefined}
-              addonAfter={q.unit || undefined}
-            />
+            <InputNumber style={{ width: 200 }} addonAfter={q.unit || undefined} />
           ) : q.type === 'choice' ? (
             <Radio.Group>
               <Space direction="vertical" size={2}>

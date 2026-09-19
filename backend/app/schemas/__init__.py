@@ -231,6 +231,7 @@ class AttachmentOut(BaseModel):
     appointment_id: int
     description: str
     notes: str
+    stored_filename: str | None
     original_filename: str | None
     mime_type: str | None
     size_bytes: int | None
@@ -411,6 +412,12 @@ class QuestionnaireResponseOut(BaseModel):
     created_by_username: str | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
+
+
+class QuestionnaireResponseReportOut(QuestionnaireResponseOut):
+    """Row of the cross-patient responses report (adds patient identity)."""
+
+    patient_national_id: str = ""
 
 
 class QuestionnaireResponseCreateIn(BaseModel):

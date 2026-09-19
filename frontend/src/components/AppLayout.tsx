@@ -65,7 +65,13 @@ export default function AppLayout({ user, onLogout }: Props) {
           }}
         >
           <Typography.Title level={4} style={{ margin: 0 }}>
-            سامانه مطب
+            پراکسیس
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, marginInlineStart: 10, direction: 'ltr', unicodeBidi: 'embed' }}
+            >
+              v{__APP_VERSION__}
+            </Typography.Text>
           </Typography.Title>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <Typography.Text>
@@ -93,6 +99,9 @@ export default function AppLayout({ user, onLogout }: Props) {
                 ...(can('roles.manage') ? [{ key: '/roles', label: 'نقش‌ها و دسترسی‌ها' }] : []),
                 ...(can('questionnaires.templates')
                   ? [{ key: '/questionnaires', label: 'قالب پرسش‌نامه‌ها' }]
+                  : []),
+                ...(can('questionnaires.read')
+                  ? [{ key: '/questionnaire-responses', label: 'گزارش پاسخ‌ها' }]
                   : []),
                 ...(can('backup.manage') ? [{ key: '/backup', label: 'پشتیبان‌گیری' }] : []),
                 ...(can('audit.view') ? [{ key: '/audit', label: 'گزارش اقدامات' }] : []),

@@ -24,11 +24,14 @@ import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, MinusCircleOutli
 import { api, apiError } from '../api/client'
 import type { Page, QuestionnaireTemplate } from '../api/types'
 import type { FormatDoc } from '../lib/questionnaire'
+import { validateFormulaText } from '../lib/questionnaire'
 
 /** Example JSON users can download as a starting point for uploads. */
 const EXAMPLE_FORMAT: FormatDoc = {
   version: 1,
   title: 'پرسش‌نامه نمونه',
+  // total score = arithmetic over question keys (number value / choice score)
+  score_formula: 'pain_level + mobility',
   questions: [
     { key: 'pain', label: 'شدت درد (۰ تا ۱۰)', type: 'number', required: true, min: 0, max: 10, integer: true, unit: '' },
     {
@@ -68,6 +71,7 @@ interface BuilderState {
   description: string
   title: string
   questions: BuilderQuestion[]
+  score_formula?: string
 }
 
 export default function QuestionnairesPage() {
@@ -228,6 +232,7 @@ export default function QuestionnairesPage() {
       <Modal
         open={open}
         title={editing ? `ویرایش قالب: ${editing.name}` : 'قالب جدید'}
+        maskClosable={false}
         onCancel={() => {
           setOpen(false)
           setEditing(null)
@@ -249,6 +254,7 @@ function builderToFormat(v: BuilderState): FormatDoc {
   return {
     version: 1,
     title: v.title ?? '',
+    score_formula: (v.score_formula ?? '').trim(),
     questions: (v.questions ?? []).map((q) => {
       const base = { key: q.key, label: q.label, type: q.type, required: !!q.required }
       if (q.type === 'number') {
@@ -287,6 +293,7 @@ function formatToBuilder(fmt: FormatDoc, name = '', description = '') {
     name,
     description,
     title: fmt.title ?? '',
+    score_formula: fmt.score_formula ?? '',
     questions: (fmt.questions ?? []).map((q) => ({ ...q })) as BuilderQuestion[],
   }
 }
@@ -302,6 +309,10 @@ function BuilderForm({
 }) {
   const [tab, setTab] = useState<'builder' | 'json'>('builder')
   const values = Form.useWatch([], form)
+  const scorableKeys = (values?.questions ?? [])
+    .filter((q) => q.type === 'number' || q.type === 'choice')
+    .map((q) => q.key)
+    .filter(Boolean)
   const preview = useMemo(() => {
     try {
       if (!values?.questions?.length) return null
@@ -404,6 +415,35 @@ function BuilderForm({
                   </Space>
                 )}
               </Form.List>
+
+              <Divider style={{ margin: '16px 0 8px' }} />
+              <Form.Item
+                name="score_formula"
+                label="فرمول جمع نمره (اختیاری)"
+                extra={
+                  `کلیدهای قابل استفاده: ${scorableKeys.join(', ') || '—'} — ` +
+                  'عملگرها: + - * / و پرانتز؛ توابع: min، max، abs — پاسخ خالی نمره را باطل می‌کند'
+                }
+                rules={[
+                  {
+                    validator: (_rule, value: string) => {
+                      const err = validateFormulaText(value ?? '', values?.questions ?? [])
+                      return err ? Promise.reject(new Error(err)) : Promise.resolve()
+                    },
+                  },
+                ]}
+              >
+                <Input
+                  dir="ltr"
+                  placeholder="مثلاً: 0.5 * pain_level + mobility"
+                  style={{
+                    width: 420,
+                    direction: 'ltr',
+                    textAlign: 'left',
+                    fontFamily: 'monospace',
+                  }}
+                />
+              </Form.Item>
             </Form>
           ),
         },
@@ -440,12 +480,36 @@ function BuilderForm({
 function TypeSpecificFields({ form, field }: { form: ReturnType<typeof Form.useForm<BuilderState>>[0]; field: number }) {
   const qType = Form.useWatch(['questions', field, 'type'], form)
   if (qType === 'number') {
+    // cross-field check both ways: revalidates when the sibling changes
+    const rangeRule = (
+      sibling: 'min' | 'max',
+      bad: (v: number, other: number) => boolean,
+      message: string,
+    ) => ({
+      validator: (_rule: unknown, v: number | null | undefined) => {
+        const other = form.getFieldValue(['questions', field, sibling])
+        if (v != null && other != null && bad(v, other)) {
+          return Promise.reject(new Error(message))
+        }
+        return Promise.resolve()
+      },
+    })
     return (
       <Space align="baseline" wrap style={{ marginTop: 0 }}>
-        <Form.Item name={[field, 'min']} label="حداقل">
+        <Form.Item
+          name={[field, 'min']}
+          label="حداقل"
+          dependencies={[['questions', field, 'max']]}
+          rules={[rangeRule('max', (v, o) => v > o, 'حداقل باید ≤ حداکثر باشد')]}
+        >
           <InputNumber style={{ width: 110 }} />
         </Form.Item>
-        <Form.Item name={[field, 'max']} label="حداکثر">
+        <Form.Item
+          name={[field, 'max']}
+          label="حداکثر"
+          dependencies={[['questions', field, 'min']]}
+          rules={[rangeRule('min', (v, o) => v < o, 'حداکثر باید ≥ حداقل باشد')]}
+        >
           <InputNumber style={{ width: 110 }} />
         </Form.Item>
         <Form.Item name={[field, 'integer']} label="عدد صحیح" valuePropName="checked">

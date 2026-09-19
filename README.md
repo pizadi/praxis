@@ -1,4 +1,4 @@
-# سامانه مطب — Clinic Management System
+# Praxis — پراکسیس | Clinic Management System
 
 FastAPI + React + PostgreSQL rewrite of a legacy Django/SQLite patient &
 appointment system. Persian (RTL) UI with Jalali calendar. Multi-user with
@@ -93,13 +93,63 @@ patient page's پرسش‌نامه‌ها segment — list/add/edit/delete, mult
 responses per template allowed. Answers are stored as raw nullable JSON and
 validated against the template at write time (unknown keys and
 type/range/choice violations are rejected; empty is always allowed —
-`required` is a form-level constraint only).
+`required` is a form-level constraint only). The fill form validates
+explicitly with per-field Persian messages (range/integer/choice/length) —
+both client-side and, authoritatively, server-side with inline per-field
+errors from the 422 envelope.
 
 There is deliberately **no snapshot**: rendering merges stored answers with
 the *current* template — questions removed from the template are ignored,
 new questions render as null, and values that no longer validate render as
 missing with a warning banner and a confirm-dialog button that clears the
 invalid fields (server-revalidated PATCH).
+
+**Scoring**: a template may define a `score_formula` — a small arithmetic
+expression over question keys (a number question contributes its answer, a
+choice question the chosen option's score), with `+ - * /`, parentheses and
+`min`/`max`/`abs` functions, e.g. `0.5 * pain + max(mobility, 2)`. The
+formula is parsed and validated (syntax + referenced keys must be numeric
+questions) on every template write path — same parser mirrored client-side
+in the builder for live feedback — and evaluated per response. Evaluation
+never invents a score: if any referenced answer is missing/invalid, a chosen
+option has no score, or the formula divides by zero, the total renders as
+"—". Without a formula, the total falls back to the sum of the chosen
+options' scores.
+
+**Responses report**: `/questionnaire-responses` (گزارش پاسخ‌ها,
+`questionnaires.read`) lists every response of a selected template in a
+horizontally-scrollable table — patient national ID, Jalali date, one column
+per question, and the total score when the template defines scoring — with
+a client-generated CSV export (UTF-8 BOM, all pages).
+
+## Patient page (appointments / files / questionnaires)
+
+The patient detail page is a three-segment workspace:
+
+- **نوبت‌ها** — appointment list + full detail panel (medical notes
+  CM/HX/PX/RX, files with upload, payments).
+- **همه فایل‌ها** — every attachment of the patient in one list; selecting a
+  row opens the detail pane: title, شرح, upload date, size, editable notes,
+  an authorized download button, and an **in-page preview** for images
+  (with a zoom toolbar) and PDFs (browser viewer). A file can be **attached
+  to a note-only document or replaced** later from the same pane (the
+  superseded file stays on disk until a trash purge). Preview/download
+  fetch bytes as authorized blobs — attachments never render from bare URLs.
+- **پرسش‌نامه‌ها** — the per-patient questionnaire workspace (above).
+
+**Unsaved changes are guarded**: editing the medical notes or a
+questionnaire form and then switching the segment (or jumping to another
+appointment) opens a three-way confirmation — ذخیره و ادامه (save, then the
+switch completes), دورریختن تغییرات (reset, then switch), بازگشت (stay).
+Dialogs across the app close only via their buttons — clicking the backdrop
+never dismisses a modal.
+
+## Versions
+
+The API version lives in `backend/app/__init__.py::__version__` and is
+reported by `GET /api/v1/health`; the UI version is `frontend/package.json`'s
+`version`, shown next to the header title. Both are bumped together
+(minor = feature, patch = fix).
 
 ## Soft deletes & trash
 
@@ -203,7 +253,7 @@ A synthetic legacy DB for testing the migration itself:
 
 ```bash
 cd backend
-../.venv/bin/python -m pytest tests -q      # 49 tests
+../.venv/bin/python -m pytest tests -q      # 52 tests
 ../.venv/bin/ruff check app tests ../scripts
 ../.venv/bin/mypy app
 
@@ -236,7 +286,8 @@ backend/app
   models/        domain.py (1:1 legacy schema + questionnaires),
                  system.py (users/roles/auth/audit)
   schemas/       Pydantic v2 request/response models
-  services/      audit trail, questionnaire format/answer validation
+   services/      audit trail, questionnaire format/answer validation,
+                  score-formula parser/evaluator
 backend/alembic  migrations (baseline: b7eee1c1aa98)
 backend/tests    pytest suite (isolated SQLite, per-test drop/create)
 frontend/src     pages, api client with refresh-token rotation, Jalali utils

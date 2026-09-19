@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -31,7 +31,7 @@ import {
   PlusOutlined,
 } from '@ant-design/icons'
 
-import { api, apiError } from '../api/client'
+import { api, apiFieldErrors, apiError } from '../api/client'
 import type {
   Appointment,
   AppointmentBrief,
@@ -43,16 +43,21 @@ import type {
   QuestionnaireTemplate,
 } from '../api/types'
 import type { Answers, FormatDoc } from '../lib/questionnaire'
-import { mergeResponse } from '../lib/questionnaire'
+import { faAnswerError, mergeResponse } from '../lib/questionnaire'
 import { fileSize, formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
 import { useUser } from '../components/AppLayout'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
-import AppointmentPanel from '../components/AppointmentPanel'
-import FileNotesExpanded from '../components/FileNotesExpanded'
+import AppointmentPanel, { type AppointmentPanelHandle } from '../components/AppointmentPanel'
+import FileDetailPane from '../components/FileDetailPane'
 import PatientFormModal from '../components/PatientFormModal'
 import { QuestionnaireForm, QuestionnaireView } from '../components/QuestionnaireRender'
 
 type ViewMode = 'appointments' | 'files' | 'questionnaires'
+
+/** A navigation the user requested while forms had unsaved changes. */
+type PendingNav = { kind: 'view'; view: ViewMode } | { kind: 'appt'; id: number | null }
+
+const normVal = (v: unknown) => (v == null || v === '' ? null : v)
 
 export default function PatientDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -80,6 +85,15 @@ export default function PatientDetailPage() {
   const [qSelectedId, setQSelectedId] = useState<number | null>(null)
   const [qMode, setQMode] = useState<'view' | 'create' | 'edit'>('view')
   const [qPickTemplate, setQPickTemplate] = useState<number | null>(null)
+  const [qForm] = Form.useForm<Record<string, unknown>>()
+
+  // --- unsaved-changes guard state ---
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(null)
+  const [pendingNav, setPendingNav] = useState<PendingNav | null>(null)
+  const [apptDirty, setApptDirty] = useState(false)
+  const apptPanelRef = useRef<AppointmentPanelHandle>(null)
+  /** runs after a guard-initiated save succeeds (completes the navigation) */
+  const afterSaveRef = useRef<(() => void) | null>(null)
 
   const { data: patient, isLoading } = useQuery({
     queryKey: ['patient', id],
@@ -168,6 +182,23 @@ export default function PatientDetailPage() {
     await qc.invalidateQueries({ queryKey: ['patient-questionnaires', id] })
   }
 
+  /** Surface server answer-validation errors inline, per field (the toast
+   * alone carries no field information). */
+  const showQErrors = (err: unknown) => {
+    afterSaveRef.current = null
+    const fields = apiFieldErrors(err)
+    const entries = Object.entries(fields ?? {})
+    if (entries.length > 0) {
+      qForm.setFields(
+        entries.map(([name, errors]) => ({
+          name,
+          errors: errors.map((m) => faAnswerError(m)),
+        })),
+      )
+    }
+    message.error(apiError(err).message)
+  }
+
   const createQ = useMutation({
     mutationFn: async (v: { template_id: number; answers: Answers }) =>
       (await api.post<QuestionnaireResponse>(`/patients/${id}/questionnaires`, v)).data,
@@ -177,8 +208,11 @@ export default function PatientDetailPage() {
       setQPickTemplate(null)
       setQSelectedId(created.id)
       await afterQSave()
+      const next = afterSaveRef.current
+      afterSaveRef.current = null
+      next?.()
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: showQErrors,
   })
 
   const updateQ = useMutation({
@@ -190,8 +224,11 @@ export default function PatientDetailPage() {
       message.success('پاسخ‌ها به‌روزرسانی شد')
       setQMode('view')
       await afterQSave()
+      const next = afterSaveRef.current
+      afterSaveRef.current = null
+      next?.()
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: showQErrors,
   })
 
   const deleteQ = useMutation({
@@ -232,6 +269,59 @@ export default function PatientDetailPage() {
     onError: (err) => message.error(apiError(err).message),
   })
 
+  // selected questionnaire + template (before the early return: the dirty
+  // guard below watches the form and needs them unconditionally)
+  const selectedQ = (qResponses.data?.items ?? []).find((r) => r.id === qSelectedId) ?? null
+  const selectedQTemplate = selectedQ
+    ? ((qTemplates.data?.items ?? []).find((t) => t.id === selectedQ.template_id) ?? null)
+    : null
+  const createTemplate = qPickTemplate
+    ? ((qTemplates.data?.items ?? []).find((t) => t.id === qPickTemplate) ?? null)
+    : null
+
+  // --- unsaved-changes detection ---------------------------------------------
+  // appointment notes: reported by AppointmentPanel via onDirtyChange
+  // questionnaire answers: watched here (the form instance is parent-owned)
+  const qValues = Form.useWatch([], qForm)
+  const qDirty = useMemo(() => {
+    if (qMode === 'view' || !qValues) return false
+    if (qMode === 'create') {
+      return Object.values(qValues).some((v) => v != null && v !== '')
+    }
+    if (!selectedQ) return false
+    const stored = selectedQ.answers ?? {}
+    const keys = new Set([...Object.keys(stored), ...Object.keys(qValues)])
+    for (const k of keys) {
+      if (normVal(stored[k]) !== normVal(qValues[k])) return true
+    }
+    return false
+  }, [qMode, qValues, selectedQ])
+
+  const dirty = apptDirty || qDirty
+
+  const applyNav = useCallback((t: PendingNav | null) => {
+    if (t == null) return
+    if (t.kind === 'view') {
+      setView(t.view)
+      setQMode('view')
+      setQSelectedId(null)
+      setQPickTemplate(null)
+    } else if (t.id == null) {
+      setSearchParams({})
+    } else {
+      setSearchParams({ appt: String(t.id) })
+    }
+  }, [setSearchParams])
+
+  /** Route navigations through the unsaved-changes confirmation. */
+  const requestNav = useCallback(
+    (t: PendingNav) => {
+      if (dirty) setPendingNav(t)
+      else applyNav(t)
+    },
+    [dirty, applyNav],
+  )
+
   if (isLoading || !patient) {
     return <Card loading />
   }
@@ -252,17 +342,31 @@ export default function PatientDetailPage() {
   }
 
   const selectAppt = (apptId: number | null) => {
-    if (apptId == null) setSearchParams({})
-    else setSearchParams({ appt: String(apptId) })
+    requestNav({ kind: 'appt', id: apptId })
   }
 
-  const selectedQ = (qResponses.data?.items ?? []).find((r) => r.id === qSelectedId) ?? null
-  const selectedQTemplate = selectedQ
-    ? ((qTemplates.data?.items ?? []).find((t) => t.id === selectedQ.template_id) ?? null)
-    : null
-  const createTemplate = qPickTemplate
-    ? ((qTemplates.data?.items ?? []).find((t) => t.id === qPickTemplate) ?? null)
-    : null
+  const selectedFile =
+    (allFiles.data?.items ?? []).find((f) => f.id === selectedFileId) ?? null
+
+  /** Guard-initiated save: submit the active dirty form; its onSuccess hook
+   * completes the pending navigation via afterSaveRef. */
+  const saveActiveForm = () => {
+    const target = pendingNav
+    setPendingNav(null)
+    if (target == null) return
+    afterSaveRef.current = () => applyNav(target)
+    if (qDirty) qForm.submit()
+    else apptPanelRef.current?.save()
+  }
+
+  const discardAndNav = () => {
+    const target = pendingNav
+    setPendingNav(null)
+    afterSaveRef.current = null
+    if (qDirty) qForm.resetFields()
+    if (apptDirty) apptPanelRef.current?.reset()
+    applyNav(target)
+  }
 
   return (
     <Row gutter={16} style={{ minHeight: 'calc(100vh - 112px)' }}>
@@ -325,16 +429,12 @@ export default function PatientDetailPage() {
             </Descriptions>
           </Card>
 
-          {/* view switcher: appointments / all files / questionnaires */}
+          {/* view switcher: appointments / all files / questionnaires
+              (routed through the unsaved-changes confirmation) */}
           <Segmented<ViewMode>
             block
             value={view}
-            onChange={(v) => {
-              setView(v)
-              setQMode('view')
-              setQSelectedId(null)
-              setQPickTemplate(null)
-            }}
+            onChange={(v) => requestNav({ kind: 'view', view: v })}
             options={[
               { value: 'appointments', label: 'نوبت‌ها', icon: <PlusOutlined /> },
               { value: 'files', label: 'همه فایل‌ها', icon: <FileOutlined /> },
@@ -432,17 +532,9 @@ export default function PatientDetailPage() {
                     : false
                 }
                 locale={{ emptyText: 'فایلی موجود نیست' }}
-                expandable={{
-                  expandedRowRender: (f) => <FileNotesExpanded file={f} />,
-                  rowExpandable: (f) => hasPerm('medical_notes.view') || !!f.notes.trim(),
-                }}
+                rowClassName={(f) => (selectedFileId === f.id ? 'ant-table-row-selected' : '')}
                 onRow={(f) => ({
-                  onClick: (e) => {
-                    // clicking the expand chevron must not jump to the appointment
-                    if ((e.target as HTMLElement).closest('.ant-table-row-expand-icon'))
-                      return
-                    selectAppt(f.appointment_id)
-                  },
+                  onClick: () => setSelectedFileId(f.id),
                   style: { cursor: 'pointer' },
                 })}
                 columns={[
@@ -559,17 +651,33 @@ export default function PatientDetailPage() {
               />
             </Card>
           ) : (
-            <AppointmentPanel appointmentId={selectedAppt} />
+            <AppointmentPanel
+              key={selectedAppt}
+              ref={apptPanelRef}
+              appointmentId={selectedAppt}
+              onDirtyChange={setApptDirty}
+              onSaved={() => {
+                const next = afterSaveRef.current
+                afterSaveRef.current = null
+                next?.()
+              }}
+              onSaveFailed={() => {
+                afterSaveRef.current = null
+              }}
+            />
           ))}
 
-        {view === 'files' && (
-          <Card>
-            <Empty
-              description="برای دیدن جزئیات یک فایل، نوبت مربوطه را انتخاب کنید"
-              style={{ marginTop: 80 }}
-            />
-          </Card>
-        )}
+        {view === 'files' &&
+          (selectedFile == null ? (
+            <Card>
+              <Empty
+                description="برای مشاهده جزئیات، یک فایل از فهرست انتخاب کنید"
+                style={{ marginTop: 80 }}
+              />
+            </Card>
+          ) : (
+            <FileDetailPane file={selectedFile} />
+          ))}
 
         {view === 'questionnaires' && (
           <Card
@@ -602,6 +710,7 @@ export default function PatientDetailPage() {
                 </Space>
               ) : (
                 <QuestionnaireForm
+                  form={qForm}
                   format={createTemplate.format as FormatDoc}
                   submitting={createQ.isPending}
                   onFinish={(answers) =>
@@ -620,6 +729,7 @@ export default function PatientDetailPage() {
               </Typography.Text>
             ) : qMode === 'edit' ? (
               <QuestionnaireForm
+                form={qForm}
                 format={selectedQTemplate.format as FormatDoc}
                 initialAnswers={selectedQ.answers}
                 submitting={updateQ.isPending}
@@ -647,12 +757,42 @@ export default function PatientDetailPage() {
         )}
       </Col>
 
+      {/* ---------- unsaved-changes confirmation (forced choice) ---------- */}
+      <Modal
+        open={pendingNav != null}
+        title="تغییرات ذخیره نشده"
+        closable={false}
+        maskClosable={false}
+        width={440}
+        footer={
+          <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+            <Button onClick={() => setPendingNav(null)}>بازگشت به ویرایش</Button>
+            <Space>
+              <Button
+                danger
+                onClick={() => {
+                  discardAndNav()
+                }}
+              >
+                دورریختن تغییرات
+              </Button>
+              <Button type="primary" onClick={saveActiveForm}>
+                ذخیره و ادامه
+              </Button>
+            </Space>
+          </Space>
+        }
+      >
+        یکی از فرم‌ها تغییرات ذخیره‌نشده دارد. قبل از تغییر نما چه کاری انجام شود؟
+      </Modal>
+
       {/* ---------- new appointment modal (Jalali, defaults to now) ---------- */}
       <Modal
         open={newApptOpen}
         title="ثبت نوبت جدید"
         okText="ثبت"
         cancelText="انصراف"
+        maskClosable={false}
         onCancel={() => setNewApptOpen(false)}
         confirmLoading={addAppt.isPending}
         onOk={() => apptForm.submit()}

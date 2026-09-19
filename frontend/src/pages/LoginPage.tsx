@@ -52,7 +52,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
       }}
     >
       <Card style={{ width: 360, textAlign: 'center' }}>
-        <Typography.Title level={3}>سامانه مطب</Typography.Title>
+        <Typography.Title level={3}>پراکسیس</Typography.Title>
         <Form layout="vertical" onFinish={finish}>
           <Form.Item
             name="username"

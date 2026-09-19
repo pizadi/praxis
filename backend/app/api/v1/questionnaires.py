@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
-from app.api.pagination import Page, clamp_limit_offset, paginate
+from app.api.pagination import Page, clamp_limit_offset, paginate, paginate_rows
 from app.core.errors import BusinessRuleError
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -25,6 +25,7 @@ from app.models import Patient, QuestionnaireResponse, QuestionnaireTemplate, Us
 from app.schemas import (
     QuestionnaireResponseCreateIn,
     QuestionnaireResponseOut,
+    QuestionnaireResponseReportOut,
     QuestionnaireResponseUpdateIn,
     QuestionnaireTemplateCreateIn,
     QuestionnaireTemplateOut,
@@ -323,7 +324,9 @@ async def list_patient_responses(
             QuestionnaireResponse.deleted_at.is_(None),
             QuestionnaireTemplate.deleted_at.is_(None),
         )
-        .order_by(QuestionnaireResponse.created_at.desc())
+        .order_by(
+            QuestionnaireResponse.created_at.desc(), QuestionnaireResponse.id.desc()
+        )
     )
     limit, offset = clamp_limit_offset(limit, offset)
     rows, total = await paginate(db, stmt, limit=limit, offset=offset)
@@ -398,6 +401,56 @@ async def create_response(
         summary=f"{t.name if t else body.template_id} — {patient.first_name} {patient.last_name}",
     )
     return _response_out(r, template_name=t.name if t else "", created_by=actor.username)
+
+
+@router.get(
+    "/questionnaires/responses", response_model=Page[QuestionnaireResponseReportOut]
+)
+async def list_responses_report(
+    template_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_perm("questionnaires.read")),
+):
+    """Cross-patient responses of one template (report table + CSV export).
+
+    Subtree rule: only rows whose patient (and template) are live are listed.
+    """
+    t = await _get_live_template(db, template_id)
+    stmt = (
+        select(QuestionnaireResponse, Patient.national_id)
+        .join(Patient, QuestionnaireResponse.patient_id == Patient.id)
+        .where(
+            QuestionnaireResponse.template_id == template_id,
+            QuestionnaireResponse.deleted_at.is_(None),
+            Patient.deleted_at.is_(None),
+        )
+        .order_by(QuestionnaireResponse.created_at.desc(), QuestionnaireResponse.id.desc())
+    )
+    limit, offset = clamp_limit_offset(limit, offset)
+    rows, total = await paginate_rows(db, stmt, limit=limit, offset=offset)
+    users_map: dict[int, str] = {}
+    if rows:
+        uids = {r.created_by_id for r, _ in rows if r.created_by_id is not None}
+        if uids:
+            urows = (
+                await db.execute(select(User.id, User.username).where(User.id.in_(uids)))
+            ).all()
+            users_map = {uid: username for uid, username in urows}
+    items = []
+    for r, national_id in rows:
+        base = _response_out(
+            r,
+            template_name=t.name,
+            created_by=users_map.get(r.created_by_id) if r.created_by_id else None,
+        )
+        items.append(
+            QuestionnaireResponseReportOut.model_validate(
+                {**base.model_dump(), "patient_national_id": national_id}
+            )
+        )
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/questionnaires/responses/{response_id}", response_model=QuestionnaireResponseOut)

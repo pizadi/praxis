@@ -149,6 +149,7 @@ export default function RolesPage() {
       <Modal
         open={open}
         title={editing ? `ویرایش نقش: ${editing.name}` : 'نقش جدید'}
+        maskClosable={false}
         onCancel={() => {
           setOpen(false)
           setEditing(null)

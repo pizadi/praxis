@@ -397,3 +397,162 @@ async def test_questionnaire_audit_trail(client):
         "/api/v1/admin/audit?entity_type=questionnaire_template", headers=auth(admin)
     )
     assert any(e["action"] == "create" for e in r.json()["items"])
+
+
+# --- score formula ----------------------------------------------------------------
+
+
+async def test_score_formula_template_validation(client):
+    admin = (await login(client))[0]
+    counter = {"n": 0}
+
+    async def try_format(fmt):
+        counter["n"] += 1
+        return await client.post(
+            "/api/v1/questionnaires/templates",
+            json={"name": f"t{counter['n']}", "format": fmt},
+            headers=auth(admin),
+        )
+
+    # valid formula round-trips
+    ok = {**VALID_FORMAT, "score_formula": "pain_level * 2 + mobility"}
+    r = await try_format(ok)
+    assert r.status_code == 201, r.text
+    assert r.json()["format"]["score_formula"] == "pain_level * 2 + mobility"
+
+    # empty string = no scoring
+    assert (await try_format({**VALID_FORMAT, "score_formula": ""})).status_code == 201
+
+    # functions are supported (min/max 1+ args, abs exactly 1)
+    fns = {
+        **VALID_FORMAT,
+        "score_formula": "min(pain_level, 10) + max(mobility, 0) + abs(0 - pain_level)",
+    }
+    assert (await try_format(fns)).status_code == 201
+
+    # syntax errors
+    for bad in ("pain_level +* 2", "pain_level +", "(pain_level", "pain_level 2", "2."):
+        assert (
+            await try_format({**VALID_FORMAT, "score_formula": bad})
+        ).status_code == 422, bad
+
+    # unknown key / string question referenced / unknown function / bad arity
+    assert (
+        await try_format({**VALID_FORMAT, "score_formula": "nope + 1"})
+    ).status_code == 422
+    assert (
+        await try_format({**VALID_FORMAT, "score_formula": "notes + 1"})
+    ).status_code == 422
+    assert (
+        await try_format({**VALID_FORMAT, "score_formula": "clamp(pain_level, 0, 1)"})
+    ).status_code == 422
+    assert (
+        await try_format({**VALID_FORMAT, "score_formula": "abs(pain_level, 2)"})
+    ).status_code == 422
+
+    # validate endpoint accepts/rejects formulas the same way, persisting nothing
+    r = await client.post(
+        "/api/v1/questionnaires/templates/validate",
+        json={"name": "t", "format": ok},
+        headers=auth(admin),
+    )
+    assert r.status_code == 200
+    r = await client.post(
+        "/api/v1/questionnaires/templates/validate",
+        json={"name": "t", "format": {**VALID_FORMAT, "score_formula": "nope + 1"}},
+        headers=auth(admin),
+    )
+    assert r.status_code == 422
+    r = await client.get("/api/v1/questionnaires/templates", headers=auth(admin))
+    # only the three valid variants from this test were saved
+    assert r.json()["total"] == 3
+
+
+async def test_min_max_answer_boundaries(client):
+    """Exact min/max values are accepted; one step beyond is rejected."""
+    admin = (await login(client))[0]
+    tpl = await create_template(client, admin)
+    pat = await create_patient(client, admin)
+
+    for good in ({"pain_level": 0}, {"pain_level": 10}):
+        r = await client.post(
+            f"/api/v1/patients/{pat['id']}/questionnaires",
+            json={"template_id": tpl["id"], "answers": good},
+            headers=auth(admin),
+        )
+        assert r.status_code == 201, good
+        assert r.json()["answers"] == good
+
+    for bad in ({"pain_level": -1}, {"pain_level": 11}, {"pain_level": 10.5}):
+        r = await client.post(
+            f"/api/v1/patients/{pat['id']}/questionnaires",
+            json={"template_id": tpl["id"], "answers": bad},
+            headers=auth(admin),
+        )
+        assert r.status_code == 422, bad
+        fields = r.json()["error"]["details"]["fields"]
+        assert set(fields) == {"pain_level"}
+
+
+async def test_responses_report_endpoint(client):
+    admin = (await login(client))[0]
+    tpl = await create_template(client, admin)
+    pat1 = await create_patient(client, admin, "0012345678")
+    pat2 = await create_patient(client, admin, "0022345678")
+    for pat, pain in ((pat1, 2), (pat1, 5), (pat2, 9)):
+        r = await client.post(
+            f"/api/v1/patients/{pat['id']}/questionnaires",
+            json={"template_id": tpl["id"], "answers": {"pain_level": pain}},
+            headers=auth(admin),
+        )
+        assert r.status_code == 201
+
+    # receptionist (questionnaires.read) can read the report
+    await make_user(client, admin, "recep1", role="receptionist")
+    recep = (await login(client, "recep1", "passw0rd123"))[0]
+
+    r = await client.get(
+        f"/api/v1/questionnaires/responses?template_id={tpl['id']}", headers=auth(recep)
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 3
+    assert [i["answers"]["pain_level"] for i in body["items"]] == [9, 5, 2]  # newest first
+    assert all(i["patient_national_id"] in ("0012345678", "0022345678") for i in body["items"])
+    assert all(i["template_name"] == "درد" for i in body["items"])
+    assert all(i["created_by_username"] == "admin" for i in body["items"])
+
+    # pagination
+    r = await client.get(
+        f"/api/v1/questionnaires/responses?template_id={tpl['id']}&limit=2&offset=0",
+        headers=auth(admin),
+    )
+    assert len(r.json()["items"]) == 2 and r.json()["total"] == 3
+    r = await client.get(
+        f"/api/v1/questionnaires/responses?template_id={tpl['id']}&limit=2&offset=2",
+        headers=auth(admin),
+    )
+    assert len(r.json()["items"]) == 1 and r.json()["total"] == 3
+
+    # soft-deleted patient hides its responses (subtree rule)
+    await client.delete(f"/api/v1/patients/{pat2['id']}", headers=auth(admin))
+    r = await client.get(
+        f"/api/v1/questionnaires/responses?template_id={tpl['id']}", headers=auth(admin)
+    )
+    assert r.json()["total"] == 2
+    await client.post(
+        f"/api/v1/admin/trash/patients/{pat2['id']}/restore", headers=auth(admin)
+    )
+
+    # soft-deleted template → 404 (the report only lists live templates)
+    await client.delete(f"/api/v1/questionnaires/templates/{tpl['id']}", headers=auth(admin))
+    r = await client.get(
+        f"/api/v1/questionnaires/responses?template_id={tpl['id']}", headers=auth(admin)
+    )
+    assert r.status_code == 404
+
+    # unknown template → 404
+    r = await client.get(
+        "/api/v1/questionnaires/responses?template_id=99999", headers=auth(admin)
+    )
+    assert r.status_code == 404

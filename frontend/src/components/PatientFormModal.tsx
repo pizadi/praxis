@@ -86,10 +86,11 @@ export default function PatientFormModal({
     <Modal
       open={open}
       title={patient ? 'ویرایش بیمار' : 'بیمار جدید'}
+      maskClosable={false}
       onCancel={onCancel}
       onOk={() => form.submit()}
       confirmLoading={save.isPending}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
         <Form.Item
