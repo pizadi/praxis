@@ -1,7 +1,7 @@
 {
   "name": "praxis-frontend",
   "private": true,
-  "version": "1.2.0.dev7",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
