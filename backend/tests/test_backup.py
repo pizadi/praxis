@@ -276,10 +276,12 @@ async def test_import_older_schema_version(client):
             "patients": ["id", "national_id", "first_name", "last_name"],
         },
     })
+    with open(old_db, "rb") as f:
+        old_db_bytes = f.read()
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for name, data in (
-            ("db/clinic.sqlite3", open(old_db, "rb").read()),
+            ("db/clinic.sqlite3", old_db_bytes),
             ("manifest.json", manifest.encode()),
         ):
             info = tarfile.TarInfo(name=name)
