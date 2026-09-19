@@ -2,6 +2,7 @@ import datetime as dt
 
 from fastapi import APIRouter, Depends, status
 
+import app
 from app.api.deps import get_current_user
 from app.db.session import APP_TZ, db_is_ready
 from app.models import User
@@ -12,7 +13,7 @@ router = APIRouter(tags=["meta"])
 @router.get("/health", status_code=status.HTTP_200_OK)
 async def health():
     db_ok = await db_is_ready()
-    return {"status": "ok" if db_ok else "degraded", "db": db_ok}
+    return {"status": "ok" if db_ok else "degraded", "db": db_ok, "version": app.__version__}
 
 
 @router.get("/meta/today")

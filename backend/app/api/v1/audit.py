@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
 from app.db.session import get_db
 from app.models import AuditLog, User
@@ -22,7 +22,7 @@ async def list_audit(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_perm("audit.view")),
 ):
     stmt = select(AuditLog).order_by(AuditLog.created_at.desc())
     if action:

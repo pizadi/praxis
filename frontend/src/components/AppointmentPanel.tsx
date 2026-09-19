@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { forwardRef, useEffect, useMemo, useImperativeHandle, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   App as AntApp,
@@ -30,17 +30,40 @@ import { useSearchParams } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
 import type { Appointment, Attachment, Page, Transaction } from '../api/types'
+import { downloadAttachment } from '../lib/files'
 import { fileSize, formatMoney } from '../lib/jalali'
 import { useUser } from './AppLayout'
 import FileNotesExpanded from './FileNotesExpanded'
+
+/** Imperative handle for the unsaved-changes guard in the patient page. */
+export interface AppointmentPanelHandle {
+  isDirty: () => boolean
+  /** Submit the notes form (result surfaces via onSaved / field errors). */
+  save: () => void
+  /** Reset the notes form back to the server values. */
+  reset: () => void
+}
+
+interface Props {
+  appointmentId: number
+  /** Reports whether the notes form has unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void
+  /** Fires after a successful notes save (used to complete a guarded navigation). */
+  onSaved?: () => void
+  /** Fires when a notes save fails (guard hook cleanup in the parent). */
+  onSaveFailed?: () => void
+}
 
 /**
  * Full detail view of one appointment (notes / files / payments tabs).
  * Used both by the standalone /appointments/:id page and embedded in the
  * patient detail page's main pane.
  */
-export default function AppointmentPanel({ appointmentId }: { appointmentId: number }) {
-  const { isDoctor } = useUser()
+const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function AppointmentPanel(
+  { appointmentId, onDirtyChange, onSaved, onSaveFailed },
+  ref,
+) {
+  const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
   const [, setSearchParams] = useSearchParams()
@@ -68,14 +91,45 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
   const [addFileForm] = Form.useForm<{ description: string; notes: string }>()
   const [addFileList, setAddFileList] = useState<UploadFile[]>([])
 
+  // --- unsaved-changes guard (notes form vs server values) ---
+  const canMedical = hasPerm('medical_notes.view')
+  const notesValues = Form.useWatch([], notesForm)
+  const notesDirty = useMemo(() => {
+    if (!canMedical || !appt.data || !notesValues) return false
+    const norm = (v: unknown) => (v == null ? '' : String(v))
+    const a2 = appt.data
+    return (
+      norm(notesValues.notes) !== norm(a2.notes) ||
+      norm(notesValues.cm) !== norm(a2.cm) ||
+      norm(notesValues.hx) !== norm(a2.hx) ||
+      norm(notesValues.px) !== norm(a2.px) ||
+      norm(notesValues.rx) !== norm(a2.rx)
+    )
+  }, [canMedical, appt.data, notesValues])
+
+  useEffect(() => {
+    onDirtyChange?.(notesDirty)
+    return () => onDirtyChange?.(false) // unmount/view switch → not dirty anymore
+  }, [notesDirty, onDirtyChange])
+
+  useImperativeHandle(ref, () => ({
+    isDirty: () => notesDirty,
+    save: () => notesForm.submit(),
+    reset: () => notesForm.resetFields(),
+  }))
+
   const saveNotes = useMutation({
     mutationFn: async (values: Partial<Appointment>) =>
       api.patch(`/appointments/${appointmentId}`, values),
     onSuccess: () => {
       message.success('ذخیره شد')
       qc.invalidateQueries({ queryKey: ['appointment', appointmentId] })
+      onSaved?.()
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: (err) => {
+      message.error(apiError(err).message)
+      onSaveFailed?.()
+    },
   })
 
   const addTxn = useMutation({
@@ -147,15 +201,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
 
   const downloadFile = async (fileId: number, name: string | null) => {
     try {
-      const res = await api.get(`/appointments/files/${fileId}/download`, {
-        responseType: 'blob',
-      })
-      const url = URL.createObjectURL(res.data)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = name ?? 'file'
-      link.click()
-      URL.revokeObjectURL(url)
+      await downloadAttachment(fileId, name)
     } catch (err) {
       message.error(apiError(err).message)
     }
@@ -170,7 +216,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
     <>
       <Tabs
         tabBarExtraContent={
-          isDoctor && (
+          hasPerm('appointments.delete') && (
             <Popconfirm
               title="نوبت به سبد بازیافت منتقل شود؟"
               onConfirm={() => deleteAppt.mutate()}
@@ -185,7 +231,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
         {
           key: 'notes',
           label: 'یادداشت‌ها',
-          children: isDoctor ? (
+          children: hasPerm('medical_notes.view') ? (
             <Form
               form={notesForm}
               layout="vertical"
@@ -232,7 +278,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
           label: `فایل‌ها (${files.data?.length ?? 0})`,
           children: (
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              {isDoctor && (
+              {hasPerm('files.write') && (
                 <Card
                   title="افزودن فایل"
                   size="small"
@@ -285,7 +331,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
                 size="small"
                 expandable={{
                   expandedRowRender: (f) => <FileNotesExpanded file={f} />,
-                  rowExpandable: (f) => isDoctor || !!f.notes.trim(),
+                  rowExpandable: (f) => hasPerm('medical_notes.view') || !!f.notes.trim(),
                 }}
                 columns={[
                   {
@@ -325,7 +371,7 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
                         >
                           دانلود
                         </Button>
-                        {isDoctor && (
+                        {hasPerm('files.delete') && (
                           <Popconfirm
                             title="فایل به سبد بازیافت منتقل شود؟"
                             onConfirm={() => delFile.mutate(f.id)}
@@ -427,4 +473,6 @@ export default function AppointmentPanel({ appointmentId }: { appointmentId: num
     />
     </>
   )
-}
+})
+
+export default AppointmentPanel

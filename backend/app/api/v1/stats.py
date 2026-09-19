@@ -7,8 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_at_least
-from app.core.enums import UserRole
+from app.api.deps import require_perm
 from app.db.session import APP_TZ, get_db
 from app.models import Appointment, Patient, Transaction, User
 from app.schemas import DescriptionStat, StatsSummary
@@ -118,7 +117,7 @@ async def stats_summary(
     date_from: dt.date,
     date_to: dt.date,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.DOCTOR)),
+    _: User = Depends(require_perm("stats.view")),
 ):
     """Aggregates over appointments and transactions by appointment date, in APP_TIMEZONE."""
     return await _summary_data(db, date_from, date_to)
@@ -129,7 +128,7 @@ async def stats_summary_csv(
     date_from: dt.date,
     date_to: dt.date,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.DOCTOR)),
+    _: User = Depends(require_perm("stats.view")),
 ) -> StreamingResponse:
     summary = await _summary_data(db, date_from, date_to)
     buf = io.StringIO()

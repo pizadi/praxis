@@ -2,7 +2,14 @@
 
 import datetime as dt
 
+from app.db.session import APP_TZ
 from tests.conftest import auth, login, make_user
+
+
+def _today() -> str:
+    """The API defaults to «today in APP_TZ» — the tests must use the same
+    day (UTC and Tehran dates differ between ~20:30 and 00:00 UTC)."""
+    return dt.datetime.now(APP_TZ).strftime("%Y-%m-%d")
 
 
 async def _mk_patient(client, token, nid="1234567890") -> int:
@@ -45,7 +52,7 @@ async def test_today_payments_day_filtering(client):
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
 
-    today = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d")
+    today = _today()
     # "today" in Tehran may differ from UTC — pick an in-day appointment time
     a1 = await _mk_appt(client, token, pid, f"{today}T09:00:00+03:30")
     a2 = await _mk_appt(client, token, pid, f"{today}T18:00:00+03:30")
@@ -87,7 +94,7 @@ async def test_today_payments_day_filtering(client):
 async def test_today_payments_soft_delete_visibility(client):
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
-    today = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d")
+    today = _today()
     a1 = await _mk_appt(client, token, pid, f"{today}T09:00:00+03:30")
     a2 = await _mk_appt(client, token, pid, f"{today}T12:00:00+03:30")
     await _mk_txn(client, token, a1["id"], "ویزیت", 100000, True)

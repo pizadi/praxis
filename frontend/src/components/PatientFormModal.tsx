@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App as AntApp, Form, Input, Modal, Select } from 'antd'
 
 import { api, apiError } from '../api/client'
-import type { NamedRef, Patient } from '../api/types'
+import type { NamedRef, Page, Patient } from '../api/types'
 
 export interface PatientForm {
   national_id: string
@@ -38,11 +38,13 @@ export default function PatientFormModal({
 
   const tags = useQuery({
     queryKey: ['tags'],
-    queryFn: async () => (await api.get<NamedRef[]>('/tags')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/tags', { params: { limit: 1000 } })).data.items,
   })
   const diagnoses = useQuery({
     queryKey: ['diagnoses'],
-    queryFn: async () => (await api.get<NamedRef[]>('/diagnoses')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/diagnoses', { params: { limit: 1000 } })).data.items,
   })
 
   useEffect(() => {
@@ -86,10 +88,11 @@ export default function PatientFormModal({
     <Modal
       open={open}
       title={patient ? 'ویرایش بیمار' : 'بیمار جدید'}
+      maskClosable={false}
       onCancel={onCancel}
       onOk={() => form.submit()}
       confirmLoading={save.isPending}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
         <Form.Item

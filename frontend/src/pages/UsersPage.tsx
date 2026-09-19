@@ -15,13 +15,13 @@ import {
 } from 'antd'
 
 import { api, apiError } from '../api/client'
-import type { Page, User } from '../api/types'
+import type { Page, Role, User } from '../api/types'
 
 interface UserForm {
   username: string
   password?: string
   full_name?: string
-  role: 'admin' | 'doctor' | 'receptionist'
+  role_id: number
   is_active?: boolean
 }
 
@@ -35,6 +35,11 @@ export default function UsersPage() {
   const users = useQuery({
     queryKey: ['users'],
     queryFn: async () => (await api.get<Page<User>>('/users', { params: { limit: 100 } })).data,
+  })
+
+  const roles = useQuery({
+    queryKey: ['roles'],
+    queryFn: async () => (await api.get<Page<Role>>('/roles', { params: { limit: 100 } })).data,
   })
 
   const save = useMutation({
@@ -67,8 +72,6 @@ export default function UsersPage() {
     onError: (err) => message.error(apiError(err).message),
   })
 
-  const roleLabel = (r: string) =>
-    r === 'admin' ? 'مدیر' : r === 'doctor' ? 'پزشک' : 'پذیرش'
 
   return (
     <div>
@@ -95,7 +98,7 @@ export default function UsersPage() {
           columns={[
             { title: 'نام کاربری', dataIndex: 'username' },
             { title: 'نام کامل', dataIndex: 'full_name' },
-            { title: 'نقش', dataIndex: 'role', render: roleLabel },
+            { title: 'نقش', dataIndex: 'role_name' },
             {
               title: 'فعال',
               dataIndex: 'is_active',
@@ -113,7 +116,7 @@ export default function UsersPage() {
                       form.setFieldsValue({
                         username: u.username,
                         full_name: u.full_name,
-                        role: u.role,
+                        role_id: u.role_id,
                         is_active: u.is_active,
                       })
                       setOpen(true)
@@ -136,13 +139,14 @@ export default function UsersPage() {
       <Modal
         open={open}
         title={editing ? 'ویرایش کاربر' : 'کاربر جدید'}
+        maskClosable={false}
         onCancel={() => {
           setOpen(false)
           setEditing(null)
         }}
         onOk={() => form.submit()}
         confirmLoading={save.isPending}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
           {!editing && (
@@ -167,13 +171,14 @@ export default function UsersPage() {
           <Form.Item name="full_name" label="نام کامل">
             <Input />
           </Form.Item>
-          <Form.Item name="role" label="نقش" rules={[{ required: true }]}>
+          <Form.Item name="role_id" label="نقش" rules={[{ required: true }]}>
             <Select
-              options={[
-                { value: 'admin', label: 'مدیر' },
-                { value: 'doctor', label: 'پزشک' },
-                { value: 'receptionist', label: 'پذیرش' },
-              ]}
+              showSearch
+              optionFilterProp="label"
+              options={(roles.data?.items ?? []).map((r) => ({
+                value: r.id,
+                label: r.name,
+              }))}
             />
           </Form.Item>
           {editing && (

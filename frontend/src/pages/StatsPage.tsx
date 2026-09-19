@@ -9,13 +9,13 @@ import { useUser } from '../components/AppLayout'
 import { JalaliRangePicker } from '../components/JalaliDates'
 
 export default function StatsPage() {
-  const { isDoctor } = useUser()
+  const { hasPerm } = useUser()
   const today = new Date().toISOString().slice(0, 10)
   const [range, setRange] = useState<[string, string]>([today, today])
 
   const { data, isLoading } = useQuery({
     queryKey: ['stats', range],
-    enabled: isDoctor,
+    enabled: hasPerm('stats.view'),
     queryFn: async () =>
       (
         await api.get<StatsSummary>('/stats/summary', {
@@ -24,7 +24,7 @@ export default function StatsPage() {
       ).data,
   })
 
-  if (!isDoctor) {
+  if (!hasPerm('stats.view')) {
     return (
       <Card>
         <Typography.Text type="secondary">

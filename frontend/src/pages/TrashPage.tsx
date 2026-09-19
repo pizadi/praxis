@@ -34,6 +34,9 @@ const TYPE_LABELS: Record<string, string> = {
   tags: 'برچسب‌ها',
   diagnoses: 'تشخیص‌ها',
   users: 'کاربران',
+  roles: 'نقش‌ها',
+  questionnaire_templates: 'قالب پرسش‌نامه‌ها',
+  questionnaire_responses: 'پاسخ‌های پرسش‌نامه',
 }
 
 function TrashTable({
@@ -144,10 +147,10 @@ function TrashTable({
 }
 
 export default function TrashPage() {
-  const { user } = useUser()
-  const isAdmin = user.role === 'admin'
+  const { hasPerm } = useUser()
+  const canPurge = hasPerm('trash.purge')
 
-  const types = isAdmin
+  const types = canPurge
     ? Object.keys(TYPE_LABELS)
     : ['patients', 'appointments', 'transactions', 'attachments', 'tags', 'diagnoses']
 
@@ -156,14 +159,14 @@ export default function TrashPage() {
       <Typography.Title level={3}>سبد بازیافت</Typography.Title>
       <Typography.Paragraph type="secondary">
         موارد حذف‌شده اینجا نمایش داده می‌شوند و تا حذف قطعی قابل بازگردانی هستند.
-        {isAdmin && ' حذف قطعی فقط برای مدیر فعال است و فایل‌های فیزیکی را پاک می‌کند.'}
+        {canPurge && ' حذف قطعی فقط برای مدیر فعال است و فایل‌های فیزیکی را پاک می‌کند.'}
       </Typography.Paragraph>
       <Card>
         <Tabs
           items={types.map((t) => ({
             key: t,
             label: TYPE_LABELS[t],
-            children: <TrashTable type={t} canPurge={isAdmin} />,
+            children: <TrashTable type={t} canPurge={canPurge} />,
           }))}
         />
       </Card>

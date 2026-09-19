@@ -18,17 +18,23 @@ def error_response(status_code: int, code: str, message: str, details: Any = Non
 class ConflictError(Exception):
     """409 — duplicate name / national ID, etc."""
 
-    def __init__(self, message: str, code: str = "conflict") -> None:
+    def __init__(
+        self, message: str, code: str = "conflict", details: Any = None
+    ) -> None:
         self.message = message
         self.code = code
+        self.details = details
 
 
 class BusinessRuleError(Exception):
     """422 — semantically invalid operation (bad date range, etc.)."""
 
-    def __init__(self, message: str, code: str = "business_rule") -> None:
+    def __init__(
+        self, message: str, code: str = "business_rule", details: Any = None
+    ) -> None:
         self.message = message
         self.code = code
+        self.details = details
 
 
 class NotFoundError(Exception):
@@ -62,13 +68,16 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ConflictError)
     async def conflict_handler(_: Request, exc: ConflictError) -> JSONResponse:
         return error_response(
-            status.HTTP_409_CONFLICT, code=exc.code, message=exc.message
+            status.HTTP_409_CONFLICT, code=exc.code, message=exc.message, details=exc.details
         )
 
     @app.exception_handler(BusinessRuleError)
     async def business_rule_handler(_: Request, exc: BusinessRuleError) -> JSONResponse:
         return error_response(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, code=exc.code, message=exc.message
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=exc.code,
+            message=exc.message,
+            details=exc.details,
         )
 
     @app.exception_handler(NotFoundError)

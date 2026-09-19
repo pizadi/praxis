@@ -239,3 +239,86 @@ class Attachment(Base):
     )
 
     appointment: Mapped[Appointment] = relationship(back_populates="attachments")
+
+
+class QuestionnaireTemplate(Base):
+    """Admin-defined questionnaire format.
+
+    `format_json` holds the validated format document:
+    {"version": 1, "title": str, "questions": [
+        {"key": "snake_case", "label": str, "type": "number"|"choice"|"string",
+         "required": bool, ...type-specific fields...}
+    ]}
+    Responses store raw key→value JSON (nullable); rendering merges them with
+    the *current* template (no snapshot): removed keys are ignored, new
+    questions render as null, invalid values render as missing.
+    """
+
+    __tablename__ = "questionnaire_templates"
+    __table_args__ = (
+        Index(
+            "uq_questionnaire_templates_name_live",
+            "name",
+            unique=True,
+            **partial_unique_where(),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+    format_json: Mapped[str] = mapped_column(Text, nullable=False)
+    deleted_at: Mapped[dt.datetime | None] = soft_delete_column()
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    responses: Mapped[list["QuestionnaireResponse"]] = relationship(
+        back_populates="template"
+    )
+
+
+class QuestionnaireResponse(Base):
+    """One filled questionnaire, attached to a PATIENT (not an appointment).
+
+    `answers_json` maps question key → value (int/float | str | null).
+    Keys not in the (possibly edited) template are tolerated in storage and
+    ignored at render time; required/validity is enforced only at write time.
+    """
+
+    __tablename__ = "questionnaire_responses"
+    __table_args__ = (
+        Index("ix_questionnaire_responses_patient_id", "patient_id"),
+        Index("ix_questionnaire_responses_template_id", "template_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("questionnaire_templates.id"), nullable=False
+    )
+    answers_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    deleted_at: Mapped[dt.datetime | None] = soft_delete_column()
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    patient: Mapped[Patient] = relationship()
+    template: Mapped[QuestionnaireTemplate] = relationship(back_populates="responses")

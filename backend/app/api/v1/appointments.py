@@ -6,9 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import can_view_medical_notes, require_at_least
+from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate, paginate_rows
-from app.core.enums import UserRole
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Appointment, Attachment, Patient, Transaction, User
@@ -62,7 +61,7 @@ def _out(appt: Appointment, user: User) -> AppointmentOut:
         "created_at": appt.created_at,
         "updated_at": appt.updated_at,
     }
-    if not can_view_medical_notes(user):
+    if not user.has_perm("medical_notes.view"):
         for k in ("cm", "hx", "px", "rx"):
             data[k] = ""
     return AppointmentOut.model_validate(data)
@@ -90,7 +89,7 @@ async def list_appointments(
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("appointments.read")),
 ):
     """Date filters are interpreted in APP_TIMEZONE (day boundaries)."""
     filters: list = [Appointment.patient_id == patient_id] if patient_id else []
@@ -151,7 +150,7 @@ async def create_appointment(
     body: AppointmentCreateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("appointments.create")),
 ):
     patient = await db.scalar(
         select(Patient).where(
@@ -191,7 +190,7 @@ async def create_appointment(
 async def get_appointment(
     appointment_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("appointments.read")),
 ):
     appt = await _get_or_404(db, appointment_id)
     return _out(appt, user)
@@ -203,7 +202,7 @@ async def update_appointment(
     body: AppointmentUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("appointments.update")),
 ):
     appt = await _get_or_404(db, appointment_id)
     data = body.model_dump(exclude_unset=True)
@@ -237,7 +236,7 @@ async def delete_appointment(
     appointment_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("appointments.delete")),
 ):
     """Soft delete; the appointment's files/transactions become invisible via
     join filtering and return on restore. Physical files untouched."""
@@ -269,7 +268,7 @@ async def list_patient_files(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("files.read")),
 ):
     """Every live file across all live appointments of one patient, newest first."""
     from app.api.v1.patients import _get_or_404 as _patient_or_404
@@ -304,7 +303,7 @@ async def list_patient_transactions(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("transactions.read")),
 ):
     """Every live payment across all live appointments of one patient."""
     from app.api.v1.patients import _get_or_404 as _patient_or_404

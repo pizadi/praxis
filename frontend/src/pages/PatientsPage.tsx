@@ -52,7 +52,7 @@ export default function PatientsPage() {
   // advanced filters (all applied SQL-side; digits normalized to ASCII)
   const [filters, setFilters] = useState<PatientFilters>(EMPTY_FILTERS)
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const { user } = useUser()
+  const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Patient | null>(null)
@@ -82,11 +82,13 @@ export default function PatientsPage() {
 
   const tags = useQuery({
     queryKey: ['tags'],
-    queryFn: async () => (await api.get<NamedRef[]>('/tags')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/tags', { params: { limit: 1000 } })).data.items,
   })
   const diagnoses = useQuery({
     queryKey: ['diagnoses'],
-    queryFn: async () => (await api.get<NamedRef[]>('/diagnoses')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/diagnoses', { params: { limit: 1000 } })).data.items,
   })
 
   const remove = useMutation({
@@ -312,7 +314,7 @@ export default function PatientsPage() {
                     >
                       ویرایش
                     </Button>
-                    {user.role === 'admin' && (
+                    {hasPerm('patients.delete') && (
                       <Popconfirm
                         title="بیمار به سبد بازیافت منتقل شود؟ (نوبت‌ها و فایل‌ها پنهان می‌شوند)"
                         onConfirm={() => remove.mutate(p.id)}

@@ -6,11 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
-    require_at_least,
+    require_perm,
     resolve_stored_path,
     save_upload,
 )
-from app.core.enums import UserRole
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Appointment, Attachment, Patient, User
@@ -59,7 +58,7 @@ async def _get_attachment_or_404(db: AsyncSession, attachment_id: int) -> Attach
 async def list_files(
     appointment_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("files.read")),
 ):
     await _get_appt_or_404(db, appointment_id)
     rows = (
@@ -87,7 +86,7 @@ async def upload_file(
     description: str = Form(""),
     notes: str = Form(""),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("files.write")),
 ):
     await _get_appt_or_404(db, appointment_id)
     data = await file.read()
@@ -127,7 +126,7 @@ async def create_note_file(
     body: AttachmentCreateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("files.write")),
 ):
     """Create a note-only attachment (description + notes, no physical file)."""
     await _get_appt_or_404(db, appointment_id)
@@ -163,7 +162,7 @@ async def update_file(
     body: AttachmentUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("files.write")),
 ):
     """Update description/notes. (Legacy bug: old system silently dropped these edits.)"""
     att = await _get_attachment_or_404(db, attachment_id)
@@ -191,12 +190,55 @@ async def update_file(
     return att
 
 
+@router.post("/files/{attachment_id}/content", response_model=AttachmentOut)
+async def set_attachment_content(
+    attachment_id: int,
+    file: UploadFile,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_perm("files.write")),
+):
+    """Attach a physical file to an existing attachment row, or replace the
+    one it holds (note-only rows get a file; missing_file rows are repaired).
+    description/notes are preserved. The superseded physical file stays on
+    disk — trash purge remains the only path that unlinks stored files."""
+    att = await _get_attachment_or_404(db, attachment_id)
+    data = await file.read()
+    meta = save_upload(data, file.filename or "upload.bin")
+    had_file = bool(att.stored_filename) and not att.missing_file
+    old_stored = att.stored_filename
+    att.stored_filename = meta["stored_filename"]
+    att.original_filename = meta["original_filename"]
+    att.mime_type = meta["mime_type"]
+    att.size_bytes = meta["size_bytes"]
+    att.missing_file = False
+    await db.commit()
+    await db.refresh(att)
+    await audit.log_action(
+        db,
+        user=user,
+        request=request,
+        action=audit.UPDATE,
+        entity_type="file",
+        entity_id=att.id,
+        summary=meta["original_filename"],
+        details={
+            "appointment_id": att.appointment_id,
+            "replaced": had_file,
+            "old_stored_filename": old_stored,
+            "new_stored_filename": meta["stored_filename"],
+            "size": meta["size_bytes"],
+        },
+    )
+    return att
+
+
 @router.delete("/files/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file(
     attachment_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.DOCTOR)),
+    user: User = Depends(require_perm("files.delete")),
 ):
     """Soft delete; physical file stays until a trash purge removes it."""
     att = await _get_attachment_or_404(db, attachment_id)
@@ -218,7 +260,7 @@ async def delete_file(
 async def download_file(
     attachment_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("files.read")),
 ):
     """Streamed download; path resolution is containment-checked (no traversal)."""
     att = await _get_attachment_or_404(db, attachment_id)

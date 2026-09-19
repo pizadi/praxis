@@ -9,9 +9,30 @@ export interface User {
   id: number
   username: string
   full_name: string
-  role: 'admin' | 'doctor' | 'receptionist'
+  role_id: number
+  role_name: string
+  permissions: string[]
   is_active: boolean
   created_at: string
+}
+
+export interface Role {
+  id: number
+  name: string
+  is_system: boolean
+  permissions: string[]
+  user_count: number
+  created_at: string
+}
+
+export interface PermissionItem {
+  key: string
+  label: string
+}
+
+export interface PermissionGroup {
+  group: string
+  items: PermissionItem[]
 }
 
 export interface Page<T> {
@@ -79,6 +100,8 @@ export interface Attachment {
   appointment_id: number
   description: string
   notes: string
+  /** server-side storage name (UUID) — changes when the content is replaced */
+  stored_filename: string | null
   original_filename: string | null
   mime_type: string | null
   size_bytes: number | null
@@ -102,4 +125,28 @@ export interface StatsSummary {
   cash_amount: number
   num_transactions: number
   by_description: DescriptionStat[]
+}
+
+export interface QuestionnaireTemplate {
+  id: number
+  name: string
+  description: string
+  format: import('../lib/questionnaire').FormatDoc
+  created_at: string
+  updated_at: string
+}
+
+export interface QuestionnaireResponse {
+  id: number
+  patient_id: number
+  template_id: number
+  template_name: string
+  answers: import('../lib/questionnaire').Answers
+  created_by_username: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface QuestionnaireResponseReport extends QuestionnaireResponse {
+  patient_national_id: string
 }

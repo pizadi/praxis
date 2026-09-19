@@ -18,14 +18,18 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
         id: 0,
         username: values.username,
         full_name: '',
-        role: 'receptionist',
+        role_id: 0,
+        role_name: '',
+        permissions: [],
       })
       const me = await api.get('/auth/me')
       const user: StoredUser = {
         id: me.data.id,
         username: me.data.username,
         full_name: me.data.full_name,
-        role: me.data.role,
+        role_id: me.data.role_id,
+        role_name: me.data.role_name,
+        permissions: me.data.permissions ?? [],
       }
       setTokens(res.data.access_token, res.data.refresh_token, user)
       window.dispatchEvent(new Event('clinic-auth-changed'))
@@ -48,7 +52,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
       }}
     >
       <Card style={{ width: 360, textAlign: 'center' }}>
-        <Typography.Title level={3}>سامانه مطب</Typography.Title>
+        <Typography.Title level={3}>پراکسیس</Typography.Title>
         <Form layout="vertical" onFinish={finish}>
           <Form.Item
             name="username"

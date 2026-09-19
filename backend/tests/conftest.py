@@ -60,9 +60,11 @@ async def make_user(
     role: str = "receptionist",
     password: str = "passw0rd123",
 ) -> None:
+    roles = (await client.get("/api/v1/roles", headers=auth(admin_token))).json()
+    role_id = next(r["id"] for r in roles["items"] if r["name"] == role)
     r = await client.post(
         "/api/v1/users",
-        json={"username": username, "password": password, "role": role},
+        json={"username": username, "password": password, "role_id": role_id},
         headers=auth(admin_token),
     )
     assert r.status_code == 201, r.text

@@ -35,6 +35,9 @@ const ENTITY_LABELS: Record<string, string> = {
   tag: 'برچسب',
   diagnosi: 'تشخیص',
   user: 'کاربر',
+  role: 'نقش',
+  questionnaire_template: 'قالب پرسش‌نامه',
+  questionnaire_response: 'پاسخ پرسش‌نامه',
 }
 
 export default function AuditPage() {

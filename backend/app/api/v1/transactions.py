@@ -4,9 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_at_least
+from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.enums import UserRole
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Appointment, Patient, Transaction, User
@@ -56,7 +55,7 @@ async def list_transactions(
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    _: User = Depends(require_perm("transactions.read")),
 ):
     await _get_appt_or_404(db, appointment_id)
     stmt = (
@@ -87,7 +86,7 @@ async def create_transaction(
     body: TransactionCreateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("transactions.write")),
 ):
     await _get_appt_or_404(db, appointment_id)
     txn = Transaction(
@@ -118,7 +117,7 @@ async def update_transaction(
     body: TransactionUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("transactions.write")),
 ):
     txn = await _get_txn_or_404(db, txn_id)
     data = body.model_dump(exclude_unset=True)
@@ -149,7 +148,7 @@ async def delete_transaction(
     txn_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_at_least(UserRole.RECEPTIONIST)),
+    user: User = Depends(require_perm("transactions.delete")),
 ):
     txn = await _get_txn_or_404(db, txn_id)
     txn.deleted_at = utc_now()
