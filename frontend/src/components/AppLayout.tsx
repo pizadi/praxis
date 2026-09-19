@@ -1,9 +1,10 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useCallback, useRef } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Button, Typography, theme as antdTheme } from 'antd'
 import { LogoutOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 
 import { clearAuth, hasPerm, type StoredUser } from '../api/client'
+import { NavGuardCtx, type NavBlocker } from './NavGuard'
 import { useTheme } from './ThemeContext'
 
 const { Header, Content, Sider } = Layout
@@ -72,6 +73,22 @@ export default function AppLayout({ user, onLogout }: Props) {
   const { token } = antdTheme.useToken()
   const can = (...perms: string[]) => hasPerm(user, ...perms)
 
+  // route-level unsaved-changes guard (see NavGuard.tsx): the mounted page
+  // registers a blocker; menu navigations are then confirmed by the page's
+  // own save/discard/stay dialog instead of happening silently
+  const blockerRef = useRef<NavBlocker | null>(null)
+  const registerNavBlocker = useCallback((b: NavBlocker | null) => {
+    blockerRef.current = b
+  }, [])
+  const navigateGuarded = useCallback(
+    (to: string) => {
+      const b = blockerRef.current
+      if (b && b.isDirty()) b.requestLeave(to)
+      else navigate(to)
+    },
+    [navigate],
+  )
+
   const selected =
     GROUPS.flatMap((g) => g.items.map((i) => i.key))
       .filter((k) => k !== '/' && location.pathname.startsWith(k))
@@ -84,8 +101,9 @@ export default function AppLayout({ user, onLogout }: Props) {
   }
 
   return (
-    <UserCtx.Provider value={{ user, hasPerm: can }}>
-      <Layout style={{ minHeight: '100vh' }}>
+    <NavGuardCtx.Provider value={{ registerNavBlocker, navigateGuarded }}>
+      <UserCtx.Provider value={{ user, hasPerm: can }}>
+        <Layout style={{ minHeight: '100vh' }}>
         <Header
           style={{
             display: 'flex',
@@ -130,7 +148,7 @@ export default function AppLayout({ user, onLogout }: Props) {
                   .filter((i) => !i.perm || can(i.perm))
                   .map(({ key, label }) => ({ key, label })),
               })).filter((g) => g.children.length > 0)}
-              onClick={({ key }) => navigate(key)}
+              onClick={({ key }) => navigateGuarded(key)}
               style={{ borderInlineEnd: 'none', paddingTop: 12 }}
             />
           </Sider>
@@ -139,6 +157,7 @@ export default function AppLayout({ user, onLogout }: Props) {
           </Content>
         </Layout>
       </Layout>
-    </UserCtx.Provider>
+      </UserCtx.Provider>
+    </NavGuardCtx.Provider>
   )
 }

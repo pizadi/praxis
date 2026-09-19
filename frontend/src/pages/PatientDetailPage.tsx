@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -46,6 +46,7 @@ import type { Answers, FormatDoc } from '../lib/questionnaire'
 import { faAnswerError, mergeResponse } from '../lib/questionnaire'
 import { fileSize, formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
 import { useUser } from '../components/AppLayout'
+import { useBeforeUnloadGuard, useNavGuard } from '../components/NavGuard'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
 import AppointmentPanel, { type AppointmentPanelHandle } from '../components/AppointmentPanel'
 import FileDetailPane from '../components/FileDetailPane'
@@ -55,7 +56,10 @@ import { QuestionnaireForm, QuestionnaireView } from '../components/Questionnair
 type ViewMode = 'appointments' | 'files' | 'questionnaires'
 
 /** A navigation the user requested while forms had unsaved changes. */
-type PendingNav = { kind: 'view'; view: ViewMode } | { kind: 'appt'; id: number | null }
+type PendingNav =
+  | { kind: 'view'; view: ViewMode }
+  | { kind: 'appt'; id: number | null }
+  | { kind: 'route'; to: string }
 
 const normVal = (v: unknown) => (v == null || v === '' ? null : v)
 
@@ -306,12 +310,14 @@ export default function PatientDetailPage() {
       setQMode('view')
       setQSelectedId(null)
       setQPickTemplate(null)
+    } else if (t.kind === 'route') {
+      navigate(t.to)
     } else if (t.id == null) {
       setSearchParams({})
     } else {
       setSearchParams({ appt: String(t.id) })
     }
-  }, [setSearchParams])
+  }, [navigate, setSearchParams])
 
   /** Route navigations through the unsaved-changes confirmation. */
   const requestNav = useCallback(
@@ -321,6 +327,19 @@ export default function PatientDetailPage() {
     },
     [dirty, applyNav],
   )
+
+  // guard sidebar-menu navigations + tab close while dirty
+  const { registerNavBlocker } = useNavGuard()
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+  useEffect(() => {
+    registerNavBlocker({
+      isDirty: () => dirtyRef.current,
+      requestLeave: (to: string) => setPendingNav({ kind: 'route', to }),
+    })
+    return () => registerNavBlocker(null)
+  }, [registerNavBlocker])
+  useBeforeUnloadGuard(dirty)
 
   if (isLoading || !patient) {
     return <Card loading />
@@ -783,7 +802,8 @@ export default function PatientDetailPage() {
           </Space>
         }
       >
-        یکی از فرم‌ها تغییرات ذخیره‌نشده دارد. قبل از تغییر نما چه کاری انجام شود؟
+        یکی از فرم‌ها تغییرات ذخیره‌نشده دارد. قبل از رفتن به بخش دیگر چه کاری
+        انجام شود؟
       </Modal>
 
       {/* ---------- new appointment modal (Jalali, defaults to now) ---------- */}

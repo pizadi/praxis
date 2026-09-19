@@ -20,8 +20,11 @@
   (`rx`) — are visible/editable only with `medical_notes.view`
   (server-blanked otherwise).
 - The patient page is a three-segment workspace (نوبت‌ها / همه فایل‌ها /
-  پرسش‌نامه‌ها). Switching segments or appointments with unsaved changes
-  opens a three-way confirmation: save & continue / discard / stay.
+  پرسش‌نامه‌ها). Switching segments, switching appointments, leaving the
+  page via the sidebar menu, or closing/refreshing the tab with unsaved
+  changes warns: segment/appointment switches and menu navigation open a
+  three-way confirmation (save & continue / discard / stay); tab close uses
+  the browser's native «leave site?» dialog.
 - **Technical guard-rail**: `AppointmentPanel` must be mounted with
   `key={appointmentId}` — rc-field-form does not re-apply `initialValues`
   on re-render, and without the remount the previous appointment's notes
