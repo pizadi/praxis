@@ -306,3 +306,70 @@ async def test_import_older_schema_version(client):
     item = r.json()["items"][0]
     assert item["first_name"] == "قدیمی"
     assert item["phone_number"] == ""
+
+
+async def test_uploads_purge_removes_orphans_only(client):
+    """The automatic sweeper removes unreferenced storage-named files older
+    than the grace period; referenced / soft-deleted / foreign / young files
+    stay; the pass is audited as the system user."""
+    import os
+    import time as time_mod
+
+    from app.services.uploads_purge import purge_once
+
+    token, _ = await login(client)
+    r = await client.post(
+        "/api/v1/patients",
+        json={"national_id": "1234567890", "first_name": "الف", "last_name": "ب",
+              "year_of_birth": "1370", "gender": 0},
+        headers=auth(token),
+    )
+    pid = r.json()["id"]
+    r = await client.post(f"/api/v1/patients/{pid}/appointments",
+                          json={"scheduled_at": "2026-09-10T10:30:00+03:30"},
+                          headers=auth(token))
+    appt = r.json()
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        files={"file": ("keep.txt", io.BytesIO(b"referenced"), "text/plain")},
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+    stored_ref = r.json()["stored_filename"]
+    upload_dir = os.environ["UPLOAD_DIR"]
+
+    # soft-deleted attachment's file is still owned → kept
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        files={"file": ("del.txt", io.BytesIO(b"deleted-owner"), "text/plain")},
+        headers=auth(token),
+    )
+    stored_del = r.json()["stored_filename"]
+    await client.delete(f"/api/v1/appointments/files/{r.json()['id']}", headers=auth(token))
+
+    # orphans: old uuid-named files (purgeable) + a foreign file (kept)
+    old_orphan = os.path.join(upload_dir, "a" * 32 + ".bin")
+    young_orphan = os.path.join(upload_dir, "b" * 32 + ".bin")
+    foreign = os.path.join(upload_dir, "readme-somebody-put-here.txt")
+    for p in (old_orphan, young_orphan, foreign):
+        with open(p, "wb") as f:
+            f.write(b"orphan")
+    old_ts = time_mod.time() - 25 * 3600  # older than the 24h grace period
+    os.utime(old_orphan, (old_ts, old_ts))
+
+    from app.db.session import SessionLocal
+    async with SessionLocal() as session:
+        s = await purge_once(session)
+    assert s["removed"] == 1
+    assert not os.path.exists(old_orphan)
+    assert os.path.exists(young_orphan)  # within the grace period
+    assert os.path.exists(foreign)  # not a storage name — never touched
+    assert os.path.exists(os.path.join(upload_dir, stored_ref))
+    assert os.path.exists(os.path.join(upload_dir, stored_del))
+
+    # audited as system
+    r = await client.get("/api/v1/admin/audit", params={"entity_type": "uploads_purge"},
+                         headers=auth(token))
+    assert r.status_code == 200
+    entries = r.json()["items"]
+    assert entries and entries[0]["username"] == "system"
