@@ -23,6 +23,7 @@ import {
   Typography,
 } from 'antd'
 import {
+  CalendarOutlined,
   DeleteOutlined,
   EditOutlined,
   FileOutlined,
@@ -30,6 +31,7 @@ import {
   PaperClipOutlined,
   PlusOutlined,
 } from '@ant-design/icons'
+import { theme as antdTheme } from 'antd'
 
 import { api, apiFieldErrors, apiError } from '../api/client'
 import type {
@@ -69,6 +71,7 @@ export default function PatientDetailPage() {
   const navigate = useNavigate()
   const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
+  const { token: themeToken } = antdTheme.useToken()
   const qc = useQueryClient()
 
   const isAdmin = hasPerm('patients.delete')
@@ -252,7 +255,7 @@ export default function PatientDetailPage() {
     mutationFn: async (r: QuestionnaireResponse) => {
       const fmt = (qTemplates.data?.items ?? []).find((t) => t.id === r.template_id)
         ?.format as FormatDoc | undefined
-      if (!fmt) throw new Error('template missing')
+      if (!fmt) throw new Error('قالب پرسش‌نامه یافت نشد')
       const merged = mergeResponse(fmt, r.answers)
       const next: Answers = {}
       for (const q of fmt.questions ?? []) {
@@ -455,7 +458,7 @@ export default function PatientDetailPage() {
             value={view}
             onChange={(v) => requestNav({ kind: 'view', view: v })}
             options={[
-              { value: 'appointments', label: 'نوبت‌ها', icon: <PlusOutlined /> },
+              { value: 'appointments', label: 'نوبت‌ها', icon: <CalendarOutlined /> },
               { value: 'files', label: 'همه فایل‌ها', icon: <FileOutlined /> },
               {
                 value: 'questionnaires',
@@ -489,7 +492,7 @@ export default function PatientDetailPage() {
                     style={{
                       cursor: 'pointer',
                       paddingInline: 16,
-                      background: selectedAppt === a.id ? '#e6f4ff' : undefined,
+                      background: selectedAppt === a.id ? themeToken.colorPrimaryBg : undefined,
                     }}
                     onClick={() => selectAppt(a.id)}
                   >
@@ -508,7 +511,7 @@ export default function PatientDetailPage() {
                         {a.attachment_count > 0 && (
                           <Badge count={a.attachment_count} size="small" color="blue">
                             <PaperClipOutlined
-                              style={{ fontSize: 16, color: '#1677ff' }}
+                              style={{ fontSize: 16, color: themeToken.colorPrimary }}
                             />
                           </Badge>
                         )}
@@ -616,7 +619,7 @@ export default function PatientDetailPage() {
                     style={{
                       cursor: 'pointer',
                       paddingInline: 16,
-                      background: qSelectedId === r.id ? '#e6f4ff' : undefined,
+                      background: qSelectedId === r.id ? themeToken.colorPrimaryBg : undefined,
                     }}
                     onClick={() => {
                       setQSelectedId(r.id)

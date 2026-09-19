@@ -17,6 +17,7 @@ import {
   Tabs,
   Typography,
   Upload,
+  theme,
 } from 'antd'
 import type { UploadFile } from 'antd'
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, MinusCircleOutlined, PlusOutlined } from '@ant-design/icons'
@@ -307,6 +308,7 @@ function BuilderForm({
   form: ReturnType<typeof Form.useForm<BuilderState>>[0]
   onFinish: (v: BuilderState) => void
 }) {
+  const { token: themeToken } = theme.useToken()
   const [tab, setTab] = useState<'builder' | 'json'>('builder')
   const values = Form.useWatch([], form)
   const scorableKeys = (values?.questions ?? [])
@@ -458,7 +460,7 @@ function BuilderForm({
               <pre
                 dir="ltr"
                 style={{
-                  background: 'rgba(128,128,128,0.1)',
+                  background: themeToken.colorFillQuaternary,
                   padding: 12,
                   borderRadius: 8,
                   maxHeight: 380,

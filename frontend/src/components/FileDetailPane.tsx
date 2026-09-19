@@ -11,6 +11,7 @@ import {
   Tooltip,
   Typography,
   Upload,
+  theme,
 } from 'antd'
 import {
   DownloadOutlined,
@@ -65,6 +66,7 @@ function previewKind(file: Attachment): 'image' | 'pdf' | null {
 export default function FileDetailPane({ file }: { file: Attachment }) {
   const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
+  const { token: themeToken } = theme.useToken()
   const qc = useQueryClient()
   const kind = useMemo(() => previewKind(file), [file])
   const [url, setUrl] = useState<string | null>(null)
@@ -255,7 +257,7 @@ export default function FileDetailPane({ file }: { file: Attachment }) {
                 style={{
                   overflow: 'auto',
                   maxHeight: '60vh',
-                  border: '1px solid rgba(128,128,128,0.25)',
+                  border: `1px solid ${themeToken.colorBorderSecondary}`,
                   borderRadius: 8,
                   textAlign: 'center',
                 }}

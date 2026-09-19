@@ -15,6 +15,7 @@ import {
 } from 'antd'
 
 import { api, apiError } from '../api/client'
+import { roleFa } from '../lib/roles'
 import type { Page, Role, User } from '../api/types'
 
 interface UserForm {
@@ -98,7 +99,11 @@ export default function UsersPage() {
           columns={[
             { title: 'نام کاربری', dataIndex: 'username' },
             { title: 'نام کامل', dataIndex: 'full_name' },
-            { title: 'نقش', dataIndex: 'role_name' },
+            {
+              title: 'نقش',
+              dataIndex: 'role_name',
+              render: (v: string) => roleFa(v),
+            },
             {
               title: 'فعال',
               dataIndex: 'is_active',

@@ -3,7 +3,8 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Button, Typography, theme as antdTheme } from 'antd'
 import { LogoutOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 
-import { clearAuth, hasPerm, type StoredUser } from '../api/client'
+import { clearAuth, api, getRefreshToken, hasPerm, type StoredUser } from '../api/client'
+import { roleFa } from '../lib/roles'
 import { NavGuardCtx, type NavBlocker } from './NavGuard'
 import { useTheme } from './ThemeContext'
 
@@ -95,6 +96,10 @@ export default function AppLayout({ user, onLogout }: Props) {
       .sort((a, b) => b.length - a.length)[0] ?? '/'
 
   const doLogout = () => {
+    // revoke the refresh token server-side (best effort — the local session
+    // is cleared regardless; without this the token would stay valid 7 days)
+    const refresh = getRefreshToken()
+    if (refresh) api.post('/auth/logout', { refresh_token: refresh }).catch(() => {})
     clearAuth()
     window.dispatchEvent(new Event('clinic-auth-changed'))
     onLogout()
@@ -124,7 +129,7 @@ export default function AppLayout({ user, onLogout }: Props) {
           </Typography.Title>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <Typography.Text>
-              {user.full_name || user.username} ({user.role_name})
+              {user.full_name || user.username} ({roleFa(user.role_name)})
             </Typography.Text>
             <Button
               icon={isDark ? <SunOutlined /> : <MoonOutlined />}

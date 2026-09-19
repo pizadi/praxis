@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Card, List, Space, Typography } from 'antd'
 import { LeftOutlined, RightOutlined } from '@ant-design/icons'
@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { AppointmentBrief, Page } from '../api/types'
 import { formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { localToday, serverToday } from '../lib/today'
 import { JalaliDatePicker } from '../components/JalaliDates'
 
 function shiftDay(iso: string, days: number): string {
@@ -16,7 +17,10 @@ function shiftDay(iso: string, days: number): string {
 }
 
 export default function SchedulePage() {
-  const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState<string>(localToday())
+  useEffect(() => {
+    serverToday().then(setDate)
+  }, [])
 
   const { data, isLoading } = useQuery({
     queryKey: ['schedule', date],
@@ -39,7 +43,9 @@ export default function SchedulePage() {
             <Button icon={<LeftOutlined />} onClick={() => setDate(shiftDay(date, 1))}>
               روز بعد
             </Button>
-            <Button onClick={() => setDate(new Date().toISOString().slice(0, 10))}>
+            <Button
+              onClick={async () => setDate(await serverToday())}
+            >
               امروز
             </Button>
           </Space>

@@ -36,7 +36,12 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
       onLogin()
       navigate('/')
     } catch (err) {
-      message.error(apiError(err).message)
+      const e = apiError(err)
+      message.error(
+        e.code === 'login_locked'
+          ? 'تلاش‌های ناموفق بیش از حد مجاز؛ کمی بعد دوباره تلاش کنید'
+          : e.message,
+      )
     } finally {
       setLoading(false)
     }
