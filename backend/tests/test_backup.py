@@ -248,6 +248,134 @@ async def test_import_rejects_garbage(client):
     assert r.status_code == 422  # invalid_backup (unsafe member path)
 
 
+async def test_import_partial_backup(client):
+    """A backup carrying only some tables imports; tables absent from the
+    dump keep their data. Regression: the PG path crashed with KeyError on
+    the first missing db/<table>.copy member (getmember-vs-extractfile)."""
+    import os
+    import sqlite3
+    import tempfile
+
+    from app.db.session import engine
+
+    token, _ = await login(client)
+    is_pg = engine.dialect.name == "postgresql"
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        if is_pg:
+            manifest = json.dumps({
+                "schema_version": 2,
+                "app_version": "1.2.0",
+                "table_columns": {
+                    "patients": [
+                        "id", "first_name", "last_name",
+                        "national_id", "year_of_birth", "gender",
+                    ]
+                },
+            })
+            data = manifest.encode()
+            info = tarfile.TarInfo(name="manifest.json")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+            row = b"1\tPartial\tBackup\t9999999999\t1380\t0\n"
+            info = tarfile.TarInfo(name="db/patients.copy")
+            info.size = len(row)
+            tar.addfile(info, io.BytesIO(row))
+        else:
+            # SQLite path: a mini database holding only the patients table
+            fd, mini = tempfile.mkstemp(suffix=".sqlite3")
+            os.close(fd)
+            con = sqlite3.connect(mini)
+            con.execute(
+                "CREATE TABLE patients (id INTEGER PRIMARY KEY, first_name TEXT, "
+                "last_name TEXT, national_id TEXT, year_of_birth TEXT, gender INTEGER)"
+            )
+            con.execute(
+                "INSERT INTO patients VALUES (1, 'Partial', 'Backup', '9999999999', '1380', 0)"
+            )
+            con.commit()
+            con.close()
+            manifest = json.dumps({
+                "schema_version": 2, "app_version": "1.2.0", "tables": {"patients": 1},
+            })
+            data = manifest.encode()
+            info = tarfile.TarInfo(name="manifest.json")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+            with open(mini, "rb") as f:
+                db_bytes = f.read()
+            os.unlink(mini)
+            info = tarfile.TarInfo(name="db/clinic.sqlite3")
+            info.size = len(db_bytes)
+            tar.addfile(info, io.BytesIO(db_bytes))
+
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("p.tar.gz", buf.getvalue(), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+
+    r = await client.get("/api/v1/patients", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["first_name"] == "Partial"
+
+
+async def test_import_hostile_table_names(client):
+    """Table names from the imported SQLite file must stay contained (quoted
+    identifiers are escaped), even when they try to break out."""
+    import os
+    import sqlite3
+    import tempfile
+
+    token, _ = await login(client)
+
+    fd, mini = tempfile.mkstemp(suffix=".sqlite3")
+    os.close(fd)
+    con = sqlite3.connect(mini)
+    con.execute("CREATE TABLE patients (id INTEGER PRIMARY KEY, first_name TEXT)")
+    con.execute("INSERT INTO patients VALUES (1, 'Hostile')")
+    con.execute('CREATE TABLE "p"" union all select 1--" (id INTEGER)')
+    con.execute('CREATE TABLE "users; DROP TABLE users--" (id INTEGER)')
+    con.commit()
+    con.close()
+
+    manifest = json.dumps({
+        "schema_version": 2, "app_version": "1.2.0", "tables": {"patients": 1},
+    })
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = manifest.encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+        with open(mini, "rb") as f:
+            db_bytes = f.read()
+        os.unlink(mini)
+        info = tarfile.TarInfo(name="db/clinic.sqlite3")
+        info.size = len(db_bytes)
+        tar.addfile(info, io.BytesIO(db_bytes))
+
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("h.tar.gz", buf.getvalue(), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+
+    # users table untouched, hostile data imported as ordinary rows
+    r = await client.get("/api/v1/users", headers=auth(token))
+    assert r.status_code == 200
+    r = await client.get("/api/v1/patients", headers=auth(token))
+    assert r.json()["items"][0]["first_name"] == "Hostile"
+
+
 async def test_import_older_schema_version(client):
     """A tarball from an earlier app version (fewer columns) imports via the
     manifest column lists; missing live columns are reported as skew."""

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import (
     require_perm,
     resolve_stored_path,
-    save_upload,
+    save_upload_stream,
 )
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -89,8 +89,7 @@ async def upload_file(
     user: User = Depends(require_perm("files.write")),
 ):
     await _get_appt_or_404(db, appointment_id)
-    data = await file.read()
-    meta = save_upload(data, file.filename or "upload.bin")
+    meta = await save_upload_stream(file, file.filename or "upload.bin")
     att = Attachment(
         appointment_id=appointment_id,
         description=description[:128],
@@ -203,8 +202,7 @@ async def set_attachment_content(
     description/notes are preserved. The superseded physical file stays on
     disk — trash purge remains the only path that unlinks stored files."""
     att = await _get_attachment_or_404(db, attachment_id)
-    data = await file.read()
-    meta = save_upload(data, file.filename or "upload.bin")
+    meta = await save_upload_stream(file, file.filename or "upload.bin")
     had_file = bool(att.stored_filename) and not att.missing_file
     old_stored = att.stored_filename
     att.stored_filename = meta["stored_filename"]
