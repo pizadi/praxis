@@ -1,0 +1,79 @@
+# پرسش‌نامه‌ها
+
+## قالب‌ها
+
+قالب‌های تعریف‌شده توسط مدیر (`/questionnaires`، دسترسی
+`questionnaires.templates`) که `format_json` آن‌ها سند JSON اعتبارسنجی‌شده است:
+
+```json
+{
+  "version": 1,
+  "title": "پرسش‌نامه درد",
+  "score_formula": "0.5 * pain_level + mobility",
+  "questions": [
+    {"key": "pain_level", "label": "شدت درد", "type": "number",
+     "required": true, "min": 0, "max": 10, "integer": true, "unit": ""},
+    {"key": "mobility", "label": "تحرک", "type": "choice", "required": false,
+     "options": [{"value": "bad", "label": "بد", "score": 0},
+                 {"value": "ok", "label": "متوسط", "score": 1}]},
+    {"key": "notes", "label": "توضیحات", "type": "string",
+     "required": false, "multiline": true, "max_length": 500}
+  ]
+}
+```
+
+- انواع پرسش: `number` (min/max/integer/unit)، `choice` (۲ تا ۵۰ گزینه، هر
+  یک با نمرهٔ اختیاری)، `string` (multiline، max_length).
+- کلیدها `^[a-z0-9_]{1,64}$` و یکتا در هر قالب؛ `extra="forbid"` در همهٔ
+  سطوح؛ اعتبارسنجی با pydantic `QuestionnaireFormat`
+  (`app/services/questionnaires.py`).
+- همهٔ مسیرهای نوشتن — ساخت/ویرایش API، سازهٔ گرافیکی و **بارگذاری JSON** —
+  از یک اعتبارسنجی مشترک می‌گذرند؛ `POST /questionnaires/templates/validate`
+  بدون ذخیره بررسی می‌کند. UI فایل JSON را در مرورگر می‌خواند
+  (`File.text()` + `JSON.parse`) و شیء را می‌فرستد — فایل خام به API نمی‌رسد.
+
+## پاسخ‌ها
+
+- متعلق به **بیمار** (نه نوبت)؛ چند پاسخ به ازای هر قالب مجاز است؛ ثبت و
+  ویرایش از صفحهٔ بیمار (دسترسی `questionnaires.fill`).
+- `answers_json` جی‌سان خامِ nullable ذخیره می‌کند. اعتبارسنجی سمت سرور فقط
+  کلید ناشناس و نقض نوع/بازه/گزینه را رد می‌کند — **خالی بودن همیشه مجاز
+  است** (`required` فقط محدودیت سطح UI است). خطای 422 شامل
+  `details.fields` به‌ازای هر کلید است که UI به‌صورت درون‌خطی نمایش می‌دهد
+  (`apiFieldErrors` → `form.setFields`).
+- فرمِ تکمیل از قوانین antd در `questionRule()` اعتبارسنجی می‌کند — پراپ‌های
+  `InputNumber min/max/precision` را **دوباره برنگردانید**: بی‌سروصدا مقدار
+  را می‌بُرند (همان باگ «اعتبارسنجی کار نمی‌کند»).
+- **بدون اسنپ‌شات**: نمایش، پاسخ ذخیره‌شده را با قالب *فعلی* ادغام می‌کند
+  (`frontend/src/lib/questionnaire.ts::mergeResponse`) — کلیدهای حذف‌شده
+  نادیده، پرسش‌های جدید null، مقادیر نامعتبر «missing» با بنر هشدار +
+  دکمهٔ پاک‌سازی با تأیید (PATCHی که دوباره سمت سرور اعتبارسنجی می‌شود).
+
+## نمره‌دهی
+
+- `score_formula` داخل `format_json` است (نیازی به مهاجرت ندارد): عبارت
+  حسابی روی کلیدهای پرسش — `+ - * /`، پرانتز، عدد و توابع `min`/`max`
+  (۱ آرگومان یا بیشتر) و `abs` (دقیقاً ۱ آرگومان).
+- پرسش `number` مقدارش و پرسش `choice` نمرهٔ گزینهٔ انتخابی را می‌دهد.
+  نحو و ارجاع‌ها هنگام ذخیرهٔ قالب اعتبارسنجی می‌شوند (کلیدها باید موجود و
+  از نوع number/choice باشند).
+- پارسر/مفسّر: `app/services/scoring.py` (توکنایزر + پارسر بازگشتی —
+  **هرگز `eval` نه**)، با قرینهٔ `frontend/src/lib/questionnaire.ts`
+  (`validateFormulaText`/`evaluateFormula`) برای بررسی زندهٔ سازه — این دو
+  را هم‌تراز نگه دارید.
+- ارزیابی **کامل** است: هر پاسخ مرجعِ خالی/نامعتبر، گزینهٔ بدون نمره یا تقسیم
+  بر صفر → نمرهٔ کل `None` و نمایش "—". نمره‌ای از خود ساخته نمی‌شود.
+- بدون فرمول، جمع نمرهٔ گزینه‌های انتخابی جانشین است.
+
+## گزارش پاسخ‌ها
+
+- `/questionnaire-responses` (گزارش پاسخ‌ها، منو با `questionnaires.read`):
+  انتخاب قالب → همهٔ پاسخ‌ها در جدولی با اسکرول افقی
+  (`scroll={{ x: 'max-content' }}`) — کد ملی، تاریخ جلالی، یک ستون به‌ازای
+  هر پرسش، و ستون نمره اگر قالب نمره‌دهی دارد.
+- API: `GET /questionnaires/responses?template_id=` →
+  `Page[QuestionnaireResponseReportOut]` (+ `patient_national_id`)؛
+  سلکت چندستونه → **`paginate_rows`** نه `paginate`. فیلتر زیرشاخه‌ای:
+  پاسخ + بیمار + قالب زنده (قالب حذف‌شده → 404).
+- **CSV سمت کلاینت ساخته می‌شود** (همهٔ صفحه‌ها با سقف، UTF-8 BOM،
+  کوتیشن‌گذاری درست) تا اکسل فارسی را درست نشان دهد.
