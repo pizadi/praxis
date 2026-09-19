@@ -1,6 +1,3 @@
-include:
-  - .env
-
 steps:
   - name: backend lint
     image: python:3.12-slim
@@ -8,7 +5,8 @@ steps:
       - pip install -i https://package-mirror.liara.ir/repository/pypi/simple ruff mypy > /dev/null
       - pip install -i https://package-mirror.liara.ir/repository/pypi/simple -r backend/requirements.txt > /dev/null
       - ruff check backend/app backend/tests scripts
-      - mypy backend/app
+      # config ([tool.mypy]) lives in backend/pyproject.toml — run from there
+      - cd backend && mypy app
 
   - name: backend tests
     image: python:3.12-slim
