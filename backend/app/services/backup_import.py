@@ -150,9 +150,12 @@ def _import_postgres(tar_path: str) -> dict:
     dumped: dict[str, list[str]] = {}
     schema_version = 1
     with tarfile.open(tar_path, "r:gz") as tar:
-        m = tar.extractfile("manifest.json")
+        m = tar.getmember("manifest.json")
         if m is not None:
-            manifest = json.loads(m.read().decode("utf-8"))
+            f = tar.extractfile(m)
+            if f is None:  # pragma: no cover — manifest is a regular file here
+                raise RuntimeError("manifest.json is not a regular file")
+            manifest = json.loads(f.read().decode("utf-8"))
             schema_version = manifest.get("schema_version", 1)
             dumped = manifest.get("table_columns", {}) or {}
 
@@ -195,9 +198,12 @@ def _import_postgres(tar_path: str) -> dict:
                 loaded: dict[str, int] = {}
                 skew: dict[str, dict[str, list[str]]] = {}
                 for t in DUMP_TABLES:
-                    member = tar.extractfile(f"db/{t}.copy")
-                    if member is None:
+                    info = tar.getmember(f"db/{t}.copy")
+                    if info is None:
                         continue  # table absent from this (older) dump
+                    member = tar.extractfile(info)
+                    if member is None:
+                        continue
                     live = live_cols.get(t, [])
                     if schema_version >= 2 and t in dumped:
                         dump_cols = dumped[t]
@@ -297,6 +303,14 @@ def _sqlite_fallback(col_type: str) -> str:
     return "NULL"
 
 
+def _qi(name: str) -> str:
+    """Escape an identifier for embedding inside double quotes.
+
+    Table/column names read from the imported (potentially hostile) SQLite
+    file reach f-string SQL here; doubled quotes keep them contained."""
+    return name.replace('"', '""')
+
+
 def _import_sqlite(tar_path: str) -> dict:
     db_file = settings.database_url.split("///", 1)[-1]
     aux_path: str | None = None
@@ -356,15 +370,15 @@ def _import_sqlite(tar_path: str) -> dict:
             try:
                 # clear only the dump's tables (absent tables keep their data)
                 for t in set(aux_tables) & live_tables:
-                    con.execute(f'DELETE FROM main."{t}"')  # noqa: S608
+                    con.execute(f'DELETE FROM main."{_qi(t)}"')  # noqa: S608
                 loaded = {}
                 skew: dict[str, dict[str, list[str]]] = {}
                 for t in aux_tables:
-                    aux_cols = [r[1] for r in con.execute(f'PRAGMA aux.table_info("{t}")')]  # noqa: S608
+                    aux_cols = [r[1] for r in con.execute(f'PRAGMA aux.table_info("{_qi(t)}")')]  # noqa: S608
                     if t not in live_tables:
                         skew[t] = {"dropped_table": aux_cols, "defaulted": []}
                         continue  # live schema predates the dump → not importable
-                    live_info = con.execute(f'PRAGMA main.table_info("{t}")').fetchall()  # noqa: S608
+                    live_info = con.execute(f'PRAGMA main.table_info("{_qi(t)}")').fetchall()  # noqa: S608
                     live_types = {r[1]: str(r[2] or "TEXT") for r in live_info}
                     live_defaults = {r[1]: r[4] for r in live_info}
                     live_names = [r[1] for r in live_info]
@@ -389,8 +403,8 @@ def _import_sqlite(tar_path: str) -> dict:
                         (", " + ", ".join(fill_exprs)) if fill_exprs else ""
                     )
                     cur = con.execute(
-                        f'INSERT INTO main."{t}" ({col_sql}) '  # noqa: S608
-                        f'SELECT {sel_sql} FROM aux."{t}"'
+                        f'INSERT INTO main."{_qi(t)}" ({col_sql}) '  # noqa: S608
+                        f'SELECT {sel_sql} FROM aux."{_qi(t)}"'
                     )
                     loaded[t] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
                 con.execute("COMMIT")

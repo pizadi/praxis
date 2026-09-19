@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     algorithm: str = "HS256"
 
+    # --- Login throttle (per-username, window-based) ---
+    login_max_failures: int = 5
+    login_lock_minutes: int = 15
+
     # --- CORS ---
     cors_origins: str = "http://localhost:5173"
 

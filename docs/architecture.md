@@ -17,8 +17,8 @@ rewritten from a legacy Django/SQLite application.
 ```
 backend/app
   api/v1/        routers: auth, users, roles, patients, appointments,
-                 attachments, transactions, taxonomies, questionnaires,
-                 stats, trash, audit, backup, meta
+                 attachments, transactions, payments, taxonomies,
+                 questionnaires, stats, trash, audit, backup, meta
   api/deps.py    auth deps, permission guards, file-storage safety
   core/          config, security (JWT/argon2), errors, tokens,
                  permissions (catalog + system role sets)
@@ -28,7 +28,9 @@ backend/app
   schemas/       Pydantic v2 request/response models
   services/      audit trail, questionnaire format validation, score
                  formulas, backup import, uploads purge
-  alembic/       migrations (additive-only; auto-applied at container boot)
+  alembic/       migrations (auto-applied at container boot; safe to
+                 re-run on a live DB — additive except documented
+                 legacy-column drops)
 frontend/src
   pages/         one page per route (Persian/RTL UI)
   components/    shared panels (AppointmentPanel, FileDetailPane, ...)

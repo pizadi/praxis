@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Card, Col, List, Row, Statistic, Typography } from 'antd'
 import { Link } from 'react-router-dom'
@@ -5,9 +6,13 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { AppointmentBrief, Page } from '../api/types'
 import { formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { localToday, serverToday } from '../lib/today'
 
 export default function DashboardPage() {
-  const today = new Date().toISOString().slice(0, 10)
+  const [today, setToday] = useState(localToday())
+  useEffect(() => {
+    serverToday().then(setToday)
+  }, [])
 
   const { data, isLoading } = useQuery({
     queryKey: ['appointments', { date_from: today, date_to: today }],

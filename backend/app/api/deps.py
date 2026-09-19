@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.security import decode_token
-from app.core.tokens import token_cache, utc_now
+from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import RefreshToken, User
 
@@ -46,11 +46,6 @@ async def get_current_user(
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    jti = payload.get("jti")
-    if jti and token_cache.is_access_revoked(jti):
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Token revoked"
-        )
     try:
         user_id = int(payload["sub"])
     except (KeyError, ValueError):
@@ -116,22 +111,33 @@ def resolve_stored_path(stored_filename: str) -> Path:
     return candidate
 
 
-def save_upload(data: bytes, original_name: str) -> dict:
-    """Persist uploaded bytes; returns storage metadata dict."""
-    if len(data) == 0:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
-    if len(data) > settings.max_upload_bytes:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large"
-        )
+async def save_upload_stream(file: UploadFile, original_name: str) -> dict:
+    """Stream an uploaded file to UPLOAD_DIR, enforcing the size cap while
+    reading — the request body is never fully buffered in memory (a 200 MB
+    upload against a 50 MB cap rejects after ~50 MB, not after 200 MB)."""
     stored = safe_storage_name(original_name)
     path = upload_dir() / stored
-    path.write_bytes(data)
+    size = 0
+    try:
+        with path.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > settings.max_upload_bytes:
+                    raise HTTPException(
+                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large"
+                    )
+                out.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)  # never leave partial files behind
+        raise
+    if size == 0:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
     return {
         "stored_filename": stored,
         "original_filename": original_name[:255],
         "mime_type": (mimetypes.guess_type(original_name)[0] or "application/octet-stream"),
-        "size_bytes": len(data),
+        "size_bytes": size,
     }
 
 

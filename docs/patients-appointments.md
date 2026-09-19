@@ -2,10 +2,11 @@
 
 ## Patients
 
-- CRUD at `/patients` with omnibox search (`q`): first/last name, national
-  ID and phone number, all SQL-side `ILIKE`. Advanced filters: national-ID
-  substring, phone substring, and multi-select tags/diagnoses (patients must
-  have ALL selected).
+- CRUD at `/patients` with omnibox search (`q`): first/last name via
+  `ILIKE`, national ID and phone number via `like` (equivalent for their
+  digits-only values). Advanced filters: first/last name, insurance,
+  year of birth, gender, national-ID substring, phone substring, and
+  multi-select tags/diagnoses (patients must have ALL selected).
 - National ID is 10 digits, unique among live patients (partial unique
   index) — a deleted patient's ID is reusable.
 - Deleting a patient is a soft delete: the whole subtree (appointments,

@@ -176,39 +176,57 @@ export default function RolesPage() {
   )
 }
 
-function PermissionCheckboxes({ groups }: { groups: PermissionGroup[] }) {
+/** Form-bound permission grid. antd Form.Item injects `value` (the role's
+ * active permission keys) and `onChange` into its direct child — forward
+ * them into a Checkbox.Group so existing permissions show as checked and
+ * checking boxes updates the form field. */
+function PermissionCheckboxes({
+  groups,
+  value,
+  onChange,
+}: {
+  groups: PermissionGroup[]
+  value?: string[]
+  onChange?: (values: string[]) => void
+}) {
   const { token } = antdTheme.useToken()
   if (groups.length === 0) return null
   return (
-    <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-      {groups.map((g, i) => (
-        <div key={g.group}>
-          {i > 0 && <Divider style={{ margin: '8px 0' }} />}
-          <Typography.Text strong>{g.group}</Typography.Text>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-            {g.items.map((item) => (
-              <Checkbox key={item.key} value={item.key} style={{ marginInlineStart: 0 }}>
-                {item.label}
-                <Typography.Text type="secondary" style={{ fontSize: 11, marginInlineStart: 4 }}>
-                  {item.key}
-                </Typography.Text>
-              </Checkbox>
-            ))}
+    <Checkbox.Group
+      value={value}
+      onChange={(v) => onChange?.(v as string[])}
+      style={{ display: 'block' }}
+    >
+      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+        {groups.map((g, i) => (
+          <div key={g.group}>
+            {i > 0 && <Divider style={{ margin: '8px 0' }} />}
+            <Typography.Text strong>{g.group}</Typography.Text>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+              {g.items.map((item) => (
+                <Checkbox key={item.key} value={item.key} style={{ marginInlineStart: 0 }}>
+                  {item.label}
+                  <Typography.Text type="secondary" style={{ fontSize: 11, marginInlineStart: 4 }}>
+                    {item.key}
+                  </Typography.Text>
+                </Checkbox>
+              ))}
+            </div>
           </div>
+        ))}
+        <div
+          style={{
+            background: token.colorFillQuaternary,
+            padding: 8,
+            marginTop: 8,
+            borderRadius: 4,
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            تغییر دسترسی‌ها بلافاصله برای همه کاربران این نقش اعمال می‌شود.
+          </Typography.Text>
         </div>
-      ))}
-      <div
-        style={{
-          background: token.colorFillQuaternary,
-          padding: 8,
-          marginTop: 8,
-          borderRadius: 4,
-        }}
-      >
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          تغییر دسترسی‌ها بلافاصله برای همه کاربران این نقش اعمال می‌شود.
-        </Typography.Text>
       </div>
-    </div>
+    </Checkbox.Group>
   )
 }

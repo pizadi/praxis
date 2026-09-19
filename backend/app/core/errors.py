@@ -45,6 +45,15 @@ class NotFoundError(Exception):
         self.code = code
 
 
+class RateLimitedError(Exception):
+    """429 — too many attempts (login lockout, etc.)."""
+
+    def __init__(self, message: str, code: str = "rate_limited", details: Any = None) -> None:
+        self.message = message
+        self.code = code
+        self.details = details
+
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -84,4 +93,11 @@ def register_error_handlers(app: FastAPI) -> None:
     async def not_found_handler(_: Request, exc: NotFoundError) -> JSONResponse:
         return error_response(
             status.HTTP_404_NOT_FOUND, code=exc.code, message=exc.message
+        )
+
+    @app.exception_handler(RateLimitedError)
+    async def rate_limited_handler(_: Request, exc: RateLimitedError) -> JSONResponse:
+        return error_response(
+            status.HTTP_429_TOO_MANY_REQUESTS, code=exc.code, message=exc.message,
+            details=exc.details,
         )

@@ -10,6 +10,7 @@ import {
   Radio,
   Space,
   Typography,
+  theme,
   type FormInstance,
 } from 'antd'
 import { ClearOutlined, EditOutlined } from '@ant-design/icons'
@@ -181,6 +182,7 @@ export function QuestionnaireForm({
   onFinish: (answers: Answers) => void
   form: FormInstance<Record<string, unknown>>
 }) {
+  const { token: themeToken } = theme.useToken()
   // the form store outlives this component (parent-owned instance) — reset
   // whenever the format or the seeded answers change so stale values/errors
   // never leak across responses
@@ -209,7 +211,7 @@ export function QuestionnaireForm({
           label={
             <span>
               {q.label}
-              {q.required && <span style={{ color: '#ff4d4f' }}> *</span>}
+              {q.required && <span style={{ color: themeToken.colorError }}> *</span>}
             </span>
           }
           rules={questionRule(q)}

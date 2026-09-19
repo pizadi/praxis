@@ -53,6 +53,12 @@ survival, and physical file sizes):
 .venv/bin/python scripts/verify_import.py   # ALL CHECKS PASSED = safe cutover
 ```
 
+> **Warning:** `verify_import.py` has its target DSN **hardcoded**
+> (`postgresql+psycopg2://clinic:testpass@localhost:5432/clinic` — a test
+> container on port 5432). Edit the DSN at the top of the script before
+> using it against the real stack (compose maps Postgres to **5434**), and
+> never run it against a database you cannot afford to query.
+
 A synthetic legacy DB for testing the migration itself:
 `python3 scripts/make_test_legacy_db.py /tmp/legacy.db`
 

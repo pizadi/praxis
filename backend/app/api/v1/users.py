@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import require_admin
+from app.api.deps import require_admin, revoke_user_tokens
 from app.api.pagination import Page, paginate
 from app.core.errors import ConflictError
 from app.core.security import hash_password
@@ -126,6 +126,11 @@ async def update_user(
         user.is_active = body.is_active
     if body.password is not None:
         user.password_hash = hash_password(body.password)
+    # kill outstanding refresh tokens when the credential changes or the
+    # account is deactivated — access tokens are covered by the per-request
+    # is_active check, refresh tokens must not outlive the change
+    if body.password is not None or body.is_active is False:
+        await revoke_user_tokens(db, user.id)
     await db.commit()
     await db.refresh(user, ["role"])
     after_fields = {f: getattr(user, f) for f in before}
@@ -173,8 +178,6 @@ async def delete_user(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot delete the last admin"
             )
-    from app.api.deps import revoke_user_tokens
-
     user.deleted_at = utc_now()
     user.is_active = False
     await revoke_user_tokens(db, user.id)

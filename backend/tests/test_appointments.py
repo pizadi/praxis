@@ -334,6 +334,52 @@ async def test_attachment_content_attach_and_replace(client):
     )
 
 
+async def test_upload_size_cap_enforced_midstream(client, monkeypatch):
+    """The cap must reject while streaming (no full-body buffering) and must
+    not leave partial files in UPLOAD_DIR."""
+    from app.api.deps import upload_dir
+    from app.core.config import settings as cfg
+
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    appt = await _mk_appt(client, token, pid)
+
+    before = {p.name for p in upload_dir().iterdir()}
+    monkeypatch.setattr(cfg, "max_upload_bytes", 1024)  # 1 KB cap
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        files={"file": ("big.bin", io.BytesIO(b"x" * 4096), "application/octet-stream")},
+        headers=auth(token),
+    )
+    assert r.status_code == 413, r.text
+    assert {p.name for p in upload_dir().iterdir()} == before  # no partial file
+
+    # within the (patched) cap everything still works
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        files={"file": ("ok.bin", io.BytesIO(b"x" * 512), "application/octet-stream")},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["size_bytes"] == 512
+
+
+async def test_upload_empty_rejected(client):
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    appt = await _mk_appt(client, token, pid)
+    from app.api.deps import upload_dir
+
+    before = {p.name for p in upload_dir().iterdir()}
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        files={"file": ("empty.txt", io.BytesIO(b""), "text/plain")},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+    assert {p.name for p in upload_dir().iterdir()} == before
+
+
 async def test_receptionist_role_gating(client):
     admin_token, _ = await login(client)
     await make_user(client, admin_token, "recep1", role="receptionist")
