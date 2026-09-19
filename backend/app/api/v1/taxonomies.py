@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_perm
+from app.api.pagination import Page, clamp_limit_offset, paginate
 from app.core.errors import ConflictError
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -14,23 +15,30 @@ from app.services import audit
 
 router = APIRouter(tags=["taxonomies"])
 
+# selects in the patient filter/create UIs need the full list in one page
+TAXONOMY_MAX_PAGE_SIZE = 1000
+
 
 def _make_router(prefix: str, model) -> APIRouter:
     r = APIRouter(prefix=prefix, tags=["taxonomies"])
 
-    @r.get("", response_model=list[NamedRef])
+    @r.get("", response_model=Page[NamedRef])
     async def list_all(
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
         db: AsyncSession = Depends(get_db),
         _: User = Depends(get_current_user),
     ):
-        rows = (
-            await db.scalars(
-                select(model)
-                .where(model.deleted_at.is_(None))
-                .order_by(model.name)
-            )
-        ).all()
-        return list(rows)
+        stmt = select(model).where(model.deleted_at.is_(None))
+        if q:
+            stmt = stmt.where(model.name.ilike(f"%{q.strip()}%"))
+        stmt = stmt.order_by(model.name)
+        limit, offset = clamp_limit_offset(limit, offset, TAXONOMY_MAX_PAGE_SIZE)
+        rows, total = await paginate(
+            db, stmt, limit=limit, offset=offset, max_size=TAXONOMY_MAX_PAGE_SIZE
+        )
+        return Page(items=rows, total=total, limit=limit, offset=offset)
 
     entity_kind = prefix.strip("/").rstrip("s")
 

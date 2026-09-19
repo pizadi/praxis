@@ -82,11 +82,13 @@ export default function PatientsPage() {
 
   const tags = useQuery({
     queryKey: ['tags'],
-    queryFn: async () => (await api.get<NamedRef[]>('/tags')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/tags', { params: { limit: 1000 } })).data.items,
   })
   const diagnoses = useQuery({
     queryKey: ['diagnoses'],
-    queryFn: async () => (await api.get<NamedRef[]>('/diagnoses')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/diagnoses', { params: { limit: 1000 } })).data.items,
   })
 
   const remove = useMutation({
