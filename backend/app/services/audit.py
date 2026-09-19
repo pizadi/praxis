@@ -17,6 +17,7 @@ DELETE = "delete"
 RESTORE = "restore"
 PURGE = "purge"
 LOGIN = "login"  # reserved; login attempts live in login_audit
+LOGOUT = "logout"  # refresh-token revocation at session end
 
 
 async def log_action(
