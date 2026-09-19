@@ -1,6 +1,7 @@
 """Admin backup: tarball DB + uploads, job lifecycle, permissions."""
 
 import io
+import json
 import tarfile
 
 from tests.conftest import auth, login, make_user
@@ -97,3 +98,148 @@ async def test_backup_receptionist_forbidden(client):
     assert r.status_code == 403
     r = await client.post("/api/v1/admin/backup", headers=auth(recep))
     assert r.status_code == 403
+
+
+async def _wait_import_done(client, token: str) -> dict:
+    for _ in range(100):
+        r = await client.get("/api/v1/admin/backup/import", headers=auth(token))
+        st = r.json()["status"]
+        if st != "importing":
+            return r.json()
+    raise AssertionError("import did not finish")
+
+
+async def test_import_round_trip(client):
+    """Export → destroy the data → import → data restored (sqlite path)."""
+    token, _ = await login(client)
+
+    r = await client.post(
+        "/api/v1/patients",
+        json={"national_id": "1234567890", "first_name": "الف", "last_name": "ب",
+              "year_of_birth": "1370", "gender": 0},
+        headers=auth(token),
+    )
+    pid = r.json()["id"]
+    r = await client.post(f"/api/v1/patients/{pid}/appointments",
+                          json={"scheduled_at": "2026-09-10T10:30:00+03:30"},
+                          headers=auth(token))
+    appt = r.json()
+    r = await client.post(
+        f"/api/v1/appointments/{appt['id']}/files",
+        data={"description": "lab"},
+        files={"file": ("x.txt", io.BytesIO(b"hello-backup"), "text/plain")},
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+
+    # export
+    r = await client.post("/api/v1/admin/backup", headers=auth(token))
+    assert r.status_code == 202
+    for _ in range(100):
+        st = (await client.get("/api/v1/admin/backup", headers=auth(token))).json()["status"]
+        if st == "ready":
+            break
+    tarball = (await client.get("/api/v1/admin/backup/download", headers=auth(token))).content
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+    # destroy: delete patient (subtree) → export's data is gone from live views
+    r = await client.delete(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 204
+    r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 404
+
+    # import → everything back
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("backup.tar.gz", io.BytesIO(tarball), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+    assert done["summary"]["tables"]["patients"] == 1
+
+    r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["first_name"] == "الف"
+    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()[0]["description"] == "lab"
+    # the restored attachment's file is on disk again (merge semantics)
+    r = await client.get(f"/api/v1/appointments/files/{r.json()[0]['id']}/download",
+                         headers=auth(token))
+    assert r.status_code == 200 and r.content == b"hello-backup"
+
+
+async def test_import_version_gates(client):
+    token, _ = await login(client)
+
+    # schema_version newer than supported → refuse (422)
+    manifest = json.dumps({"schema_version": 99, "app_version": "9.0.0", "tables": {}})
+    bad = io.BytesIO()
+    with tarfile.open(fileobj=bad, mode="w:gz") as tar:
+        data = manifest.encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", bad.getvalue(), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+
+    # producer app_version newer than the system → 409 unless forced
+    manifest = json.dumps({
+        "schema_version": 2, "app_version": "99.0.0",
+        "tables": {}, "table_columns": {},
+    })
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = manifest.encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", buf.getvalue(), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "newer_version"
+    assert r.json()["error"]["details"]["tarball_app_version"] == "99.0.0"
+
+    # forced → accepted (nothing to import; the empty manifest is harmless)
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", buf.getvalue(), "application/gzip")},
+        data={"force": "true"},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+
+
+async def test_import_rejects_garbage(client):
+    token, _ = await login(client)
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", io.BytesIO(b"not a tarball"), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 422  # invalid_backup
+
+    # zip-slip member → refused
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = b"x"
+        info = tarfile.TarInfo(name="../evil.txt")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", buf.getvalue(), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 422  # invalid_backup (unsafe member path)

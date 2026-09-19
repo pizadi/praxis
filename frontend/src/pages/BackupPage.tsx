@@ -1,7 +1,23 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { App as AntApp, Button, Card, Space, Spin, Statistic, Typography } from 'antd'
-import { DownloadOutlined, DeleteOutlined, FileZipOutlined } from '@ant-design/icons'
+import {
+  Alert,
+  App as AntApp,
+  Button,
+  Card,
+  Space,
+  Spin,
+  Statistic,
+  Typography,
+  Upload,
+} from 'antd'
+import {
+  CloudUploadOutlined,
+  DownloadOutlined,
+  DeleteOutlined,
+  FileZipOutlined,
+} from '@ant-design/icons'
+import type { RcFile } from 'antd/es/upload'
 
 import { api, apiError } from '../api/client'
 import { toFaDigits } from '../lib/jalali'
@@ -12,6 +28,18 @@ interface BackupStatus {
   finished_at: string | null
   error: string | null
   size_bytes: number | null
+}
+
+interface ImportSummary {
+  tables: Record<string, number>
+  uploads_moved: number
+  schema_version: number
+}
+
+interface ImportStatus {
+  status: 'idle' | 'importing' | 'done' | 'error'
+  error: string | null
+  summary: ImportSummary | null
 }
 
 function fileSize(bytes: number | null): string {
@@ -69,6 +97,64 @@ export default function BackupPage() {
     } catch (err) {
       message.error(apiError(err).message)
     }
+  }
+
+  // --- import (restore from a tarball) ---
+  const { modal } = AntApp.useApp()
+  const [importFile, setImportFile] = useState<RcFile | null>(null)
+  const lastPicked = useRef<RcFile | null>(null)
+
+  const importStatus = useQuery({
+    queryKey: ['backup-import-status'],
+    queryFn: async () => (await api.get<ImportStatus>('/admin/backup/import')).data,
+  })
+  const ist = importStatus.data?.status ?? 'idle'
+
+  useEffect(() => {
+    if (ist !== 'importing') return
+    const t = setInterval(() => importStatus.refetch(), 2000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ist])
+
+  const doImport = async (f: RcFile, force: boolean) => {
+    const fd = new FormData()
+    fd.append('file', f)
+    fd.append('force', force ? 'true' : 'false')
+    try {
+      await api.post('/admin/backup/import', fd)
+      message.success('واردسازی آغاز شد')
+      await importStatus.refetch()
+    } catch (err) {
+      const e = apiError(err)
+      if (e.code === 'newer_version') {
+        const d = (e.details ?? {}) as {
+          tarball_app_version?: string
+          current_app_version?: string
+        }
+        modal.confirm({
+          title: 'نسخهٔ پشتیبان جدیدتر از سامانه است',
+          content:
+            `نسخهٔ فایل پشتیبان: ${d.tarball_app_version ?? '؟'} — ` +
+            `نسخهٔ سامانه: ${d.current_app_version ?? '؟'}. ` +
+            'واردسازی ممکن است با خطا مواجه شود؛ در صورت بروز خطای بازگشت‌ناپذیر، همه‌چیز به حالت قبل برمی‌گردد.',
+          okText: 'واردسازی به هر حال',
+          cancelText: 'انصراف',
+          onOk: () => {
+            const f2 = lastPicked.current
+            if (f2) void doImport(f2, true)
+          },
+        })
+      } else {
+        message.error(e.message)
+      }
+    }
+  }
+
+  const pickImport = (f: RcFile) => {
+    lastPicked.current = f
+    setImportFile(f)
+    void doImport(f, false)
   }
 
   return (
@@ -136,6 +222,66 @@ export default function BackupPage() {
             فایل پشتیبان شامل کل پایگاه داده (SQL) و فایل‌های بارگذاری‌شده است. پس از اتمام، لینک
             دانلود در همین صفحه فعال می‌شود.
           </Typography.Text>
+        </Space>
+      </Card>
+
+      <Card
+        title="واردسازی پشتیبان"
+        style={{ marginTop: 16 }}
+        extra={
+          <Upload
+            accept=".tar.gz,.tgz,application/gzip"
+            maxCount={1}
+            showUploadList={false}
+            disabled={ist === 'importing'}
+            beforeUpload={(f) => {
+              pickImport(f)
+              return false // POST via the axios client, with confirm-flow support
+            }}
+          >
+            <Button icon={<CloudUploadOutlined />} loading={ist === 'importing'}>
+              انتخاب فایل پشتیبان…
+            </Button>
+          </Upload>
+        }
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            پروندهٔ پشتیبان (tar.gz) داده‌های فعلی را جایگزین می‌کند: پایگاه داده و
+            فایل‌های بارگذاری‌شده به حالت زمان ساخت پشتیبان برمی‌گردند. پشتیبان‌های
+            نسخه‌های قدیمی‌تر پذیرفته می‌شوند؛ پشتیبانِ ساخته‌شده با نسخهٔ جدیدتر
+            سامانه، پیش از واردسازی تأیید جداگانه می‌خواهد.
+          </Typography.Text>
+          {importFile && (
+            <Typography.Text style={{ fontSize: 12 }}>
+              فایل انتخاب‌شده: {importFile.name}
+            </Typography.Text>
+          )}
+          {ist === 'importing' && (
+            <Space>
+              <Spin size="small" />
+              <Typography.Text>در حال واردسازی… (فرآیند تراکنشی است)</Typography.Text>
+            </Space>
+          )}
+          {ist === 'error' && (
+            <Alert
+              type="error"
+              showIcon
+              message="واردسازی ناموفق بود — همه‌چیز به حالت قبل برگشت"
+              description={importStatus.data?.error}
+            />
+          )}
+          {ist === 'done' && importStatus.data?.summary && (
+            <Alert
+              type="success"
+              showIcon
+              message="واردسازی کامل شد"
+              description={
+                `${toFaDigits(Object.keys(importStatus.data.summary.tables).length)} جدول بارگذاری شد` +
+                ` — ${toFaDigits(importStatus.data.summary.uploads_moved)} فایل بازگردانده شد.`
+              }
+            />
+          )}
         </Space>
       </Card>
     </div>

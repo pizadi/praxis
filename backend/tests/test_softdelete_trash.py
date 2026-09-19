@@ -186,7 +186,7 @@ async def test_soft_delete_tag_keeps_m2m_and_restores(client):
     await client.delete(f"/api/v1/tags/{vip['id']}", headers=auth(token))
     # hidden from list
     r = await client.get("/api/v1/tags", headers=auth(token))
-    assert len(r.json()) == 0
+    assert r.json()["total"] == 0
     # name reusable while deleted
     r = await client.post("/api/v1/tags", json={"name": "VIP"}, headers=auth(token))
     assert r.status_code == 201
@@ -199,7 +199,7 @@ async def test_soft_delete_tag_keeps_m2m_and_restores(client):
 
     # delete the new one; restore original; patient's link intact
     r = await client.get("/api/v1/tags", headers=auth(token))
-    new_id = r.json()[0]["id"]
+    new_id = r.json()["items"][0]["id"]
     await client.delete(f"/api/v1/tags/{new_id}", headers=auth(token))
     r = await client.post(
         f"/api/v1/admin/trash/tags/{vip['id']}/restore", headers=auth(token)

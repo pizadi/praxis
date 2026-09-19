@@ -103,6 +103,7 @@ api.interceptors.response.use(
 export interface ApiError {
   code: string
   message: string
+  details?: unknown
 }
 
 export function apiError(err: unknown): ApiError {

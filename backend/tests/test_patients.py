@@ -226,11 +226,37 @@ async def test_patient_tag_diagnosis_filters(client):
     assert [t["name"] for t in r.json()["tags"]] == ["VIP"]
     assert [d["name"] for d in r.json()["diagnoses"]] == ["Migraine"]
 
-    # delete taxonomy (Normal was created above; list now has VIP, vip, Normal → minus Normal)
+    # delete taxonomy (Normal was created above; list now has VIP, vip → minus Normal)
     r = await client.delete(f"/api/v1/tags/{normal['id']}", headers=auth(token))
     assert r.status_code == 204
     r = await client.get("/api/v1/tags", headers=auth(token))
-    assert len(r.json()) == 2
+    assert r.json()["total"] == 2
+
+
+async def test_taxonomy_search_and_pagination(client):
+    token, _ = await login(client)
+    for name in ("alpha", "beta", "alphabet", "gamma"):
+        r = await client.post("/api/v1/tags", json={"name": name}, headers=auth(token))
+        assert r.status_code == 201
+
+    # search
+    r = await client.get("/api/v1/tags", params={"q": "alpha"}, headers=auth(token))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    assert [i["name"] for i in body["items"]] == ["alpha", "alphabet"]  # ordered by name
+
+    # pagination
+    r = await client.get(
+        "/api/v1/tags", params={"limit": 2, "offset": 2}, headers=auth(token)
+    )
+    body = r.json()
+    assert body["total"] == 4
+    assert [i["name"] for i in body["items"]] == ["beta", "gamma"]
+
+    # limit clamped to the taxonomy cap (1000), not the global 100
+    r = await client.get("/api/v1/tags", params={"limit": 5000}, headers=auth(token))
+    assert r.json()["limit"] == 1000
 
 
 async def test_receptionist_cannot_delete_patient(client):
