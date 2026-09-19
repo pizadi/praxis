@@ -127,6 +127,21 @@ def run_import(tar_path: str) -> dict:
 # --- PostgreSQL ---------------------------------------------------------------------
 
 
+def _pg_fallback_expr(data_type: str) -> str:
+    """SQL expression filling a column the dump doesn't have.
+
+    NOT NULL columns added after the dump need a value: text-ish → '',
+    numeric/bool → 0; everything else falls to NULL (and a NOT NULL
+    constraint there is treated as unresolvable → the import rolls back).
+    """
+    t = data_type.lower()
+    if "char" in t or "text" in t:
+        return "''"
+    if any(k in t for k in ("int", "real", "floa", "doubl", "numeri", "decim", "bool")):
+        return "0"
+    return "NULL"
+
+
 def _import_postgres(tar_path: str) -> dict:
     import psycopg2
 
@@ -148,30 +163,49 @@ def _import_postgres(tar_path: str) -> dict:
                 cur.execute("BEGIN")
                 cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 live_cols: dict[str, list[str]] = {}
+                live_types: dict[str, dict[str, str]] = {}
                 existing: set[str] = set()
                 for t in DUMP_TABLES:
                     cur.execute(
-                        "SELECT column_name FROM information_schema.columns "
+                        "SELECT column_name, data_type FROM information_schema.columns "
                         "WHERE table_schema = 'public' AND table_name = %s "
                         "ORDER BY ordinal_position",
                         (t,),
                     )
-                    cols: list[str] | None = [r[0] for r in cur.fetchall()]
+                    pairs = cur.fetchall()
+                    cols: list[str] | None = [r[0] for r in pairs]
                     if cols:
                         live_cols[t] = cols
+                        live_types[t] = {r[0]: r[1] for r in pairs}
                         existing.add(t)
 
-                # destructive part starts here; any error → ROLLBACK below
-                cur.execute(f'TRUNCATE {", ".join(existing)} CASCADE')  # noqa: S608 — fixed names
+                # destructive part starts here; any error → ROLLBACK below.
+                # only tables the dump actually carries are replaced — tables
+                # absent from an older dump keep their current data
+                dumped_tables = {
+                    m.name.lstrip("./")[len("db/") : -len(".copy")]
+                    for m in tar
+                    if m.name.lstrip("./").startswith("db/")
+                    and m.name.lstrip("./").endswith(".copy")
+                }
+                cur.execute(
+                    f'TRUNCATE {", ".join(existing & dumped_tables)} CASCADE'  # noqa: S608
+                )
 
                 loaded: dict[str, int] = {}
+                skew: dict[str, dict[str, list[str]]] = {}
                 for t in DUMP_TABLES:
                     member = tar.extractfile(f"db/{t}.copy")
                     if member is None:
                         continue  # table absent from this (older) dump
+                    live = live_cols.get(t, [])
                     if schema_version >= 2 and t in dumped:
-                        # columns absent from the live schema (newer dump) are dropped
-                        cols = [c for c in dumped[t] if c in live_cols.get(t, [])]
+                        dump_cols = dumped[t]
+                        cols = [c for c in dump_cols if c in live]
+                        dropped = [c for c in dump_cols if c not in live]
+                        defaulted = [c for c in live if c not in dump_cols]
+                        if dropped or defaulted:
+                            skew[t] = {"dropped": dropped, "defaulted": defaulted}
                     elif schema_version == 1 and t not in dumped:
                         # legacy tarball without column lists: only safe when the
                         # column count still matches the live schema
@@ -182,17 +216,51 @@ def _import_postgres(tar_path: str) -> dict:
                             continue
                         ncols = member.readline().count(b"\t")
                         member.seek(0)
-                        if ncols != len(live_cols.get(t, [])):
+                        if ncols != len(live):
                             raise RuntimeError(
                                 f"legacy backup (schema_version 1) table '{t}' has {ncols} "
-                                f"columns but the live schema has {len(live_cols.get(t, []))} — "
+                                f"columns but the live schema has {len(live)} — "
                                 "re-export the backup with a compatible version"
                             )
-                        cols = None  # full-row COPY
+                        cols = live  # full-row COPY
                     else:
                         cols = live_cols.get(t)
-                    col_sql = f" ({', '.join(cols)})" if cols else ""
-                    cur.copy_expert(f'COPY "{t}"{col_sql} FROM STDIN', member)  # noqa: S608
+
+                    if cols and len(cols) < len(live):
+                        # the dump lacks columns of the live table: stage into a
+                        # constraint-free temp table, then INSERT with type-aware
+                        # fallbacks for the columns the dump doesn't carry
+                        tmp = f"_imp_{t}"
+                        cur.execute(
+                            f'CREATE TEMP TABLE "{tmp}" AS '  # noqa: S608
+                            f'SELECT * FROM "{t}" WITH NO DATA'
+                        )
+                        col_sql = f" ({', '.join(cols)})"
+                        cur.copy_expert(f'COPY "{tmp}"{col_sql} FROM STDIN', member)  # noqa: S608
+                        have_default = set()
+                        for c in [c for c in live if c not in cols]:
+                            cur.execute(
+                                "SELECT column_default FROM information_schema.columns "
+                                "WHERE table_schema = 'public' AND table_name = %s "
+                                "AND column_name = %s",
+                                (t, c),
+                            )
+                            row = cur.fetchone()
+                            if row and row[0] is not None:
+                                have_default.add(c)
+                        fill = [c for c in live if c not in cols and c not in have_default]
+                        target_cols = cols + fill
+                        select_exprs = [f'"{c}"' for c in cols] + [
+                            _pg_fallback_expr(live_types.get(t, {}).get(c, "")) for c in fill
+                        ]
+                        cur.execute(
+                            f'INSERT INTO "{t}" ({", ".join(target_cols)}) '  # noqa: S608
+                            f"SELECT {', '.join(select_exprs)} FROM \"{tmp}\""
+                        )
+                        cur.execute(f'DROP TABLE "{tmp}"')  # noqa: S608
+                    else:
+                        col_sql = f" ({', '.join(cols)})" if cols else ""
+                        cur.copy_expert(f'COPY "{t}"{col_sql} FROM STDIN', member)  # noqa: S608
                     loaded[t] = -1  # filled with real counts below
 
                 # resync serial sequences so future inserts don't collide
@@ -212,10 +280,21 @@ def _import_postgres(tar_path: str) -> dict:
             raise
         finally:
             conn.close()
-    return {"tables": loaded, "schema_version": schema_version}
+    return {"tables": loaded, "schema_version": schema_version, "skew": skew}
 
 
 # --- SQLite (dev/tests) ---------------------------------------------------------------
+
+
+def _sqlite_fallback(col_type: str) -> str:
+    """SQL expression filling a column the dump doesn't have (NOT NULL
+    columns added after the dump): numeric/bool → 0, text → '', else NULL."""
+    t = col_type.lower()
+    if any(k in t for k in ("int", "real", "floa", "doubl", "numeri", "decim", "bool")):
+        return "0"
+    if "char" in t or "text" in t or "clob" in t:
+        return "''"
+    return "NULL"
 
 
 def _import_sqlite(tar_path: str) -> dict:
@@ -272,30 +351,54 @@ def _import_sqlite(tar_path: str) -> dict:
                 for r in con.execute("SELECT name FROM main.sqlite_master WHERE type='table'")
                 if not r[0].startswith("sqlite_")
             }
-            live_cols: dict[str, list[str]] = {
-                t: [r[1] for r in con.execute(f'PRAGMA main.table_info("{t}")')]  # noqa: S608
-                for t in live_tables
-            }
-
             con.execute("BEGIN")
+            summary_skew: dict[str, dict[str, list[str]]] = {}
             try:
-                # clear every table that exists live or in the dump
-                for t in live_tables | set(aux_tables):
+                # clear only the dump's tables (absent tables keep their data)
+                for t in set(aux_tables) & live_tables:
                     con.execute(f'DELETE FROM main."{t}"')  # noqa: S608
-                loaded: dict[str, int] = {}
+                loaded = {}
+                skew: dict[str, dict[str, list[str]]] = {}
                 for t in aux_tables:
                     aux_cols = [r[1] for r in con.execute(f'PRAGMA aux.table_info("{t}")')]  # noqa: S608
-                    common = [c for c in aux_cols if c in live_cols.get(t, [])]
-                    col_sql = ", ".join(f'"{c}"' for c in common)
+                    if t not in live_tables:
+                        skew[t] = {"dropped_table": aux_cols, "defaulted": []}
+                        continue  # live schema predates the dump → not importable
+                    live_info = con.execute(f'PRAGMA main.table_info("{t}")').fetchall()  # noqa: S608
+                    live_types = {r[1]: str(r[2] or "TEXT") for r in live_info}
+                    live_defaults = {r[1]: r[4] for r in live_info}
+                    live_names = [r[1] for r in live_info]
+                    dropped = [c for c in aux_cols if c not in live_names]
+                    defaulted = [c for c in live_names if c not in aux_cols]
+                    if dropped or defaulted:
+                        skew[t] = {"dropped": dropped, "defaulted": defaulted}
+                    # fill columns the dump doesn't carry: prefer the column's
+                    # own DDL default, else a type-aware fallback
+                    fill_exprs = []
+                    for c in defaulted:
+                        dflt = live_defaults.get(c)
+                        if dflt is not None:
+                            fill_exprs.append(f"{dflt} AS \"{c}\"")
+                        else:
+                            fill_exprs.append(
+                                f'{_sqlite_fallback(live_types.get(c, "TEXT"))} AS "{c}"'
+                            )
+                    common = [c for c in aux_cols if c in live_names]
+                    col_sql = ", ".join(f'"{c}"' for c in common + defaulted)
+                    sel_sql = ", ".join(f'"{c}"' for c in common) + (
+                        (", " + ", ".join(fill_exprs)) if fill_exprs else ""
+                    )
                     cur = con.execute(
-                        f'INSERT INTO main."{t}" ({col_sql}) '
-                        f'SELECT {col_sql} FROM aux."{t}"'  # noqa: S608
+                        f'INSERT INTO main."{t}" ({col_sql}) '  # noqa: S608
+                        f'SELECT {sel_sql} FROM aux."{t}"'
                     )
                     loaded[t] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
                 con.execute("COMMIT")
             except Exception:
                 con.execute("ROLLBACK")
                 raise
+            else:
+                summary_skew = skew
         finally:
             con.execute("DETACH DATABASE aux")
     finally:
@@ -303,7 +406,7 @@ def _import_sqlite(tar_path: str) -> dict:
             with contextlib.suppress(OSError):
                 os.unlink(aux_path)
         con.close()
-    return {"tables": loaded, "schema_version": 0}
+    return {"tables": loaded, "schema_version": 0, "skew": summary_skew}
 
 
 # --- uploads -----------------------------------------------------------------------

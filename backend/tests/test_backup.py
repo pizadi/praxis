@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import tarfile
 
 from tests.conftest import auth, login, make_user
@@ -103,6 +104,8 @@ async def test_backup_receptionist_forbidden(client):
 async def _wait_import_done(client, token: str) -> dict:
     for _ in range(100):
         r = await client.get("/api/v1/admin/backup/import", headers=auth(token))
+        if r.status_code != 200:
+            raise AssertionError(f"import status endpoint: {r.status_code} {r.text}")
         st = r.json()["status"]
         if st != "importing":
             return r.json()
@@ -243,3 +246,63 @@ async def test_import_rejects_garbage(client):
         headers=auth(token),
     )
     assert r.status_code == 422  # invalid_backup (unsafe member path)
+
+
+async def test_import_older_schema_version(client):
+    """A tarball from an earlier app version (fewer columns) imports via the
+    manifest column lists; missing live columns are reported as skew."""
+    import sqlite3
+    import tempfile
+
+    token, _ = await login(client)
+
+    # build an "old version" database: patients without the newer columns
+    fd, old_db = tempfile.mkstemp(suffix=".sqlite3")
+    os.close(fd)
+    old = sqlite3.connect(old_db)
+    old.execute(
+        "CREATE TABLE patients (id INTEGER PRIMARY KEY, national_id TEXT, "
+        "first_name TEXT, last_name TEXT)"
+    )
+    old.execute("INSERT INTO patients VALUES (1, '0011223344', 'قدیمی', 'نسخه')")
+    old.commit()
+    old.close()
+
+    manifest = json.dumps({
+        "schema_version": 2,
+        "app_version": "1.0.0",
+        "tables": {"patients": 1},
+        "table_columns": {
+            "patients": ["id", "national_id", "first_name", "last_name"],
+        },
+    })
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in (
+            ("db/clinic.sqlite3", open(old_db, "rb").read()),
+            ("manifest.json", manifest.encode()),
+        ):
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    os.unlink(old_db)
+
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("old.tar.gz", buf.getvalue(), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+    assert done["summary"]["tables"]["patients"] == 1
+    skew = done["summary"]["skew"]["patients"]
+    assert "phone_number" in skew["defaulted"]  # newer live column, filled by default
+
+    # the imported row is really there (old values, empty new columns)
+    r = await client.get("/api/v1/patients", params={"q": "0011223344"}, headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    item = r.json()["items"][0]
+    assert item["first_name"] == "قدیمی"
+    assert item["phone_number"] == ""

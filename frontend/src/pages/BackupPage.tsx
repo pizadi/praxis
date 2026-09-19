@@ -34,6 +34,8 @@ interface ImportSummary {
   tables: Record<string, number>
   uploads_moved: number
   schema_version: number
+  /** per-table version skew: dropped (not in live schema) / defaulted columns */
+  skew?: Record<string, { dropped?: string[]; defaulted?: string[]; dropped_table?: string[] }>
 }
 
 interface ImportStatus {
@@ -277,8 +279,20 @@ export default function BackupPage() {
               showIcon
               message="واردسازی کامل شد"
               description={
-                `${toFaDigits(Object.keys(importStatus.data.summary.tables).length)} جدول بارگذاری شد` +
-                ` — ${toFaDigits(importStatus.data.summary.uploads_moved)} فایل بازگردانده شد.`
+                <Space direction="vertical" size={4}>
+                  <span>
+                    {toFaDigits(Object.keys(importStatus.data.summary.tables).length)} جدول
+                    بارگذاری شد — {toFaDigits(importStatus.data.summary.uploads_moved)} فایل
+                    بازگردانده شد.
+                  </span>
+                  {importStatus.data.summary.skew && (
+                    <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                      اختلاف نسخهٔ شِما: ستون‌های جدیدِ این نسخه برای ردیف‌های واردشده خالی/پیش‌فرض
+                      گذاشته شدند و ستون‌های ناشناختهٔ پشتیبان نادیده گرفته شدند (
+                      {Object.keys(importStatus.data.summary.skew).join(', ')}).
+                    </Typography.Text>
+                  )}
+                </Space>
               }
             />
           )}
