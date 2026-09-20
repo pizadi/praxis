@@ -7,6 +7,20 @@
   digits-only values). Advanced filters: first/last name, insurance,
   year of birth, gender, national-ID substring, phone substring, and
   multi-select tags/diagnoses (patients must have ALL selected).
+- Patient form: users holding `taxonomies.write` can create a new
+  tag/diagnosis inline — typing a name that matches nothing offers
+  «افزودن «…»»; the entry is created (audited) right before the patient
+  form is submitted. Other users see the existing list only.
+- Tags/diagnoses are always alphabetical: production PostgreSQL sorts via
+  an ICU `fa` collation on the `name` column (migration `f9e8d7c6b5a4` —
+  `ORDER BY name` is index-backed, correct ا ب پ ت … order); dev SQLite
+  falls back to binary order.
+- **Merge on rename**: renaming «foo» to an existing «bar» returns 409
+  `name_taken` and the UI offers a merge. Confirming (same
+  `taxonomies.write` perm that gates tag/diag deletion) moves the patient
+  links to «bar» (patients holding both keep one), soft-deletes «foo»
+  (name reusable; trash can restore it pre-purge), all in one transaction,
+  audited as action `merge`. API: `PATCH /tags/{id}?merge=true`.
 - National ID is 10 digits, unique among live patients (partial unique
   index) — a deleted patient's ID is reusable.
 - Deleting a patient is a soft delete: the whole subtree (appointments,

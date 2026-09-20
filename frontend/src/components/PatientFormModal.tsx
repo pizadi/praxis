@@ -1,8 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App as AntApp, Form, Input, Modal, Select } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 
 import { api, apiError } from '../api/client'
+import { useUser } from './AppLayout'
 import type { NamedRef, Page, Patient } from '../api/types'
 
 export interface PatientForm {
@@ -13,9 +15,17 @@ export interface PatientForm {
   year_of_birth: string
   phone_number?: string
   gender: 0 | 1
-  tag_ids?: number[]
-  diagnosis_ids?: number[]
+  /** numbers = existing ids; `__new__:…` strings = not-yet-created entries
+   * (created server-side right before the patient form is submitted). */
+  tag_ids?: (number | string)[]
+  diagnosis_ids?: (number | string)[]
 }
+
+type TaxonomyKind = 'tags' | 'diagnoses'
+
+const SENTINEL = '__new__:'
+
+const sentinelText = (v: string) => v.slice(SENTINEL.length).split(':')[1]
 
 /**
  * Create/edit patient modal. Pass `patient` to edit, nothing to create.
@@ -33,8 +43,10 @@ export default function PatientFormModal({
   onDone: (saved: Patient) => void
 }) {
   const { message } = AntApp.useApp()
+  const { hasPerm } = useUser()
   const qc = useQueryClient()
   const [form] = Form.useForm<PatientForm>()
+  const canWriteTax = hasPerm('taxonomies.write')
 
   const tags = useQuery({
     queryKey: ['tags'],
@@ -68,17 +80,22 @@ export default function PatientFormModal({
 
   const save = useMutation({
     mutationFn: async (values: PatientForm) => {
+      // create not-yet-existing tags/diagnoses first, then submit the patient
+      // form with real ids
+      const tag_ids = await resolveTaxonomy('tags', values.tag_ids ?? [])
+      const diagnosis_ids = await resolveTaxonomy('diagnoses', values.diagnosis_ids ?? [])
+      const payload: PatientForm = { ...values, tag_ids, diagnosis_ids }
       if (patient) {
-        return (
-          await api.patch<Patient>(`/patients/${patient.id}`, values)
-        ).data
+        return (await api.patch<Patient>(`/patients/${patient.id}`, payload)).data
       }
-      return (await api.post<Patient>('/patients', values)).data
+      return (await api.post<Patient>('/patients', payload)).data
     },
     onSuccess: (saved) => {
       message.success('ذخیره شد')
       qc.invalidateQueries({ queryKey: ['patients'] })
       qc.invalidateQueries({ queryKey: ['patient'] })
+      qc.invalidateQueries({ queryKey: ['tags'] })
+      qc.invalidateQueries({ queryKey: ['diagnoses'] })
       onDone(saved)
     },
     onError: (err) => message.error(apiError(err).message),
@@ -139,23 +156,135 @@ export default function PatientFormModal({
         <Form.Item name="insurance" label="بیمه">
           <Input />
         </Form.Item>
-        <Form.Item name="tag_ids" label="برچسب‌ها">
-          <Select
-            mode="multiple"
-            showSearch
-            optionFilterProp="label"
-            options={(tags.data ?? []).map((t) => ({ value: t.id, label: t.name }))}
-          />
-        </Form.Item>
-        <Form.Item name="diagnosis_ids" label="تشخیص‌ها">
-          <Select
-            mode="multiple"
-            showSearch
-            optionFilterProp="label"
-            options={(diagnoses.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
-          />
-        </Form.Item>
+        <TaxonomySelect
+          name="tag_ids"
+          label="برچسب‌ها"
+          kind="tags"
+          list={tags.data ?? []}
+          canCreate={canWriteTax}
+        />
+        <TaxonomySelect
+          name="diagnosis_ids"
+          label="تشخیص‌ها"
+          kind="diagnoses"
+          list={diagnoses.data ?? []}
+          canCreate={canWriteTax}
+        />
       </Form>
     </Modal>
   )
+}
+
+/** Multi-select over an existing taxonomy with an inline «افزودن «…»»
+ * option (perm-gated): typing a name that matches nothing offers creating
+ * it; the sentinel is resolved to a real id right before the patient form
+ * is submitted. */
+function TaxonomySelect({
+  name,
+  label,
+  kind,
+  list,
+  canCreate,
+}: {
+  name: 'tag_ids' | 'diagnosis_ids'
+  label: string
+  kind: TaxonomyKind
+  list: NamedRef[]
+  canCreate: boolean
+}) {
+  const form = Form.useFormInstance<PatientForm>()
+  const selected: (number | string)[] | undefined = Form.useWatch(name, form)
+  const [search, setSearch] = useState('')
+
+  const options = useMemo(() => {
+    const sel: (number | string)[] = selected ?? []
+    const out: { value: number | string; label: ReactNode }[] = list.map((t) => ({
+      value: t.id,
+      label: t.name,
+    }))
+    // chips for selected not-yet-created entries render as the typed text
+    for (const v of sel) {
+      if (typeof v === 'string' && v.startsWith(SENTINEL)) {
+        out.push({ value: v, label: sentinelText(v) })
+      }
+    }
+    const text = search.trim()
+    if (
+      canCreate &&
+      text &&
+      !out.some((o) => typeof o.label === 'string' && o.label.toLowerCase().includes(text.toLowerCase())) &&
+      !sel.includes(`__new__:${kind}:${text}`)
+    ) {
+      out.push({
+        value: `__new__:${kind}:${text}`,
+        label: (
+          <span>
+            <PlusOutlined /> افزودن «{text}»
+          </span>
+        ),
+      })
+    }
+    return out
+  }, [list, selected, canCreate, kind, search])
+
+  return (
+    <Form.Item name={name} label={label}>
+      <Select
+        mode="multiple"
+        showSearch
+        onSearch={(text) => setSearch(text)}
+        onBlur={() => setSearch('')}
+        options={options}
+        filterOption={(input, option) => {
+          // Sentinel values need custom filtering: the add-new option's
+          // label is JSX (the default String(label) filter would hide it),
+          // and already-selected sentinel chips must NOT reappear in the
+          // dropdown while typing a different name (they would grab the
+          // active option, so Enter would toggle them off instead of
+          // adding the new tag). Only the add-new option for the current
+          // search text passes.
+          const v = option?.value
+          if (typeof v === 'string' && v.startsWith(SENTINEL)) {
+            return v === `__new__:${kind}:${input.trim()}`
+          }
+          return String(option?.label ?? '')
+            .toLowerCase()
+            .includes(input.toLowerCase())
+        }}
+      />
+    </Form.Item>
+  )
+}
+
+/** Create not-yet-existing tags/diagnoses; returns real ids in order.
+ * A 409 `name_taken` (exact duplicate created meanwhile) falls back to the
+ * existing entry instead of failing the save. */
+async function resolveTaxonomy(kind: TaxonomyKind, values: (number | string)[]): Promise<number[]> {
+  const out: number[] = []
+  for (const v of values) {
+    if (typeof v === 'number') {
+      out.push(v)
+      continue
+    }
+    const text = sentinelText(v)
+    try {
+      const created = (await api.post<NamedRef>(`/${kind}`, { name: text })).data
+      out.push(created.id)
+    } catch (err) {
+      if (apiError(err).code === 'name_taken') {
+        const found = (
+          await api.get<Page<NamedRef>>(`/${kind}`, { params: { q: text, limit: 1000 } })
+        ).data.items
+        const hit =
+          found.find((t) => t.name === text) ??
+          found.find((t) => t.name.toLowerCase() === text.toLowerCase())
+        if (hit) {
+          out.push(hit.id)
+          continue
+        }
+      }
+      throw err
+    }
+  }
+  return out
 }
