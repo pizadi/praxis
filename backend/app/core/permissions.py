@@ -49,6 +49,13 @@ PERMISSION_CATALOG: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
+        "نسخ‌ها",
+        [
+            ("prescriptions.read", "مشاهده نسخ‌ها"),
+            ("prescriptions.write", "ثبت و ویرایش نسخ‌ها"),
+        ],
+    ),
+    (
         "پرسش‌نامه‌ها",
         [
             ("questionnaires.read", "مشاهده پاسخ‌های پرسش‌نامه"),
@@ -116,8 +123,9 @@ _DOCTOR_PERMS = [
     "taxonomies.write",
     "trash.view",
     "trash.restore",
+    "prescriptions.read",
+    "prescriptions.write",
 ]
-
 _RECEPTIONIST_PERMS = [
     "patients.read",
     "patients.create",

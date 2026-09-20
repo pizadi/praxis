@@ -30,6 +30,8 @@
 
 - `medical_notes.view` — فیلدهای CM/HX/PX/RX نوبت برای کاربران بدون این
   دسترسی **سمت سرور خالی** برمی‌گردند (فقط مخفی نیستند).
+- `prescriptions.read`/`prescriptions.write` — نسخه‌های ساختاریافته (۱٫۳)؛
+  پیش‌فرض پزشک به بالا؛ پذیرش هیچ (docs_fa/prescriptions.md).
 - `users.manage` هم‌ارز مدیر است؛ سایر دسترسی‌های مدیریتی: `roles.manage`،
   `audit.view`، `backup.manage`، `trash.purge`.
 - `trash.view`/`trash.restore` — پزشک به بالا؛ `trash.purge` — فقط مدیر.

@@ -164,6 +164,9 @@ class Appointment(Base):
     cm: Mapped[str] = mapped_column(Text, default="", nullable=False)
     hx: Mapped[str] = mapped_column(Text, default="", nullable=False)
     px: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # DEPRECATED since 1.3: legacy free-text prescription. Never written by
+    # the app anymore (prescriptions are structured rows now); kept as a
+    # lossless archive of pre-1.3 data. Still gated by medical_notes.view.
     rx: Mapped[str] = mapped_column(Text, default="", nullable=False)
     deleted_at: Mapped[dt.datetime | None] = soft_delete_column()
     created_at: Mapped[dt.datetime] = mapped_column(
@@ -178,9 +181,6 @@ class Appointment(Base):
 
     patient: Mapped[Patient] = relationship(back_populates="appointments")
     transactions: Mapped[list["Transaction"]] = relationship(
-        back_populates="appointment", cascade="all, delete-orphan"
-    )
-    attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="appointment", cascade="all, delete-orphan"
     )
 
@@ -217,8 +217,10 @@ class Attachment(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    appointment_id: Mapped[int] = mapped_column(
-        ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False
+    # Since 1.3 files belong to the PATIENT, not the appointment — they
+    # survive appointment deletion and are managed on the patient page.
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
     )
     description: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -238,7 +240,7 @@ class Attachment(Base):
         nullable=False,
     )
 
-    appointment: Mapped[Appointment] = relationship(back_populates="attachments")
+    patient: Mapped[Patient] = relationship()
 
 
 class QuestionnaireTemplate(Base):
@@ -322,3 +324,105 @@ class QuestionnaireResponse(Base):
 
     patient: Mapped[Patient] = relationship()
     template: Mapped[QuestionnaireTemplate] = relationship(back_populates="responses")
+
+
+# ---------------------------------------------------------------------------
+# Prescriptions (v1.3) — structured replacement for the legacy free-text
+# `appointments.rx` column. A prescription belongs to a PATIENT (like
+# questionnaire responses); `prescription_items` is a tag-like dictionary
+# (autocomplete); the link table carries the per-item quantity (NULL =
+# unspecified/legacy).
+# ---------------------------------------------------------------------------
+
+
+class PrescriptionItem(Base):
+    """Tag-like prescription entry (a drug, a test, an instruction…)."""
+
+    __tablename__ = "prescription_items"
+    __table_args__ = (
+        Index(
+            "uq_prescription_items_name_live",
+            "name",
+            unique=True,
+            **partial_unique_where(),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    deleted_at: Mapped[dt.datetime | None] = soft_delete_column()
+
+
+class Prescription(Base):
+    """One prescription: patient + timestamp + items/quantities + notes.
+
+    `source_appointment_id` records which (legacy or live) appointment the
+    prescription was derived from during data migration — provenance only,
+    intentionally NOT a FK so it survives appointment purges. Legacy
+    migration fills it; UI-created prescriptions leave it NULL.
+    """
+
+    __tablename__ = "prescriptions"
+    __table_args__ = (
+        Index("ix_prescriptions_patient_id", "patient_id"),
+        Index("ix_prescriptions_source_appointment_id", "source_appointment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    prescribed_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    source_appointment_id: Mapped[int | None] = mapped_column(nullable=True)
+    deleted_at: Mapped[dt.datetime | None] = soft_delete_column()
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    patient: Mapped[Patient] = relationship()
+    links: Mapped[list["PrescriptionItemLink"]] = relationship(
+        back_populates="prescription", cascade="all, delete-orphan"
+    )
+
+
+class PrescriptionItemLink(Base):
+    """M2M prescription ↔ prescription_item with a per-item quantity.
+
+    A prescription's items are a SET (unique pair); editing a prescription
+    replaces its links. Rows hard-delete with their parents (links are
+    never soft-deleted independently).
+    """
+
+    __tablename__ = "prescription_item_links"
+    __table_args__ = (
+        Index(
+            "uq_prescription_item_links_pair",
+            "prescription_id",
+            "item_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    prescription_id: Mapped[int] = mapped_column(
+        ForeignKey("prescriptions.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("prescription_items.id", ondelete="CASCADE"), nullable=False
+    )
+    quantity: Mapped[int | None] = mapped_column(nullable=True)
+
+    prescription: Mapped[Prescription] = relationship(back_populates="links")
+    item: Mapped[PrescriptionItem] = relationship()

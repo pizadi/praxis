@@ -18,7 +18,8 @@ rewritten from a legacy Django/SQLite application.
 backend/app
   api/v1/        routers: auth, users, roles, patients, appointments,
                  attachments, transactions, payments, taxonomies,
-                 questionnaires, stats, trash, audit, backup, meta
+                 prescriptions, questionnaires, stats, trash, audit,
+                 backup, meta
   api/deps.py    auth deps, permission guards, file-storage safety
   core/          config, security (JWT/argon2), errors, tokens,
                  permissions (catalog + system role sets)

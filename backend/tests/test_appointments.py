@@ -134,18 +134,20 @@ async def test_transactions(client):
 async def test_attachments_upload_download_edit(client):
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
-    appt = await _mk_appt(client, token, pid)
+    await _mk_appt(client, token, pid)
 
     # multipart upload — description/notes arrive as FORM fields (antd Upload "data"),
-    # not query params; they must be persisted on create, not silently dropped
+    # not query params; they must be persisted on create, not silently dropped.
+    # Files belong to the PATIENT (since 1.3), not the appointment.
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         data={"description": "lab report", "notes": "pre-op"},
         files={"file": ("report.pdf", io.BytesIO(b"%PDF-1.4 test bytes"), "application/pdf")},
         headers=auth(token),
     )
     assert r.status_code == 201, r.text
     att = r.json()
+    assert att["patient_id"] == pid
     assert att["original_filename"] == "report.pdf"
     assert att["size_bytes"] == 19
     assert att["missing_file"] is False
@@ -154,7 +156,7 @@ async def test_attachments_upload_download_edit(client):
 
     # Edit description/notes — legacy system silently dropped these edits
     r = await client.patch(
-        f"/api/v1/appointments/files/{att['id']}",
+        f"/api/v1/files/{att['id']}",
         json={"description": "lab report v2", "notes": "updated"},
         headers=auth(token),
     )
@@ -163,38 +165,32 @@ async def test_attachments_upload_download_edit(client):
     assert r.json()["notes"] == "updated"
 
     # list carries notes (shown in the UI as a collapsible box)
-    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    r = await client.get(f"/api/v1/patients/{pid}/files", headers=auth(token))
     assert r.json()[0]["description"] == "lab report v2"
     assert r.json()[0]["notes"] == "updated"
 
     # download with correct content type
-    r = await client.get(
-        f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token)
-    )
+    r = await client.get(f"/api/v1/files/{att['id']}/download", headers=auth(token))
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/pdf")
     assert r.content == b"%PDF-1.4 test bytes"
 
     # delete removes row + physical file
 
-    r = await client.delete(
-        f"/api/v1/appointments/files/{att['id']}", headers=auth(token)
-    )
+    r = await client.delete(f"/api/v1/files/{att['id']}", headers=auth(token))
     assert r.status_code == 204
-    r = await client.get(
-        f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token)
-    )
+    r = await client.get(f"/api/v1/files/{att['id']}/download", headers=auth(token))
     assert r.status_code == 404
 
 
 async def test_note_only_file(client):
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
-    appt = await _mk_appt(client, token, pid)
+    await _mk_appt(client, token, pid)
 
     # create name+note without a physical file
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files/note",
+        f"/api/v1/patients/{pid}/files/note",
         json={"description": "شرح در جلسه", "notes": "بیمار گزارش را نفرستاد"},
         headers=auth(token),
     )
@@ -205,20 +201,18 @@ async def test_note_only_file(client):
     assert att["original_filename"] is None
     assert att["missing_file"] is False
 
-    # listed among the appointment's files
-    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    # listed among the patient's files
+    r = await client.get(f"/api/v1/patients/{pid}/files", headers=auth(token))
     assert r.status_code == 200
     assert r.json()[0]["id"] == att["id"]
     assert r.json()[0]["original_filename"] is None
 
     # download → 404 (note-only), not a crash
-    r = await client.get(
-        f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token)
-    )
+    r = await client.get(f"/api/v1/files/{att['id']}/download", headers=auth(token))
     assert r.status_code == 404
 
     # soft delete → trash restore round-trip works with no physical file
-    r = await client.delete(f"/api/v1/appointments/files/{att['id']}", headers=auth(token))
+    r = await client.delete(f"/api/v1/files/{att['id']}", headers=auth(token))
     assert r.status_code == 204
     r = await client.get("/api/v1/admin/trash/attachments", headers=auth(token))
     assert r.json()["total"] == 1
@@ -226,14 +220,14 @@ async def test_note_only_file(client):
         f"/api/v1/admin/trash/attachments/{att['id']}/restore", headers=auth(token)
     )
     assert r.status_code == 200
-    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    r = await client.get(f"/api/v1/patients/{pid}/files", headers=auth(token))
     assert r.json()[0]["id"] == att["id"]
 
     # receptionist cannot create (doctor+)
     await make_user(client, token, "recep1", role="receptionist")
     recep, _ = await login(client, "recep1", "passw0rd123")
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files/note",
+        f"/api/v1/patients/{pid}/files/note",
         json={"description": "x"},
         headers=auth(recep),
     )
@@ -245,11 +239,11 @@ async def test_attachment_content_attach_and_replace(client):
     file's content — description/notes survive, downloads reflect the change."""
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
-    appt = await _mk_appt(client, token, pid)
+    await _mk_appt(client, token, pid)
 
     # note-only row → attach a file
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files/note",
+        f"/api/v1/patients/{pid}/files/note",
         json={"description": "شرح جلسه", "notes": "یادداشت"},
         headers=auth(token),
     )
@@ -258,7 +252,7 @@ async def test_attachment_content_attach_and_replace(client):
     assert att["original_filename"] is None
 
     r = await client.post(
-        f"/api/v1/appointments/files/{att['id']}/content",
+        f"/api/v1/files/{att['id']}/content",
         files={"file": ("scan.png", io.BytesIO(b"\x89PNG fake image"), "image/png")},
         headers=auth(token),
     )
@@ -272,13 +266,13 @@ async def test_attachment_content_attach_and_replace(client):
     assert body["notes"] == "یادداشت"  # preserved
 
     # download now works
-    r = await client.get(f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token))
+    r = await client.get(f"/api/v1/files/{att['id']}/download", headers=auth(token))
     assert r.status_code == 200
     assert r.content == b"\x89PNG fake image"
 
     # replace → content and metadata change, notes survive
     r = await client.post(
-        f"/api/v1/appointments/files/{att['id']}/content",
+        f"/api/v1/files/{att['id']}/content",
         files={"file": ("report.pdf", io.BytesIO(b"%PDF-1.4 v2"), "application/pdf")},
         headers=auth(token),
     )
@@ -288,14 +282,14 @@ async def test_attachment_content_attach_and_replace(client):
     assert body["mime_type"] == "application/pdf"
     assert body["missing_file"] is False
 
-    r = await client.get(f"/api/v1/appointments/files/{att['id']}/download", headers=auth(token))
+    r = await client.get(f"/api/v1/files/{att['id']}/download", headers=auth(token))
     assert r.status_code == 200
     assert r.content == b"%PDF-1.4 v2"
     assert r.headers["content-type"].startswith("application/pdf")
 
     # unknown attachment → 404
     r = await client.post(
-        "/api/v1/appointments/files/999999/content",
+        "/api/v1/files/999999/content",
         files={"file": ("x.txt", io.BytesIO(b"x"), "text/plain")},
         headers=auth(token),
     )
@@ -305,7 +299,7 @@ async def test_attachment_content_attach_and_replace(client):
     await make_user(client, token, "recep2", role="receptionist")
     recep, _ = await login(client, "recep2", "passw0rd123")
     r = await client.post(
-        f"/api/v1/appointments/files/{att['id']}/content",
+        f"/api/v1/files/{att['id']}/content",
         files={"file": ("x.txt", io.BytesIO(b"x"), "text/plain")},
         headers=auth(recep),
     )
@@ -342,12 +336,12 @@ async def test_upload_size_cap_enforced_midstream(client, monkeypatch):
 
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
-    appt = await _mk_appt(client, token, pid)
+    await _mk_appt(client, token, pid)
 
     before = {p.name for p in upload_dir().iterdir()}
     monkeypatch.setattr(cfg, "max_upload_bytes", 1024)  # 1 KB cap
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         files={"file": ("big.bin", io.BytesIO(b"x" * 4096), "application/octet-stream")},
         headers=auth(token),
     )
@@ -356,7 +350,7 @@ async def test_upload_size_cap_enforced_midstream(client, monkeypatch):
 
     # within the (patched) cap everything still works
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         files={"file": ("ok.bin", io.BytesIO(b"x" * 512), "application/octet-stream")},
         headers=auth(token),
     )
@@ -367,12 +361,12 @@ async def test_upload_size_cap_enforced_midstream(client, monkeypatch):
 async def test_upload_empty_rejected(client):
     token, _ = await login(client)
     pid = await _mk_patient(client, token)
-    appt = await _mk_appt(client, token, pid)
+    await _mk_appt(client, token, pid)
     from app.api.deps import upload_dir
 
     before = {p.name for p in upload_dir().iterdir()}
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         files={"file": ("empty.txt", io.BytesIO(b""), "text/plain")},
         headers=auth(token),
     )
@@ -409,10 +403,14 @@ async def test_receptionist_role_gating(client):
 
     # receptionist cannot upload files
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         files={"file": ("x.txt", io.BytesIO(b"nope"), "text/plain")},
         headers=auth(recep),
     )
+    assert r.status_code == 403
+
+    # receptionist cannot read prescriptions (medical data)
+    r = await client.get(f"/api/v1/patients/{pid}/prescriptions", headers=auth(recep))
     assert r.status_code == 403
 
     # doctor can edit notes

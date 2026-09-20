@@ -27,7 +27,7 @@ export default function FileNotesExpanded({ file }: { file: Attachment }) {
 
   const save = useMutation({
     mutationFn: async (values: { description: string; notes: string }) =>
-      api.patch(`/appointments/files/${file.id}`, values),
+      api.patch(`/files/${file.id}`, values),
     onSuccess: async () => {
       message.success('ذخیره شد')
       setEditing(false)

@@ -18,7 +18,8 @@
 backend/app
   api/v1/        روترها: auth، users، roles، patients، appointments،
                  attachments، transactions، payments، taxonomies،
-                 questionnaires، stats، trash، audit، backup، meta
+                 prescriptions، questionnaires، stats، trash، audit،
+                 backup، meta
   api/deps.py    وابستگی‌های احراز هویت، نگهبان دسترسی، امنیت فایل
   core/          پیکربندی، امنیت (JWT/argon2)، خطاها، توکن‌ها،
                  کاتالوگ دسترسی‌ها + نقش‌های سیستمی
