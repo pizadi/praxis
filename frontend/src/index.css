@@ -31,3 +31,26 @@ html.dark .rmdp-container input {
   border-color: #424242 !important;
   color: rgba(255, 255, 255, 0.85) !important;
 }
+
+/* Questionnaire builder: hover-revealed «insert question here» button in
+   the gap above each question card (start / between questions) */
+.q-gap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 10px;
+  transition: height 0.15s ease;
+}
+
+.q-gap .ant-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.q-gap:hover {
+  height: 20px;
+}
+
+.q-gap:hover .ant-btn {
+  opacity: 1;
+}

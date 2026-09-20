@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   App as AntApp,
@@ -353,9 +353,26 @@ function BuilderForm({
               <Typography.Text strong>پرسش‌ها</Typography.Text>
               <Form.List name="questions">
                 {(fields, { add, remove }) => (
-                  <Space direction="vertical" style={{ width: '100%' }} size="small">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {fields.map((field) => (
-                      <Card key={field.key} size="small" styles={{ body: { paddingTop: 12 } }}>
+                      <Fragment key={field.key}>
+                        <div className="q-gap">
+                          <Button
+                            type="text"
+                            shape="circle"
+                            size="small"
+                            icon={<PlusOutlined />}
+                            title="درج پرسش اینجا"
+                            aria-label="درج پرسش اینجا"
+                            onClick={() =>
+                              add(
+                                { key: '', label: '', type: 'string', required: false },
+                                field.name,
+                              )
+                            }
+                          />
+                        </div>
+                        <Card size="small" styles={{ body: { paddingTop: 12 } }}>
                         <Space align="baseline" wrap>
                           <Form.Item
                             name={[field.name, 'key']}
@@ -404,7 +421,8 @@ function BuilderForm({
                         </Space>
 
                         <TypeSpecificFields form={form} field={field.name} />
-                      </Card>
+                        </Card>
+                      </Fragment>
                     ))}
                     <Button
                       type="dashed"
@@ -414,7 +432,7 @@ function BuilderForm({
                     >
                       پرسش جدید
                     </Button>
-                  </Space>
+                  </div>
                 )}
               </Form.List>
 

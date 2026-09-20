@@ -32,6 +32,9 @@ whose `format_json` is a validated JSON document:
   `POST /questionnaires/templates/validate` checks without saving. The UI
   uploads JSON by parsing it in the browser (`File.text()` + `JSON.parse`)
   and posting the object — raw files never hit the API.
+- Inserting a question at the **start** or **between** existing questions:
+  a small plus button appears when hovering the gap above each question
+  card (the trailing «پرسش جدید» button appends at the end).
 
 ## Responses
 
