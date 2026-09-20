@@ -19,6 +19,15 @@ Version history:
          headers, UTC-"today" fix (server /meta/today), dark-mode color
          tokens, Persian role display names, roles dialog preselects
          existing permissions
+  1.2.2.dev1  patient form: inline creation of new tags/diagnoses for
+         taxonomies.write holders (created at submit, before the patient
+         save); questionnaire builder: hover plus button inserts a question
+         at the start or between questions
+  1.2.2.dev2  tags/diagnoses: Persian alphabetical order at the DB level
+         (ICU fa_sort column collation, migration f9e8d7c6b5a4; patient
+         tag/diagnosis lists ordered too); rename-onto-existing offers a
+         merge (links move to the survivor, source soft-deleted, one
+         transaction, audited as action merge)
 """
 
-__version__ = "1.2.1"
+__version__ = "1.2.2.dev2"
