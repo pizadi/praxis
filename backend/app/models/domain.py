@@ -139,10 +139,12 @@ class Patient(Base):
     )
 
     tags: Mapped[list[Tag]] = relationship(
-        secondary=patient_tags, back_populates="patients", lazy="selectin"
+        secondary=patient_tags, back_populates="patients", lazy="selectin",
+        order_by="Tag.name",
     )
     diagnoses: Mapped[list[Diagnosis]] = relationship(
-        secondary=patient_diagnoses, back_populates="patients", lazy="selectin"
+        secondary=patient_diagnoses, back_populates="patients", lazy="selectin",
+        order_by="Diagnosis.name",
     )
     appointments: Mapped[list["Appointment"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan"

@@ -25,6 +25,7 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   delete: { label: 'حذف', color: 'red' },
   restore: { label: 'بازیابی', color: 'orange' },
   purge: { label: 'حذف قطعی', color: 'magenta' },
+  merge: { label: 'ادغام', color: 'purple' },
   logout: { label: 'خروج', color: 'default' },
 }
 

@@ -266,3 +266,76 @@ async def test_receptionist_cannot_delete_patient(client):
     p = await _mk_patient(client, admin_token)
     r = await client.delete(f"/api/v1/patients/{p['id']}", headers=auth(recep[0]))
     assert r.status_code == 403
+
+
+async def test_taxonomy_list_sorted(client):
+    token, _ = await login(client)
+    for name in ("zeta", "alpha", "midway"):
+        r = await client.post("/api/v1/tags", json={"name": name}, headers=auth(token))
+        assert r.status_code == 201
+    r = await client.get("/api/v1/tags", headers=auth(token))
+    names = [i["name"] for i in r.json()["items"]]
+    assert names == sorted(names)
+
+
+async def test_taxonomy_merge_on_rename(client):
+    token, _ = await login(client)
+    r = await client.post("/api/v1/tags", json={"name": "foo"}, headers=auth(token))
+    foo = r.json()
+    r = await client.post("/api/v1/tags", json={"name": "bar"}, headers=auth(token))
+    bar = r.json()
+
+    p_foo = await _mk_patient(client, token, national_id="4444444441", tag_ids=[foo["id"]])
+    p_bar = await _mk_patient(client, token, national_id="4444444442", tag_ids=[bar["id"]])
+    p_both = await _mk_patient(
+        client, token, national_id="4444444443", tag_ids=[foo["id"], bar["id"]]
+    )
+
+    # without the merge flag → 409 (the UI asks the user)
+    r = await client.patch(
+        f"/api/v1/tags/{foo['id']}", json={"name": "bar"}, headers=auth(token)
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "name_taken"
+
+    # with merge=true → bar survives, foo soft-deleted, links moved
+    r = await client.patch(
+        f"/api/v1/tags/{foo['id']}", json={"name": "bar"}, params={"merge": "true"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == bar["id"]
+    assert r.json()["name"] == "bar"
+
+    r = await client.get("/api/v1/tags", headers=auth(token))
+    names = [i["name"] for i in r.json()["items"]]
+    assert "foo" not in names and "bar" in names
+
+    for pid, expected in ((p_foo["id"], ["bar"]), (p_bar["id"], ["bar"]), (p_both["id"], ["bar"])):
+        r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
+        assert [t["name"] for t in r.json()["tags"]] == expected, pid
+
+    # foo went to the trash (soft delete) and its name is reusable after purge/restore
+    r = await client.get("/api/v1/admin/trash/tags", headers=auth(token))
+    assert any(i["title"] == "foo" for i in r.json()["items"])
+
+    # audited as a merge
+    r = await client.get("/api/v1/admin/audit", params={"entity_type": "tag"}, headers=auth(token))
+    assert any(e["action"] == "merge" for e in r.json()["items"])
+
+
+async def test_taxonomy_merge_diagnoses(client):
+    token, _ = await login(client)
+    r = await client.post("/api/v1/diagnoses", json={"name": "old-dx"}, headers=auth(token))
+    old_dx = r.json()
+    r = await client.post("/api/v1/diagnoses", json={"name": "new-dx"}, headers=auth(token))
+    new_dx = r.json()
+    p = await _mk_patient(client, token, national_id="4444444444", diagnosis_ids=[old_dx["id"]])
+    r = await client.patch(
+        f"/api/v1/diagnoses/{old_dx['id']}", json={"name": "new-dx"}, params={"merge": "true"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["id"] == new_dx["id"]
+    r = await client.get(f"/api/v1/patients/{p['id']}", headers=auth(token))
+    assert [d["name"] for d in r.json()["diagnoses"]] == ["new-dx"]

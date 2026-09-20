@@ -16,6 +16,7 @@ UPDATE = "update"
 DELETE = "delete"
 RESTORE = "restore"
 PURGE = "purge"
+MERGE = "merge"  # taxonomy merge (rename onto an existing name)
 LOGIN = "login"  # reserved; login attempts live in login_audit
 LOGOUT = "logout"  # refresh-token revocation at session end
 

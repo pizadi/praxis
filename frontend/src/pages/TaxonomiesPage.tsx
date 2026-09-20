@@ -35,7 +35,7 @@ function TaxonomyPanel({
   color: string
   canEdit: boolean
 }) {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const qc = useQueryClient()
   const [name, setName] = useState('')
   const [search, setSearch] = useState('')
@@ -63,14 +63,31 @@ function TaxonomyPanel({
   })
 
   const rename = useMutation({
-    mutationFn: async ({ id, newName }: { id: number; newName: string }) =>
-      api.patch(`/${kind}/${id}`, { name: newName }),
-    onSuccess: async () => {
-      message.success('تغییر نام انجام شد')
+    mutationFn: async ({ id, newName, merge }: { id: number; newName: string; oldName: string; merge?: boolean }) =>
+      api.patch(`/${kind}/${id}`, { name: newName }, { params: merge ? { merge: true } : undefined }),
+    onSuccess: async (_, v) => {
+      if (v.merge) message.success('ادغام انجام شد')
+      else message.success('تغییر نام انجام شد')
       setRenaming(null)
       await qc.invalidateQueries({ queryKey: [kind] })
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: (err, v) => {
+      // renaming onto an existing name → offer a merge (needs the same
+      // taxonomies.write perm that gates tag/diag deletion)
+      if (apiError(err).code === 'name_taken' && v.oldName) {
+        const oldName = v.oldName
+        modal.confirm({
+          title: 'ادغام؟',
+          content: `«${v.newName}» از قبل وجود دارد. «${oldName}» حذف و همهٔ بیمارانی که آن را داشتند به «${v.newName}» منتقل می‌شوند.`,
+          okText: 'ادغام',
+          cancelText: 'انصراف',
+          maskClosable: false,
+          onOk: () => rename.mutate({ id: v.id, newName: v.newName, oldName, merge: true }),
+        })
+        return
+      }
+      message.error(apiError(err).message)
+    },
   })
 
   const remove = useMutation({
@@ -183,7 +200,7 @@ function TaxonomyPanel({
           onFinish={(v) => {
             const newName = v.name?.trim()
             if (renaming && newName && newName !== renaming.name) {
-              rename.mutate({ id: renaming.id, newName })
+              rename.mutate({ id: renaming.id, newName, oldName: renaming.name })
             } else {
               setRenaming(null)
             }

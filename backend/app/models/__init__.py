@@ -9,6 +9,8 @@ from app.models.domain import (
     QuestionnaireTemplate,
     Tag,
     Transaction,
+    patient_diagnoses,
+    patient_tags,
 )
 from app.models.system import (
     AuditLog,
@@ -34,4 +36,6 @@ __all__ = [
     "Tag",
     "Transaction",
     "User",
+    "patient_diagnoses",
+    "patient_tags",
 ]
