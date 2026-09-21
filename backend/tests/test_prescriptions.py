@@ -215,6 +215,40 @@ async def test_prescription_crud_and_auto_create(client):
     assert [i["item_name"] for i in r.json()["items"]] == ["co amoxi"]
 
 
+async def test_patch_prescription_keeps_same_items(client):
+    """PATCH keeping the SAME item pairs (only quantity/order changed) must
+    not hit uq_prescription_item_links_pair — kept pairs are delete+inserted
+    in one transaction."""
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+    r = await client.post(
+        f"/api/v1/patients/{pid}/prescriptions",
+        json={"items": [{"name": "P1", "quantity": 20}, {"name": "doxy"}]},
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+    rx_id = r.json()["id"]
+
+    # same items, changed quantities + order
+    r = await client.patch(
+        f"/api/v1/prescriptions/{rx_id}",
+        json={"items": [{"name": "doxy", "quantity": 2}, {"name": "P1", "quantity": 5}]},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    got = {i["item_name"]: i["quantity"] for i in r.json()["items"]}
+    assert got == {"P1": 5, "doxy": 2}
+
+    # ...and a repeat replace that keeps a pair again
+    r = await client.patch(
+        f"/api/v1/prescriptions/{rx_id}",
+        json={"items": [{"name": "P1"}]},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    assert [(i["item_name"], i["quantity"]) for i in r.json()["items"]] == [("P1", None)]
+
+
 async def test_prescription_item_autocomplete_and_rename(client):
     token, _ = await login(client)
     pid = await _mk_patient(client, token)

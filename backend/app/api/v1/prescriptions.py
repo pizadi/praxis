@@ -384,6 +384,12 @@ async def update_prescription(
             {"item_id": link.item_id, "quantity": link.quantity} for link in rx.links
         ]
         resolved = await _resolve_items(db, body.items)
+        # Replacing the collection in one flush re-INSERTs kept
+        # (prescription_id, item_id) pairs BEFORE the orphan DELETEs land
+        # (unit of work orders inserts first) → uq_prescription_item_links_pair
+        # violation. Delete first, flush, then insert the replacement links.
+        rx.links = []
+        await db.flush()
         rx.links = [
             PrescriptionItemLink(item_id=item_id, quantity=quantity)
             for item_id, quantity in resolved
