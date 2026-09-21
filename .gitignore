@@ -34,3 +34,6 @@ work/
 .DS_Store
 .idea/
 .vscode/
+
+# TS build artifact
+*.tsbuildinfo
