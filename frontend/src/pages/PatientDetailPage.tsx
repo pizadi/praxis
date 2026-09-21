@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -16,21 +16,24 @@ import {
   Popconfirm,
   Row,
   Segmented,
+  Select,
   Space,
   Table,
   Tag,
   Typography,
 } from 'antd'
 import {
+  CalendarOutlined,
   DeleteOutlined,
   EditOutlined,
   FileOutlined,
+  FileDoneOutlined,
   PaperClipOutlined,
   PlusOutlined,
-  WalletOutlined,
 } from '@ant-design/icons'
+import { theme as antdTheme } from 'antd'
 
-import { api, apiError } from '../api/client'
+import { api, apiFieldErrors, apiError } from '../api/client'
 import type {
   Appointment,
   AppointmentBrief,
@@ -38,16 +41,29 @@ import type {
   NamedRef,
   Page,
   Patient,
-  PatientTransaction,
+  QuestionnaireResponse,
+  QuestionnaireTemplate,
 } from '../api/types'
-import { fileSize, formatJalali, formatJalaliTime, formatMoney, toFaDigits } from '../lib/jalali'
+import type { Answers, FormatDoc } from '../lib/questionnaire'
+import { faAnswerError, mergeResponse } from '../lib/questionnaire'
+import { fileSize, formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
 import { useUser } from '../components/AppLayout'
+import { useBeforeUnloadGuard, useNavGuard } from '../components/NavGuard'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
-import AppointmentPanel from '../components/AppointmentPanel'
-import FileNotesExpanded from '../components/FileNotesExpanded'
+import AppointmentPanel, { type AppointmentPanelHandle } from '../components/AppointmentPanel'
+import FileDetailPane from '../components/FileDetailPane'
 import PatientFormModal from '../components/PatientFormModal'
+import { QuestionnaireForm, QuestionnaireView } from '../components/QuestionnaireRender'
 
-type ViewMode = 'appointments' | 'files' | 'payments'
+type ViewMode = 'appointments' | 'files' | 'questionnaires'
+
+/** A navigation the user requested while forms had unsaved changes. */
+type PendingNav =
+  | { kind: 'view'; view: ViewMode }
+  | { kind: 'appt'; id: number | null }
+  | { kind: 'route'; to: string }
+
+const normVal = (v: unknown) => (v == null || v === '' ? null : v)
 
 export default function PatientDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -55,6 +71,7 @@ export default function PatientDetailPage() {
   const navigate = useNavigate()
   const { hasPerm } = useUser()
   const { message } = AntApp.useApp()
+  const { token: themeToken } = antdTheme.useToken()
   const qc = useQueryClient()
 
   const isAdmin = hasPerm('patients.delete')
@@ -70,6 +87,20 @@ export default function PatientDetailPage() {
   const [newApptOpen, setNewApptOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [apptForm] = Form.useForm<{ scheduled_at: string; notes?: string }>()
+
+  // --- questionnaire view state ---
+  const [qSelectedId, setQSelectedId] = useState<number | null>(null)
+  const [qMode, setQMode] = useState<'view' | 'create' | 'edit'>('view')
+  const [qPickTemplate, setQPickTemplate] = useState<number | null>(null)
+  const [qForm] = Form.useForm<Record<string, unknown>>()
+
+  // --- unsaved-changes guard state ---
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(null)
+  const [pendingNav, setPendingNav] = useState<PendingNav | null>(null)
+  const [apptDirty, setApptDirty] = useState(false)
+  const apptPanelRef = useRef<AppointmentPanelHandle>(null)
+  /** runs after a guard-initiated save succeeds (completes the navigation) */
+  const afterSaveRef = useRef<(() => void) | null>(null)
 
   const { data: patient, isLoading } = useQuery({
     queryKey: ['patient', id],
@@ -93,13 +124,25 @@ export default function PatientDetailPage() {
     enabled: view === 'files',
   })
 
-  const allTxns = useQuery({
-    queryKey: ['patient-txns', id],
+  const qCanRead = hasPerm('questionnaires.read')
+  const qCanFill = hasPerm('questionnaires.fill')
+
+  const qResponses = useQuery({
+    queryKey: ['patient-questionnaires', id],
     queryFn: async () =>
-      (await api.get<Page<PatientTransaction>>(`/patients/${id}/all-transactions`, {
+      (await api.get<Page<QuestionnaireResponse>>(`/patients/${id}/questionnaires`, {
         params: { limit: 100 },
       })).data,
-    enabled: view === 'payments',
+    enabled: view === 'questionnaires' && qCanRead,
+  })
+
+  const qTemplates = useQuery({
+    queryKey: ['questionnaire-templates'],
+    queryFn: async () =>
+      (await api.get<Page<QuestionnaireTemplate>>('/questionnaires/templates', {
+        params: { limit: 200 },
+      })).data,
+    enabled: view === 'questionnaires' && qCanRead,
   })
 
   const addAppt = useMutation({
@@ -140,11 +183,166 @@ export default function PatientDetailPage() {
     onError: (err) => message.error(apiError(err).message),
   })
 
-  useEffect(() => {
-    if (patient && selectedAppt == null && view === 'appointments') {
-      // nothing — keep the empty-state hint until the user picks one
+  // --- questionnaire mutations ---
+
+  const afterQSave = async () => {
+    await qc.invalidateQueries({ queryKey: ['patient-questionnaires', id] })
+  }
+
+  /** Surface server answer-validation errors inline, per field (the toast
+   * alone carries no field information). */
+  const showQErrors = (err: unknown) => {
+    afterSaveRef.current = null
+    const fields = apiFieldErrors(err)
+    const entries = Object.entries(fields ?? {})
+    if (entries.length > 0) {
+      qForm.setFields(
+        entries.map(([name, errors]) => ({
+          name,
+          errors: errors.map((m) => faAnswerError(m)),
+        })),
+      )
     }
-  }, [patient, selectedAppt, view])
+    message.error(apiError(err).message)
+  }
+
+  const createQ = useMutation({
+    mutationFn: async (v: { template_id: number; answers: Answers }) =>
+      (await api.post<QuestionnaireResponse>(`/patients/${id}/questionnaires`, v)).data,
+    onSuccess: async (created) => {
+      message.success('پاسخ پرسش‌نامه ثبت شد')
+      setQMode('view')
+      setQPickTemplate(null)
+      setQSelectedId(created.id)
+      await afterQSave()
+      const next = afterSaveRef.current
+      afterSaveRef.current = null
+      next?.()
+    },
+    onError: showQErrors,
+  })
+
+  const updateQ = useMutation({
+    mutationFn: async (v: { rid: number; answers: Answers }) =>
+      (await api.patch<QuestionnaireResponse>(`/questionnaires/responses/${v.rid}`, {
+        answers: v.answers,
+      })).data,
+    onSuccess: async () => {
+      message.success('پاسخ‌ها به‌روزرسانی شد')
+      setQMode('view')
+      await afterQSave()
+      const next = afterSaveRef.current
+      afterSaveRef.current = null
+      next?.()
+    },
+    onError: showQErrors,
+  })
+
+  const deleteQ = useMutation({
+    mutationFn: async (rid: number) => api.delete(`/questionnaires/responses/${rid}`),
+    onSuccess: async () => {
+      message.success('به سبد بازیافت منتقل شد')
+      setQSelectedId(null)
+      setQMode('view')
+      await afterQSave()
+    },
+    onError: (err) => message.error(apiError(err).message),
+  })
+
+  /** Clear fields invalid against the current template: known-but-invalid
+   * keys → null, removed keys dropped; valid answers preserved. */
+  const clearInvalidQ = useMutation({
+    mutationFn: async (r: QuestionnaireResponse) => {
+      const fmt = (qTemplates.data?.items ?? []).find((t) => t.id === r.template_id)
+        ?.format as FormatDoc | undefined
+      if (!fmt) throw new Error('قالب پرسش‌نامه یافت نشد')
+      const merged = mergeResponse(fmt, r.answers)
+      const next: Answers = {}
+      for (const q of fmt.questions ?? []) {
+        const v = r.answers?.[q.key]
+        if (v === undefined) continue // treat as empty
+        next[q.key] = merged.invalidKeys.includes(q.key) ? null : v
+      }
+      return (
+        await api.patch<QuestionnaireResponse>(`/questionnaires/responses/${r.id}`, {
+          answers: next,
+        })
+      ).data
+    },
+    onSuccess: async () => {
+      message.success('فیلدهای نامعتبر پاک شدند')
+      await afterQSave()
+    },
+    onError: (err) => message.error(apiError(err).message),
+  })
+
+  // selected questionnaire + template (before the early return: the dirty
+  // guard below watches the form and needs them unconditionally)
+  const selectedQ = (qResponses.data?.items ?? []).find((r) => r.id === qSelectedId) ?? null
+  const selectedQTemplate = selectedQ
+    ? ((qTemplates.data?.items ?? []).find((t) => t.id === selectedQ.template_id) ?? null)
+    : null
+  const createTemplate = qPickTemplate
+    ? ((qTemplates.data?.items ?? []).find((t) => t.id === qPickTemplate) ?? null)
+    : null
+
+  // --- unsaved-changes detection ---------------------------------------------
+  // appointment notes: reported by AppointmentPanel via onDirtyChange
+  // questionnaire answers: watched here (the form instance is parent-owned)
+  const qValues = Form.useWatch([], qForm)
+  const qDirty = useMemo(() => {
+    if (qMode === 'view' || !qValues) return false
+    if (qMode === 'create') {
+      return Object.values(qValues).some((v) => v != null && v !== '')
+    }
+    if (!selectedQ) return false
+    const stored = selectedQ.answers ?? {}
+    const keys = new Set([...Object.keys(stored), ...Object.keys(qValues)])
+    for (const k of keys) {
+      if (normVal(stored[k]) !== normVal(qValues[k])) return true
+    }
+    return false
+  }, [qMode, qValues, selectedQ])
+
+  const dirty = apptDirty || qDirty
+
+  const applyNav = useCallback((t: PendingNav | null) => {
+    if (t == null) return
+    if (t.kind === 'view') {
+      setView(t.view)
+      setQMode('view')
+      setQSelectedId(null)
+      setQPickTemplate(null)
+    } else if (t.kind === 'route') {
+      navigate(t.to)
+    } else if (t.id == null) {
+      setSearchParams({})
+    } else {
+      setSearchParams({ appt: String(t.id) })
+    }
+  }, [navigate, setSearchParams])
+
+  /** Route navigations through the unsaved-changes confirmation. */
+  const requestNav = useCallback(
+    (t: PendingNav) => {
+      if (dirty) setPendingNav(t)
+      else applyNav(t)
+    },
+    [dirty, applyNav],
+  )
+
+  // guard sidebar-menu navigations + tab close while dirty
+  const { registerNavBlocker } = useNavGuard()
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+  useEffect(() => {
+    registerNavBlocker({
+      isDirty: () => dirtyRef.current,
+      requestLeave: (to: string) => setPendingNav({ kind: 'route', to }),
+    })
+    return () => registerNavBlocker(null)
+  }, [registerNavBlocker])
+  useBeforeUnloadGuard(dirty)
 
   if (isLoading || !patient) {
     return <Card loading />
@@ -166,8 +364,30 @@ export default function PatientDetailPage() {
   }
 
   const selectAppt = (apptId: number | null) => {
-    if (apptId == null) setSearchParams({})
-    else setSearchParams({ appt: String(apptId) })
+    requestNav({ kind: 'appt', id: apptId })
+  }
+
+  const selectedFile =
+    (allFiles.data?.items ?? []).find((f) => f.id === selectedFileId) ?? null
+
+  /** Guard-initiated save: submit the active dirty form; its onSuccess hook
+   * completes the pending navigation via afterSaveRef. */
+  const saveActiveForm = () => {
+    const target = pendingNav
+    setPendingNav(null)
+    if (target == null) return
+    afterSaveRef.current = () => applyNav(target)
+    if (qDirty) qForm.submit()
+    else apptPanelRef.current?.save()
+  }
+
+  const discardAndNav = () => {
+    const target = pendingNav
+    setPendingNav(null)
+    afterSaveRef.current = null
+    if (qDirty) qForm.resetFields()
+    if (apptDirty) apptPanelRef.current?.reset()
+    applyNav(target)
   }
 
   return (
@@ -231,15 +451,20 @@ export default function PatientDetailPage() {
             </Descriptions>
           </Card>
 
-          {/* view switcher: appointments / all files / all payments */}
+          {/* view switcher: appointments / all files / questionnaires
+              (routed through the unsaved-changes confirmation) */}
           <Segmented<ViewMode>
             block
             value={view}
-            onChange={(v) => setView(v)}
+            onChange={(v) => requestNav({ kind: 'view', view: v })}
             options={[
-              { value: 'appointments', label: 'نوبت‌ها', icon: <PlusOutlined /> },
+              { value: 'appointments', label: 'نوبت‌ها', icon: <CalendarOutlined /> },
               { value: 'files', label: 'همه فایل‌ها', icon: <FileOutlined /> },
-              { value: 'payments', label: 'همه پرداخت‌ها', icon: <WalletOutlined /> },
+              {
+                value: 'questionnaires',
+                label: 'پرسش‌نامه‌ها',
+                icon: <FileDoneOutlined />,
+              },
             ]}
           />
 
@@ -267,7 +492,7 @@ export default function PatientDetailPage() {
                     style={{
                       cursor: 'pointer',
                       paddingInline: 16,
-                      background: selectedAppt === a.id ? '#e6f4ff' : undefined,
+                      background: selectedAppt === a.id ? themeToken.colorPrimaryBg : undefined,
                     }}
                     onClick={() => selectAppt(a.id)}
                   >
@@ -286,7 +511,7 @@ export default function PatientDetailPage() {
                         {a.attachment_count > 0 && (
                           <Badge count={a.attachment_count} size="small" color="blue">
                             <PaperClipOutlined
-                              style={{ fontSize: 16, color: '#1677ff' }}
+                              style={{ fontSize: 16, color: themeToken.colorPrimary }}
                             />
                           </Badge>
                         )}
@@ -329,17 +554,9 @@ export default function PatientDetailPage() {
                     : false
                 }
                 locale={{ emptyText: 'فایلی موجود نیست' }}
-                expandable={{
-                  expandedRowRender: (f) => <FileNotesExpanded file={f} />,
-                  rowExpandable: (f) => isDoctor || !!f.notes.trim(),
-                }}
+                rowClassName={(f) => (selectedFileId === f.id ? 'ant-table-row-selected' : '')}
                 onRow={(f) => ({
-                  onClick: (e) => {
-                    // clicking the expand chevron must not jump to the appointment
-                    if ((e.target as HTMLElement).closest('.ant-table-row-expand-icon'))
-                      return
-                    selectAppt(f.appointment_id)
-                  },
+                  onClick: () => setSelectedFileId(f.id),
                   style: { cursor: 'pointer' },
                 })}
                 columns={[
@@ -366,76 +583,231 @@ export default function PatientDetailPage() {
             </Card>
           )}
 
-          {view === 'payments' && (
+          {view === 'questionnaires' && (
             <Card
-              title="همه پرداخت‌ها"
-              styles={{ body: { padding: 0 } }}
+              title="پرسش‌نامه‌ها"
               extra={
-                <Typography.Text strong>
-                  جمع:{' '}
-                  {formatMoney(
-                    (allTxns.data?.items ?? []).reduce((s, t) => s + t.amount, 0),
-                  )}
-                </Typography.Text>
+                qCanFill && (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlusOutlined />}
+                    disabled={(qTemplates.data?.total ?? 0) === 0}
+                    title={
+                      (qTemplates.data?.total ?? 0) === 0
+                        ? 'هیچ قالبی تعریف نشده است'
+                        : undefined
+                    }
+                    onClick={() => {
+                      setQMode('create')
+                      setQSelectedId(null)
+                      setQPickTemplate(null)
+                    }}
+                  >
+                    پرسش‌نامه جدید
+                  </Button>
+                )
               }
+              styles={{ body: { padding: 0, maxHeight: '48vh', overflowY: 'auto' } }}
             >
-              <Table<PatientTransaction>
-                rowKey="id"
-                size="small"
-                loading={allTxns.isLoading}
-                dataSource={allTxns.data?.items ?? []}
-                pagination={
-                  (allTxns.data?.total ?? 0) > 100 ? { pageSize: 100 } : false
-                }
-                locale={{ emptyText: 'پرداختی ثبت نشده است' }}
-                onRow={(t) => ({
-                  onClick: () => selectAppt(t.appointment_id),
-                  style: { cursor: 'pointer' },
-                })}
-                columns={[
-                  {
-                    title: 'نوبت',
-                    dataIndex: 'appointment_scheduled_at',
-                    render: (v: string) => formatJalali(v),
-                  },
-                  { title: 'شرح', dataIndex: 'description' },
-                  { title: 'مبلغ', dataIndex: 'amount', render: formatMoney },
-                  {
-                    title: 'نوع',
-                    dataIndex: 'pos',
-                    render: (pos: boolean) => (pos ? 'کارت‌خوان' : 'نقدی'),
-                  },
-                ]}
+              <List
+                loading={qResponses.isLoading}
+                dataSource={qResponses.data?.items ?? []}
+                locale={{ emptyText: <Empty description="پاسخی ثبت نشده است" /> }}
+                renderItem={(r) => (
+                  <List.Item
+                    style={{
+                      cursor: 'pointer',
+                      paddingInline: 16,
+                      background: qSelectedId === r.id ? themeToken.colorPrimaryBg : undefined,
+                    }}
+                    onClick={() => {
+                      setQSelectedId(r.id)
+                      setQMode('view')
+                      setQPickTemplate(null)
+                    }}
+                  >
+                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Space direction="vertical" size={0}>
+                        <Typography.Text strong>{r.template_name}</Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {formatJalali(r.created_at)}
+                          {r.created_by_username ? ` — ${r.created_by_username}` : ''}
+                        </Typography.Text>
+                      </Space>
+                      {qCanFill && (
+                        <Popconfirm
+                          title="پاسخ به سبد بازیافت منتقل شود؟"
+                          onConfirm={(e) => {
+                            e?.stopPropagation()
+                            deleteQ.mutate(r.id)
+                          }}
+                          onCancel={(e) => e?.stopPropagation()}
+                        >
+                          <Button
+                            size="small"
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  </List.Item>
+                )}
               />
             </Card>
           )}
         </Space>
       </Col>
 
-      {/* ---------- main pane: selected appointment detail ---------- */}
+      {/* ---------- main pane (visually left in RTL) ---------- */}
       <Col span={17}>
-        {view !== 'appointments' ? (
-          <Card>
-            <Empty
-              description={
-                view === 'files'
-                  ? 'برای دیدن جزئیات یک فایل، نوبت مربوطه را انتخاب کنید'
-                  : 'برای دیدن جزئیات یک پرداخت، نوبت مربوطه را انتخاب کنید'
-              }
-              style={{ marginTop: 80 }}
+        {view === 'appointments' &&
+          (selectedAppt == null ? (
+            <Card>
+              <Empty
+                description="برای مشاهده جزئیات، یک نوبت از فهرست انتخاب کنید"
+                style={{ marginTop: 80 }}
+              />
+            </Card>
+          ) : (
+            <AppointmentPanel
+              key={selectedAppt}
+              ref={apptPanelRef}
+              appointmentId={selectedAppt}
+              onDirtyChange={setApptDirty}
+              onSaved={() => {
+                const next = afterSaveRef.current
+                afterSaveRef.current = null
+                next?.()
+              }}
+              onSaveFailed={() => {
+                afterSaveRef.current = null
+              }}
             />
+          ))}
+
+        {view === 'files' &&
+          (selectedFile == null ? (
+            <Card>
+              <Empty
+                description="برای مشاهده جزئیات، یک فایل از فهرست انتخاب کنید"
+                style={{ marginTop: 80 }}
+              />
+            </Card>
+          ) : (
+            <FileDetailPane file={selectedFile} />
+          ))}
+
+        {view === 'questionnaires' && (
+          <Card
+            title={
+              qMode === 'create'
+                ? 'ثبت پرسش‌نامه جدید'
+                : selectedQ
+                  ? selectedQ.template_name
+                  : 'پرسش‌نامه‌ها'
+            }
+          >
+            {!qCanRead ? (
+              <Empty description="دسترسی مشاهده پرسش‌نامه‌ها را ندارید" style={{ marginTop: 80 }} />
+            ) : qMode === 'create' ? (
+              !createTemplate ? (
+                <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                  <Typography.Text>یک قالب انتخاب کنید:</Typography.Text>
+                  <Select<number>
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="قالب پرسش‌نامه"
+                    style={{ width: 320 }}
+                    value={qPickTemplate ?? undefined}
+                    onChange={setQPickTemplate}
+                    options={(qTemplates.data?.items ?? []).map((t) => ({
+                      value: t.id,
+                      label: t.name,
+                    }))}
+                  />
+                </Space>
+              ) : (
+                <QuestionnaireForm
+                  form={qForm}
+                  format={createTemplate.format as FormatDoc}
+                  submitting={createQ.isPending}
+                  onFinish={(answers) =>
+                    createQ.mutate({ template_id: createTemplate.id, answers })
+                  }
+                />
+              )
+            ) : selectedQ == null ? (
+              <Empty
+                description="برای مشاهده یا ثبت پرسش‌نامه، از فهرست انتخاب کنید یا «پرسش‌نامه جدید» را بزنید"
+                style={{ marginTop: 80 }}
+              />
+            ) : selectedQTemplate == null ? (
+              <Typography.Text type="warning">
+                قالب این پاسخ یافت نشد (قالب حذف شده است).
+              </Typography.Text>
+            ) : qMode === 'edit' ? (
+              <QuestionnaireForm
+                form={qForm}
+                format={selectedQTemplate.format as FormatDoc}
+                initialAnswers={selectedQ.answers}
+                submitting={updateQ.isPending}
+                onFinish={(answers) =>
+                  updateQ.mutate({ rid: selectedQ.id, answers })
+                }
+              />
+            ) : (
+              <QuestionnaireView
+                format={selectedQTemplate.format as FormatDoc}
+                answers={selectedQ.answers}
+                clearing={clearInvalidQ.isPending}
+                onClearInvalid={
+                  qCanFill && mergeResponse(
+                    selectedQTemplate.format as FormatDoc,
+                    selectedQ.answers,
+                  ).invalidKeys.length > 0
+                    ? () => clearInvalidQ.mutate(selectedQ)
+                    : undefined
+                }
+                onEdit={qCanFill ? () => setQMode('edit') : undefined}
+              />
+            )}
           </Card>
-        ) : selectedAppt == null ? (
-          <Card>
-            <Empty
-              description="برای مشاهده جزئیات، یک نوبت از فهرست انتخاب کنید"
-              style={{ marginTop: 80 }}
-            />
-          </Card>
-        ) : (
-          <AppointmentPanel appointmentId={selectedAppt} />
         )}
       </Col>
+
+      {/* ---------- unsaved-changes confirmation (forced choice) ---------- */}
+      <Modal
+        open={pendingNav != null}
+        title="تغییرات ذخیره نشده"
+        closable={false}
+        maskClosable={false}
+        width={440}
+        footer={
+          <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+            <Button onClick={() => setPendingNav(null)}>بازگشت به ویرایش</Button>
+            <Space>
+              <Button
+                danger
+                onClick={() => {
+                  discardAndNav()
+                }}
+              >
+                دورریختن تغییرات
+              </Button>
+              <Button type="primary" onClick={saveActiveForm}>
+                ذخیره و ادامه
+              </Button>
+            </Space>
+          </Space>
+        }
+      >
+        یکی از فرم‌ها تغییرات ذخیره‌نشده دارد. قبل از رفتن به بخش دیگر چه کاری
+        انجام شود؟
+      </Modal>
 
       {/* ---------- new appointment modal (Jalali, defaults to now) ---------- */}
       <Modal
@@ -443,10 +815,11 @@ export default function PatientDetailPage() {
         title="ثبت نوبت جدید"
         okText="ثبت"
         cancelText="انصراف"
+        maskClosable={false}
         onCancel={() => setNewApptOpen(false)}
         confirmLoading={addAppt.isPending}
         onOk={() => apptForm.submit()}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={apptForm} layout="vertical" onFinish={(v) => addAppt.mutate(v)}>
           <Form.Item

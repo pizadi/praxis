@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import (
     require_perm,
     resolve_stored_path,
-    save_upload,
+    save_upload_stream,
 )
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -89,8 +89,7 @@ async def upload_file(
     user: User = Depends(require_perm("files.write")),
 ):
     await _get_appt_or_404(db, appointment_id)
-    data = await file.read()
-    meta = save_upload(data, file.filename or "upload.bin")
+    meta = await save_upload_stream(file, file.filename or "upload.bin")
     att = Attachment(
         appointment_id=appointment_id,
         description=description[:128],
@@ -186,6 +185,48 @@ async def update_file(
         entity_id=att.id,
         summary=att.original_filename or f"attachment {att.id}",
         details=changed or None,
+    )
+    return att
+
+
+@router.post("/files/{attachment_id}/content", response_model=AttachmentOut)
+async def set_attachment_content(
+    attachment_id: int,
+    file: UploadFile,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_perm("files.write")),
+):
+    """Attach a physical file to an existing attachment row, or replace the
+    one it holds (note-only rows get a file; missing_file rows are repaired).
+    description/notes are preserved. The superseded physical file stays on
+    disk — trash purge remains the only path that unlinks stored files."""
+    att = await _get_attachment_or_404(db, attachment_id)
+    meta = await save_upload_stream(file, file.filename or "upload.bin")
+    had_file = bool(att.stored_filename) and not att.missing_file
+    old_stored = att.stored_filename
+    att.stored_filename = meta["stored_filename"]
+    att.original_filename = meta["original_filename"]
+    att.mime_type = meta["mime_type"]
+    att.size_bytes = meta["size_bytes"]
+    att.missing_file = False
+    await db.commit()
+    await db.refresh(att)
+    await audit.log_action(
+        db,
+        user=user,
+        request=request,
+        action=audit.UPDATE,
+        entity_type="file",
+        entity_id=att.id,
+        summary=meta["original_filename"],
+        details={
+            "appointment_id": att.appointment_id,
+            "replaced": had_file,
+            "old_stored_filename": old_stored,
+            "new_stored_filename": meta["stored_filename"],
+            "size": meta["size_bytes"],
+        },
     )
     return att
 

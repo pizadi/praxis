@@ -64,14 +64,14 @@ def upgrade() -> None:
         "roles",
         sa.column("name", sa.String),
         sa.column("is_system", sa.Boolean),
-        sa.column("permissions", sa.Text),
+        sa.column("permissions_json", sa.Text),
     )
     op.create_table(
         "roles",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
         sa.Column("is_system", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("permissions", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("permissions_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
@@ -95,21 +95,30 @@ def upgrade() -> None:
             {
                 "name": name,
                 "is_system": True,
-                "permissions": json.dumps(perms, ensure_ascii=False),
+                "permissions_json": json.dumps(perms, ensure_ascii=False),
             }
             for name, perms in SYSTEM_ROLES.items()
         ],
     )
 
     op.add_column("users", sa.Column("role_id", sa.Integer(), nullable=True))
+    # CAUTION: the legacy users.role column was a SQLAlchemy Enum, which
+    # persists the member NAME ('ADMIN'/'DOCTOR'/'RECEPTIONIST' — uppercase),
+    # not the value. Match case-insensitively against the seeded role names.
     op.execute(
-        "UPDATE users SET role_id = (SELECT id FROM roles WHERE roles.name = users.role)"
+        "UPDATE users SET role_id = (SELECT id FROM roles"
+        " WHERE lower(roles.name) = lower(users.role))"
     )
-    # rows that referenced an unknown role string cannot be auto-mapped
-    op.execute(
-        "UPDATE users SET role_id = (SELECT id FROM roles WHERE roles.name = 'receptionist')"
-        " WHERE role_id IS NULL"
-    )
+    # rows that referenced an unknown role string cannot be auto-mapped —
+    # fail loudly rather than silently downgrade anyone to a lesser role
+    unmapped = op.get_bind().execute(
+        sa.text("SELECT username FROM users WHERE role_id IS NULL")
+    ).fetchall()
+    if unmapped:
+        raise RuntimeError(
+            f"users with unmappable legacy role values: {[r[0] for r in unmapped]}; "
+            "map them to a role manually before migrating"
+        )
     op.alter_column("users", "role_id", nullable=False, existing_type=sa.Integer())
     with op.batch_alter_table("users") as batch:
         batch.drop_column("role")

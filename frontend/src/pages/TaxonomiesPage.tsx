@@ -5,18 +5,24 @@ import {
   Button,
   Card,
   Col,
+  Form,
   Input,
-  List,
+  Modal,
   Popconfirm,
   Row,
   Space,
+  Table,
   Tag,
   Typography,
 } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 
 import { api, apiError } from '../api/client'
-import type { NamedRef } from '../api/types'
+import type { NamedRef, Page } from '../api/types'
+import { toFaDigits } from '../lib/jalali'
 import { useUser } from '../components/AppLayout'
+
+const PAGE_SIZE = 20
 
 function TaxonomyPanel({
   kind,
@@ -29,53 +35,126 @@ function TaxonomyPanel({
   color: string
   canEdit: boolean
 }) {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const qc = useQueryClient()
   const [name, setName] = useState('')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [renaming, setRenaming] = useState<NamedRef | null>(null)
+  const [renameForm] = Form.useForm<{ name: string }>()
 
   const items = useQuery({
-    queryKey: [kind],
-    queryFn: async () => (await api.get<NamedRef[]>(`/${kind}`)).data,
+    queryKey: [kind, search, (page - 1) * PAGE_SIZE],
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>(`/${kind}`, {
+        params: { q: search || undefined, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
+      })).data,
   })
 
   const create = useMutation({
     mutationFn: async () => api.post(`/${kind}`, { name }),
-    onSuccess: () => {
+    onSuccess: async () => {
       message.success('افزوده شد')
       setName('')
-      qc.invalidateQueries({ queryKey: [kind] })
+      setPage(1)
+      await qc.invalidateQueries({ queryKey: [kind] })
     },
     onError: (err) => message.error(apiError(err).message),
   })
 
   const rename = useMutation({
-    mutationFn: async ({ id, newName }: { id: number; newName: string }) =>
-      api.patch(`/${kind}/${id}`, { name: newName }),
-    onSuccess: () => {
-      message.success('تغییر نام انجام شد')
-      qc.invalidateQueries({ queryKey: [kind] })
+    mutationFn: async ({ id, newName, merge }: { id: number; newName: string; oldName: string; merge?: boolean }) =>
+      api.patch(`/${kind}/${id}`, { name: newName }, { params: merge ? { merge: true } : undefined }),
+    onSuccess: async (_, v) => {
+      if (v.merge) message.success('ادغام انجام شد')
+      else message.success('تغییر نام انجام شد')
+      setRenaming(null)
+      await qc.invalidateQueries({ queryKey: [kind] })
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: (err, v) => {
+      // renaming onto an existing name → offer a merge (needs the same
+      // taxonomies.write perm that gates tag/diag deletion)
+      if (apiError(err).code === 'name_taken' && v.oldName) {
+        const oldName = v.oldName
+        modal.confirm({
+          title: 'ادغام؟',
+          content: `«${v.newName}» از قبل وجود دارد. «${oldName}» حذف و همهٔ بیمارانی که آن را داشتند به «${v.newName}» منتقل می‌شوند.`,
+          okText: 'ادغام',
+          cancelText: 'انصراف',
+          maskClosable: false,
+          onOk: () => rename.mutate({ id: v.id, newName: v.newName, oldName, merge: true }),
+        })
+        return
+      }
+      message.error(apiError(err).message)
+    },
   })
 
   const remove = useMutation({
     mutationFn: async (id: number) => api.delete(`/${kind}/${id}`),
-    onSuccess: () => {
+    onSuccess: async () => {
       message.success('حذف شد')
-      qc.invalidateQueries({ queryKey: [kind] })
+      await qc.invalidateQueries({ queryKey: [kind] })
     },
     onError: (err) => message.error(apiError(err).message),
   })
 
+  const columns: ColumnsType<NamedRef> = [
+    {
+      title: 'نام',
+      dataIndex: 'name',
+      render: (n: string) => <Tag color={color}>{n}</Tag>,
+    },
+    {
+      title: 'عملیات',
+      width: 170,
+      render: (_, item) =>
+        canEdit ? (
+          <Space>
+            <Button
+              size="small"
+              onClick={() => {
+                setRenaming(item)
+                renameForm.setFieldsValue({ name: item.name })
+              }}
+            >
+              تغییر نام
+            </Button>
+            <Popconfirm
+              title="حذف شود؟ (از پرونده همه بیماران حذف می‌شود)"
+              onConfirm={() => remove.mutate(item.id)}
+            >
+              <Button size="small" danger>
+                حذف
+              </Button>
+            </Popconfirm>
+          </Space>
+        ) : undefined,
+    },
+  ]
+
   return (
-    <Card title={title}>
+    <Card
+      title={title}
+      extra={
+        <Input.Search
+          allowClear
+          placeholder="جستجو…"
+          style={{ width: 180 }}
+          onSearch={(v) => {
+            setSearch(v.trim())
+            setPage(1)
+          }}
+        />
+      }
+    >
       {canEdit && (
         <Space.Compact style={{ marginBottom: 16 }}>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="نام جدید…"
             onPressEnter={() => name.trim() && create.mutate()}
+            placeholder="نام جدید…"
           />
           <Button
             type="primary"
@@ -87,44 +166,51 @@ function TaxonomyPanel({
           </Button>
         </Space.Compact>
       )}
-      <List
-        loading={items.isLoading}
-        dataSource={items.data ?? []}
+      <Table<NamedRef>
+        rowKey="id"
+        size="small"
+        loading={items.isFetching}
+        dataSource={items.data?.items ?? []}
+        columns={columns}
         locale={{ emptyText: 'خالی است' }}
-        renderItem={(item) => (
-          <List.Item
-            actions={
-              canEdit
-                ? [
-                    <Button
-                      key="rename"
-                      size="small"
-                      onClick={() => {
-                        const newName = window.prompt('نام جدید:', item.name)
-                        if (newName && newName.trim() && newName !== item.name) {
-                          rename.mutate({ id: item.id, newName: newName.trim() })
-                        }
-                      }}
-                    >
-                      تغییر نام
-                    </Button>,
-                    <Popconfirm
-                      key="del"
-                      title="حذف شود؟ (از پرونده همه بیماران حذف می‌شود)"
-                      onConfirm={() => remove.mutate(item.id)}
-                    >
-                      <Button size="small" danger>
-                        حذف
-                      </Button>
-                    </Popconfirm>,
-                  ]
-                : undefined
-            }
-          >
-            <Tag color={color}>{item.name}</Tag>
-          </List.Item>
-        )}
+        pagination={{
+          total: items.data?.total ?? 0,
+          pageSize: PAGE_SIZE,
+          current: page,
+          showSizeChanger: false,
+          showTotal: (t) => `${toFaDigits(t)} مورد`,
+          onChange: (p) => setPage(p),
+        }}
       />
+
+      <Modal
+        open={renaming != null}
+        title={`تغییر نام: ${renaming?.name ?? ''}`}
+        okText="ذخیره"
+        cancelText="انصراف"
+        maskClosable={false}
+        onCancel={() => setRenaming(null)}
+        confirmLoading={rename.isPending}
+        onOk={() => renameForm.submit()}
+        destroyOnHidden
+      >
+        <Form
+          form={renameForm}
+          layout="vertical"
+          onFinish={(v) => {
+            const newName = v.name?.trim()
+            if (renaming && newName && newName !== renaming.name) {
+              rename.mutate({ id: renaming.id, newName, oldName: renaming.name })
+            } else {
+              setRenaming(null)
+            }
+          }}
+        >
+          <Form.Item name="name" rules={[{ required: true, message: 'نام الزامی است' }]}>
+            <Input maxLength={128} autoFocus />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Card>
   )
 }

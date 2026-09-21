@@ -82,11 +82,13 @@ export default function PatientsPage() {
 
   const tags = useQuery({
     queryKey: ['tags'],
-    queryFn: async () => (await api.get<NamedRef[]>('/tags')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/tags', { params: { limit: 1000 } })).data.items,
   })
   const diagnoses = useQuery({
     queryKey: ['diagnoses'],
-    queryFn: async () => (await api.get<NamedRef[]>('/diagnoses')).data,
+    queryFn: async () =>
+      (await api.get<Page<NamedRef>>('/diagnoses', { params: { limit: 1000 } })).data.items,
   })
 
   const remove = useMutation({
@@ -119,7 +121,7 @@ export default function PatientsPage() {
             placeholder="جستجو بر اساس نام، کد ملی یا شماره تلفن…"
             allowClear
             onSearch={(v) => {
-              setQ(v)
+              setQ(toEnDigits(v.trim()))
               setPage(1)
             }}
           />

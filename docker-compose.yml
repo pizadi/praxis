@@ -13,8 +13,9 @@ services:
       # On the Pi: point these at an SSD-backed mount instead of the SD card.
       - pgdata:/var/lib/postgresql/data
     ports:
-      # Host-mapped port for Alembic / migration scripts run from host
-      - "${POSTGRES_HOST_PORT:-5434}:5432"
+      # Host-mapped port for Alembic / migration scripts run from host.
+      # Loopback-only: LAN machines have no business talking to Postgres.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -47,6 +48,9 @@ services:
       APP_TIMEZONE: ${APP_TIMEZONE}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      CLINIC_ENV: production
+      LOGIN_MAX_FAILURES: ${LOGIN_MAX_FAILURES}
+      LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES}
       TZ: ${APP_TIMEZONE}
     volumes:
       # On the Pi: use an SSD-backed bind mount or named volume for files.

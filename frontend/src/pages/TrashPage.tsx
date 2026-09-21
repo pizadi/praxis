@@ -35,6 +35,8 @@ const TYPE_LABELS: Record<string, string> = {
   diagnoses: 'تشخیص‌ها',
   users: 'کاربران',
   roles: 'نقش‌ها',
+  questionnaire_templates: 'قالب پرسش‌نامه‌ها',
+  questionnaire_responses: 'پاسخ‌های پرسش‌نامه',
 }
 
 function TrashTable({

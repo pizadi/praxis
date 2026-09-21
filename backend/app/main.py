@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -5,11 +6,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
+from app import __version__
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.errors import register_error_handlers
 from app.db.session import SessionLocal
 from app.models import Role, User
+from app.services.uploads_purge import purge_loop
 
 
 async def ensure_system_roles(session) -> None:
@@ -77,13 +80,15 @@ async def bootstrap_admin() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await bootstrap_admin()
+    purge_task = asyncio.create_task(purge_loop())  # automatic orphan sweeper
     yield
+    purge_task.cancel()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Clinic API",
-        version="1.0.0",
+        version=__version__,
         docs_url="/docs",
         openapi_url="/openapi.json",
         default_response_class=ORJSONResponse,

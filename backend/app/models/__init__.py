@@ -5,8 +5,12 @@ from app.models.domain import (
     Diagnosis,
     Gender,
     Patient,
+    QuestionnaireResponse,
+    QuestionnaireTemplate,
     Tag,
     Transaction,
+    patient_diagnoses,
+    patient_tags,
 )
 from app.models.system import (
     AuditLog,
@@ -25,9 +29,13 @@ __all__ = [
     "Gender",
     "LoginAudit",
     "Patient",
+    "QuestionnaireResponse",
+    "QuestionnaireTemplate",
     "RefreshToken",
     "Role",
     "Tag",
     "Transaction",
     "User",
+    "patient_diagnoses",
+    "patient_tags",
 ]

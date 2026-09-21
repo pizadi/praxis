@@ -103,6 +103,7 @@ api.interceptors.response.use(
 export interface ApiError {
   code: string
   message: string
+  details?: unknown
 }
 
 export function apiError(err: unknown): ApiError {
@@ -115,4 +116,19 @@ export function apiError(err: unknown): ApiError {
     return { code: 'network', message: 'خطای شبکه' }
   }
   return { code: 'unknown', message: 'خطای نامشخص' }
+}
+
+/** Per-field error messages from a 422 `invalid_answers`-style envelope
+ * (`{"error": {"details": {"fields": {key: message}}}}`), if present. */
+export function apiFieldErrors(err: unknown): Record<string, string[]> | undefined {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as
+      | { error?: { details?: { fields?: Record<string, string> } } }
+      | undefined
+    const fields = data?.error?.details?.fields
+    return fields
+      ? Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, [v]]))
+      : undefined
+  }
+  return undefined
 }
