@@ -57,6 +57,9 @@ Version history:
          constraint when item pairs are kept (flush orphan deletes first);
          prescription form rows: trailing empty row auto-appends on typing,
          abandoned empty rows removed on blur, Enter never submits
+  1.3.0.dev5  prescription EDIT mode gets the trailing empty row too (new
+         items were impossible to add when editing); taxonomies menu entry
+         moved back to the management group
 """
 
-__version__ = "1.3.0.dev4"
+__version__ = "1.3.0.dev5"
