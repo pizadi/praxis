@@ -123,6 +123,18 @@ export function PrescriptionForm({
   useEffect(() => {
     form.resetFields() // back to the initialValues prop (built from `initial`)
     if (seed) form.setFieldsValue(seed) // then the parent's fresh-open state
+    // trailing-empty-row invariant must hold in EDIT mode too (create gets
+    // it via seed): without an empty row to type into, a new item cannot be
+    // added at all (there is no add button)
+    const rows: PrescriptionRow[] = form.getFieldValue('items') ?? []
+    const last = rows[rows.length - 1]
+    const lastEmpty =
+      last != null &&
+      String(last.name ?? '').trim() === '' &&
+      String(last.quantity ?? '').trim() === ''
+    if (!lastEmpty) {
+      form.setFieldValue('items', [...rows, { name: '', quantity: null }])
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, initial, seed])
 
