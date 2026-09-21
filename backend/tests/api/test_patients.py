@@ -1,21 +1,11 @@
-"""Patients, tags, diagnoses: CRUD + search semantics."""
+"""Patients, tags, diagnoses: CRUD, search semantics, taxonomy merge."""
 
 from tests.conftest import auth, login, make_user
+from tests.factories import mk_patient
 
 
 async def _mk_patient(client, token, **overrides) -> dict:
-    body = {
-        "national_id": "1234567890",
-        "first_name": "Test",
-        "last_name": "Testi",
-        "year_of_birth": "1990",
-        "phone_number": "09121234567",
-        "gender": 0,
-    }
-    body.update(overrides)
-    r = await client.post("/api/v1/patients", json=body, headers=auth(token))
-    assert r.status_code == 201, r.text
-    return r.json()
+    return await mk_patient(client, token, **overrides)
 
 
 async def test_patient_crud(client):

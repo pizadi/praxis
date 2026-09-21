@@ -1,38 +1,21 @@
-"""Audit trail + patient-level aggregate endpoint tests."""
+"""Audit trail listing + the client-IP integration (behind nginx)."""
 
 import io
 
 from tests.conftest import auth, login
+from tests.factories import mk_appointment, mk_patient
 
 
 async def _mk_patient(client, token, **overrides) -> dict:
-    body = {
-        "national_id": "1234567890",
-        "first_name": "Test",
-        "last_name": "Testi",
-        "year_of_birth": "1990",
-        "gender": 0,
-    }
-    body.update(overrides)
-    r = await client.post("/api/v1/patients", json=body, headers=auth(token))
-    assert r.status_code == 201, r.text
-    return r.json()
+    return await mk_patient(client, token, **overrides)
 
 
 async def _mk_appt(client, token, patient_id, at="2026-09-10T10:30:00+03:30") -> dict:
-    r = await client.post(
-        f"/api/v1/patients/{patient_id}/appointments",
-        json={"scheduled_at": at},
-        headers=auth(token),
-    )
-    assert r.status_code == 201, r.text
-    return r.json()
+    return await mk_appointment(client, token, patient_id, at=at)
 
 
 async def _audit_entries(client, token, **params) -> list[dict]:
-    r = await client.get(
-        "/api/v1/admin/audit", params=params, headers=auth(token)
-    )
+    r = await client.get("/api/v1/admin/audit", params=params, headers=auth(token))
     assert r.status_code == 200, r.text
     return r.json()["items"]
 

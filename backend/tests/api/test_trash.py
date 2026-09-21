@@ -1,33 +1,17 @@
-"""Soft-delete, trash panel, and patient-search tests."""
+"""Soft delete, trash panel, subtree restore rules, patient search."""
 
 import io
 
 from tests.conftest import auth, login, make_user
+from tests.factories import mk_appointment, mk_patient
 
 
 async def _mk_patient(client, token, **overrides) -> dict:
-    body = {
-        "national_id": "1234567890",
-        "first_name": "Test",
-        "last_name": "Testi",
-        "year_of_birth": "1990",
-        "phone_number": "09121234567",
-        "gender": 0,
-    }
-    body.update(overrides)
-    r = await client.post("/api/v1/patients", json=body, headers=auth(token))
-    assert r.status_code == 201, r.text
-    return r.json()
+    return await mk_patient(client, token, **overrides)
 
 
 async def _mk_appt(client, token, patient_id, at="2026-09-10T10:30:00+03:30") -> dict:
-    r = await client.post(
-        f"/api/v1/patients/{patient_id}/appointments",
-        json={"scheduled_at": at, "cm": "chief", "rx": "plan"},
-        headers=auth(token),
-    )
-    assert r.status_code == 201, r.text
-    return r.json()
+    return await mk_appointment(client, token, patient_id, at=at, cm="chief", rx="plan")
 
 
 # --- soft delete basics -------------------------------------------------------

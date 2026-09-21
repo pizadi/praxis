@@ -40,29 +40,16 @@ VALID_FORMAT = {
 
 
 async def create_template(client, token: str, name: str = "درد", fmt=None) -> dict:
-    r = await client.post(
-        "/api/v1/questionnaires/templates",
-        json={"name": name, "description": "", "format": fmt or VALID_FORMAT},
-        headers=auth(token),
-    )
-    assert r.status_code == 201, r.text
-    return r.json()
+    from tests.factories import mk_template
+
+    return await mk_template(client, token, name=name, fmt=fmt or VALID_FORMAT)
 
 
 async def create_patient(client, token: str, national_id: str = "0012345678") -> dict:
-    r = await client.post(
-        "/api/v1/patients",
-        json={
-            "national_id": national_id,
-            "first_name": "الف",
-            "last_name": "ب",
-            "year_of_birth": "1370",
-            "gender": 0,
-        },
-        headers=auth(token),
-    )
-    assert r.status_code == 201, r.text
-    return r.json()
+    from tests.factories import mk_patient
+
+    return await mk_patient(client, token, national_id=national_id, first_name="الف",
+                            last_name="ب", year_of_birth="1370", gender=0)
 
 
 # --- templates ------------------------------------------------------------------

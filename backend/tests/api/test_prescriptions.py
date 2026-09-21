@@ -1,129 +1,19 @@
-"""Structured prescriptions (v1.3) + the legacy rx parser they were migrated with.
+"""Prescriptions API: CRUD, autocomplete, dictionary management, perms.
 
-Covers:
-- rx_migration parsing rules (splitting, quantity extraction, normalization,
-  frequency-based dictionary admission, verbatim overflow) — these rules are
-  FROZEN: the Alembic data migration and scripts/migrate_sqlite.py both use
-  them, so changing them rewrites history.
-- the prescriptions API: CRUD, autocomplete, item auto-creation, duplicate
-  rejection, permission gating, trash round-trip.
+The FROZEN rx→prescriptions parser lives in unit/test_rx_migration.py.
 """
 
 import datetime as dt
 
 from tests.conftest import auth, login, make_user
-
-
-async def _mk_patient(client, token, nid="1234567890") -> int:
-    r = await client.post(
-        "/api/v1/patients",
-        json={
-            "national_id": nid,
-            "first_name": "Test",
-            "last_name": "Testi",
-            "year_of_birth": "1990",
-            "gender": 0,
-        },
-        headers=auth(token),
-    )
-    assert r.status_code == 201
-    return r.json()["id"]
-
-
-# --- parser unit tests -------------------------------------------------------------
-
-
-def test_split_rx_items():
-    from app.services.rx_migration import split_rx_items
-
-    assert split_rx_items("asthma, rhinitis\r\nP1 20,doxy") == [
-        "asthma",
-        "rhinitis",
-        "P1 20",
-        "doxy",
-    ]
-    assert split_rx_items("  ") == []
-    assert split_rx_items("single") == ["single"]
-
-
-def test_extract_name_quantity():
-    from app.services.rx_migration import extract_name_quantity
-
-    # trailing pure integer → quantity
-    assert extract_name_quantity("P1 20") == ("P1", 20)
-    assert extract_name_quantity("sym 160") == ("sym", 160)
-    # Persian digits normalized first
-    assert extract_name_quantity("P1 ۲۰") == ("P1", 20)
-    # decimals / fractions / bare numbers stay in the name
-    assert extract_name_quantity("alprazolam 1/2") == ("alprazolam 1/2", None)
-    assert extract_name_quantity("alprazolam0.5") == ("alprazolam0.5", None)
-    assert extract_name_quantity("250") == ("250", None)
-    # multi-token: last integer wins, rest of the name is kept
-    assert extract_name_quantity("Azithromycin 250 12") == ("Azithromycin 250", 12)
-    assert extract_name_quantity("sym 160 PRN") == ("sym 160 PRN", None)
-
-
-def test_normalize_item_name():
-    from app.services.rx_migration import normalize_item_name
-
-    assert normalize_item_name("  Asthma   2 ") == "asthma 2"
-    assert normalize_item_name("COPD.") == "copd"
-    assert normalize_item_name("doxy...") == "doxy"
-    assert normalize_item_name("---") == ""
-
-
-def test_plan_dictionary_admission_and_overflow():
-    from app.services.rx_migration import RX_MIN_FREQUENCY, overflow_notes, plan_rx_migration
-
-    rows = [
-        (1, 10, None, "asthma 2, rhinitis"),
-        (2, 11, None, "asthma 2"),
-        (3, 12, None, "ASTHMA,  rhinitis"),
-        (4, 13, None, "i should see ct for bx and repeat pft"),
-        (5, 14, None, "---"),
-    ]
-    planned, dictionary = plan_rx_migration(rows)
-
-    # 'asthma' (3×) and 'rhinitis' (2×) → only asthma passes the ≥3 threshold
-    assert RX_MIN_FREQUENCY == 3
-    assert dictionary == {"asthma": "asthma"}
-    by_appt = {p.appointment_id: p for p in planned}
-    # quantities were parsed ("asthma 2" → asthma, qty 2); both "asthma 2"
-    # and "ASTHMA," normalize to 'asthma' — deduped, first quantity wins
-    assert [(lk.name, lk.quantity) for lk in by_appt[1].links] == [("asthma", 2)]
-    # 'rhinitis' seen 2× (< 3) → verbatim overflow
-    assert "rhinitis" in by_appt[1].notes_overflow
-    # one-off sentence → overflow, never a dictionary entry
-    assert "i should see ct for bx and repeat pft" in by_appt[4].notes_overflow
-    assert by_appt[4].links == []
-    # rx that yields nothing at all produces no prescription
-    assert 5 not in by_appt
-    # overflow formatting
-    assert overflow_notes("some text") == "سایر موارد نسخه قدیمی:\nsome text"
-    assert overflow_notes("") == ""
-
-
-def test_plan_prescribed_at_and_patient():
-    from app.services.rx_migration import plan_rx_migration
-
-    at = dt.datetime(2025, 1, 2, 10, 0, tzinfo=dt.UTC)
-    planned, _ = plan_rx_migration([(7, 42, at, "doxy, P1 20")])
-    assert planned[0].patient_id == 42
-    assert planned[0].prescribed_at == at
-    assert planned[0].appointment_id == 7
-    # 'doxy' seen once → overflow; 'P1 20' → link qty 20 (also below threshold,
-    # but the plan keeps links only for admitted names — single-row corpus
-    # admits nothing)
-    assert planned[0].links == []
-    assert planned[0].notes_overflow == "doxy\nP1 20"
-
+from tests.factories import mk_patient
 
 # --- API tests -----------------------------------------------------------------------
 
 
 async def test_prescription_crud_and_auto_create(client):
     token, _ = await login(client)
-    pid = await _mk_patient(client, token)
+    pid = (await mk_patient(client, token))["id"]
 
     # create with a mix of existing/unknown names + quantities
     r = await client.post(
@@ -220,7 +110,7 @@ async def test_patch_prescription_keeps_same_items(client):
     not hit uq_prescription_item_links_pair — kept pairs are delete+inserted
     in one transaction."""
     token, _ = await login(client)
-    pid = await _mk_patient(client, token)
+    pid = (await mk_patient(client, token))["id"]
     r = await client.post(
         f"/api/v1/patients/{pid}/prescriptions",
         json={"items": [{"name": "P1", "quantity": 20}, {"name": "doxy"}]},
@@ -251,7 +141,7 @@ async def test_patch_prescription_keeps_same_items(client):
 
 async def test_prescription_item_autocomplete_and_rename(client):
     token, _ = await login(client)
-    pid = await _mk_patient(client, token)
+    pid = (await mk_patient(client, token))["id"]
     await client.post(
         f"/api/v1/patients/{pid}/prescriptions",
         json={"items": [{"name": "Seroflo 250"}, {"name": "NAC"}]},
@@ -301,7 +191,7 @@ async def test_prescription_permission_gating(client):
     await make_user(client, token, "drhouse", role="doctor")
     recep, _ = await login(client, "recep1", "passw0rd123")
     doctor, _ = await login(client, "drhouse", "passw0rd123")
-    pid = await _mk_patient(client, token)
+    pid = (await mk_patient(client, token))["id"]
 
     # receptionist: no read, no write
     r = await client.get(f"/api/v1/patients/{pid}/prescriptions", headers=auth(recep))
@@ -339,12 +229,11 @@ async def test_prescription_permission_gating(client):
 async def test_prescriptions_date_filter(client):
     """date= restricts to one APP_TIMEZONE day (prescribed_at) — the
     appointment view's same-day prescriptions tab."""
-    import datetime as dt
 
     from app.db.session import APP_TZ
 
     token, _ = await login(client)
-    pid = await _mk_patient(client, token)
+    pid = (await mk_patient(client, token))["id"]
 
     # one pre-dated prescription, one for "now" (defaults to the current time)
     for at in ("2020-01-01T10:00:00+03:30", None):

@@ -16,6 +16,11 @@ dist/
 *.local
 frontend/vendor/
 
+# Playwright (e2e artifacts)
+frontend/test-results/
+frontend/playwright-report/
+blob-report/
+
 # Env & secrets
 .env
 
