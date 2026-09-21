@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { Spin } from 'antd'
 
-import { getStoredUser, type StoredUser } from './api/client'
+import { getStoredUser, storeUser, api, type StoredUser } from './api/client'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
@@ -36,6 +36,28 @@ export default function App() {
     const handler = () => setUser(getStoredUser())
     window.addEventListener('clinic-auth-changed', handler)
     return () => window.removeEventListener('clinic-auth-changed', handler)
+  }, [])
+
+  // refresh the cached user on every load: it was written at login, so
+  // permissions granted by an upgrade (new menus, changed role sets) must
+  // not wait for a re-login to appear. Silent on failure (offline tab).
+  useEffect(() => {
+    if (!getStoredUser()) return
+    api
+      .get('/auth/me')
+      .then((me) => {
+        const fresh: StoredUser = {
+          id: me.data.id,
+          username: me.data.username,
+          full_name: me.data.full_name,
+          role_id: me.data.role_id,
+          role_name: me.data.role_name,
+          permissions: me.data.permissions ?? [],
+        }
+        storeUser(fresh)
+        setUser(fresh)
+      })
+      .catch(() => {})
   }, [])
 
   if (!checked) {
