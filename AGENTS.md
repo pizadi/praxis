@@ -1,6 +1,6 @@
 # AGENTS.md
 
-FastAPI + React + PostgreSQL clinic management system (rewritten from a legacy Django app; the legacy `models.py`/`views.py` at repo root and `old_database/` are reference material only — never modify or import them from app code). Persian (RTL) UI, Jalali calendar display, permission-based access control.
+FastAPI + React + PostgreSQL clinic management system (rewritten from a legacy Django app; the legacy Django sources are gone from the repo — `old_database/` (local-only, a real production snapshot) remains as reference material only — never import from it in app code). Persian (RTL) UI, Jalali calendar display, permission-based access control.
 
 **Branches**: `main` carries the roles/permissions system; `feature/questionnaires` is stacked on it and adds questionnaire templates/responses; `dev` is the integration branch (v1.3 work lands here first). The questionnaire sections below describe the feature-branch state.
 
