@@ -12,6 +12,8 @@ COPY app app
 COPY alembic.ini .
 COPY alembic alembic
 
-# Run migrations then start; uploads dir comes from the mounted volume
+# Migrations run inside app startup (app.db.migrations, fail-fast) — before
+# the server accepts connections; alembic.ini is kept for manual `alembic`
+# debugging via docker exec. uploads dir comes from the mounted volume.
 ENV UPLOAD_DIR=/data/uploads
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

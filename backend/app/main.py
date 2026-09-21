@@ -10,6 +10,7 @@ from app import __version__
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.errors import register_error_handlers
+from app.db.migrations import run_migrations
 from app.db.session import SessionLocal
 from app.models import Role, User
 from app.services.uploads_purge import purge_loop
@@ -79,6 +80,9 @@ async def bootstrap_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Fail-fast: migrate (or refuse to boot) before anything reads/writes the
+    # database. bootstrap_admin tolerates an unmigrated DB only as a fallback.
+    await asyncio.to_thread(run_migrations)
     await bootstrap_admin()
     purge_task = asyncio.create_task(purge_loop())  # automatic orphan sweeper
     yield
