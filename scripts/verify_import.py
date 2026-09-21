@@ -162,6 +162,21 @@ with dst.connect() as c:
     expected = _referenced_bytes(src)
     checks.append(("total copied bytes", expected, dst_bytes, dst_bytes == expected))
 
+    # 10. legacy rx → structured prescriptions (1.3 conversion)
+    s = src.execute(
+        "SELECT COUNT(*) FROM website_appointment WHERE RX IS NOT NULL AND TRIM(RX)!=''"
+    ).fetchone()[0]
+    d = c.execute(
+        text(
+            "SELECT COUNT(*) FROM prescriptions"
+            " WHERE source_appointment_id IS NOT NULL"
+        )
+    ).scalar()
+    # no prescription may be invented beyond the legacy non-empty rx rows
+    # (junk-only rx like '---' legitimately yields none — d ≤ s, and d > 0
+    # for any real snapshot)
+    checks.append(("prescriptions from legacy rx", s, d, 0 < d <= s))
+
 print(f"{'CHECK':<44} {'SRC':>14} {'DST':>14}  RESULT")
 print("-" * 80)
 all_ok = True

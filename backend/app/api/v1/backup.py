@@ -128,7 +128,7 @@ def _run_backup() -> None:
 
     manifest: dict = {
         "created_at": utc_now().isoformat(),
-        "schema_version": 2,
+        "schema_version": 3,
         "app_version": __version__,
         "app_timezone": settings.app_timezone,
         "tables": {},

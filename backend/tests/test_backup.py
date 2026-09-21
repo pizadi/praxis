@@ -29,16 +29,16 @@ async def test_backup_full_flow(client):
         json={"scheduled_at": "2026-09-10T10:30:00+03:30"},
         headers=auth(token),
     )
-    appt_id = r.json()["id"]
+    r.json()["id"]  # appointment row (no longer used for files since 1.3)
     r = await client.post(
-        f"/api/v1/appointments/{appt_id}/files",
+        f"/api/v1/patients/{pid}/files",
         data={"description": "lab"},
         files={"file": ("x.txt", io.BytesIO(b"hello"), "text/plain")},
         headers=auth(token),
     )
     assert r.status_code == 201
     r = await client.post(
-        f"/api/v1/appointments/{appt_id}/files/note",
+        f"/api/v1/patients/{pid}/files/note",
         json={"description": "note-only"},
         headers=auth(token),
     )
@@ -126,9 +126,9 @@ async def test_import_round_trip(client):
     r = await client.post(f"/api/v1/patients/{pid}/appointments",
                           json={"scheduled_at": "2026-09-10T10:30:00+03:30"},
                           headers=auth(token))
-    appt = r.json()
+    r.json()  # appointment row (kept for realism)
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         data={"description": "lab"},
         files={"file": ("x.txt", io.BytesIO(b"hello-backup"), "text/plain")},
         headers=auth(token),
@@ -165,11 +165,11 @@ async def test_import_round_trip(client):
     r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
     assert r.status_code == 200
     assert r.json()["first_name"] == "الف"
-    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
+    r = await client.get(f"/api/v1/patients/{pid}/files", headers=auth(token))
     assert r.status_code == 200
     assert r.json()[0]["description"] == "lab"
     # the restored attachment's file is on disk again (merge semantics)
-    r = await client.get(f"/api/v1/appointments/files/{r.json()[0]['id']}/download",
+    r = await client.get(f"/api/v1/files/{r.json()[0]['id']}/download",
                          headers=auth(token))
     assert r.status_code == 200 and r.content == b"hello-backup"
 
@@ -249,9 +249,11 @@ async def test_import_rejects_garbage(client):
 
 
 async def test_import_partial_backup(client):
-    """A backup carrying only some tables imports; tables absent from the
-    dump keep their data. Regression: the PG path crashed with KeyError on
-    the first missing db/<table>.copy member (getmember-vs-extractfile)."""
+    """A pre-1.3 backup carrying only some tables imports; attachments'
+    legacy appointment_id is remapped to the patient, the legacy rx text is
+    re-derived into prescriptions, and tables absent from the dump keep
+    their data. Regression: the PG path crashed with KeyError on the first
+    missing db/<table>.copy member (getmember-vs-extractfile)."""
     import os
     import sqlite3
     import tempfile
@@ -259,31 +261,49 @@ async def test_import_partial_backup(client):
     from app.db.session import engine
 
     token, _ = await login(client)
+
     is_pg = engine.dialect.name == "postgresql"
+
+    pat_cols = ["id", "first_name", "last_name", "national_id", "year_of_birth", "gender"]
+    appt_cols = ["id", "patient_id", "scheduled_at", "notes", "cm", "hx", "px", "rx"]
+    # PRE-1.3 attachment shape: appointment_id (patient_id did not exist)
+    att_cols = ["id", "appointment_id", "description", "notes", "stored_filename",
+                "original_filename", "mime_type", "size_bytes", "missing_file"]
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+
+        def add_bytes(name: str, data: bytes) -> None:
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+
         if is_pg:
             manifest = json.dumps({
                 "schema_version": 2,
                 "app_version": "1.2.0",
                 "table_columns": {
-                    "patients": [
-                        "id", "first_name", "last_name",
-                        "national_id", "year_of_birth", "gender",
-                    ]
+                    "patients": pat_cols,
+                    "appointments": appt_cols,
+                    "attachments": att_cols,
                 },
             })
-            data = manifest.encode()
-            info = tarfile.TarInfo(name="manifest.json")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-            row = b"1\tPartial\tBackup\t9999999999\t1380\t0\n"
-            info = tarfile.TarInfo(name="db/patients.copy")
-            info.size = len(row)
-            tar.addfile(info, io.BytesIO(row))
+            add_bytes("manifest.json", manifest.encode())
+            add_bytes(
+                "db/patients.copy", b"1\tPartial\tBackup\t9999999999\t1380\t0\n"
+            )
+            add_bytes(
+                "db/appointments.copy",
+                b"201\t1\t2025-06-01 06:30:00+00\t\t\t\t\tasthma 2, rhinitis\n",
+            )
+            add_bytes(
+                "db/attachments.copy",
+                # note-only row (original_filename NULL) + missing-file row
+                b"301\t201\tlab\t\t\\N\tx.pdf\t\\N\t\\N\ttrue\n"
+                b"302\t201\tnote\tn\t\\N\t\\N\t\\N\t\\N\tfalse\n",
+            )
         else:
-            # SQLite path: a mini database holding only the patients table
+            # SQLite path: a mini database with the PRE-1.3 schema
             fd, mini = tempfile.mkstemp(suffix=".sqlite3")
             os.close(fd)
             con = sqlite3.connect(mini)
@@ -294,21 +314,36 @@ async def test_import_partial_backup(client):
             con.execute(
                 "INSERT INTO patients VALUES (1, 'Partial', 'Backup', '9999999999', '1380', 0)"
             )
+            con.execute(
+                "CREATE TABLE appointments (id INTEGER PRIMARY KEY, patient_id INTEGER,"
+                " scheduled_at TEXT, notes TEXT, cm TEXT, hx TEXT, px TEXT, rx TEXT)"
+            )
+            con.execute(
+                "INSERT INTO appointments VALUES (201, 1, '2025-06-01 06:30:00',"
+                " '', '', '', '', 'asthma 2, rhinitis')"
+            )
+            con.execute(
+                "CREATE TABLE attachments (id INTEGER PRIMARY KEY, appointment_id INTEGER,"
+                " description TEXT, notes TEXT, stored_filename TEXT, original_filename TEXT,"
+                " mime_type TEXT, size_bytes INTEGER, missing_file INTEGER)"
+            )
+            con.execute(
+                "INSERT INTO attachments VALUES (301, 201, 'lab', '', NULL, 'x.pdf', NULL, NULL, 1)"
+            )
+            con.execute(
+                "INSERT INTO attachments VALUES (302, 201, 'note', 'n', NULL, NULL, NULL, NULL, 0)"
+            )
             con.commit()
             con.close()
             manifest = json.dumps({
-                "schema_version": 2, "app_version": "1.2.0", "tables": {"patients": 1},
+                "schema_version": 2, "app_version": "1.2.0",
+                "tables": {"patients": 1, "appointments": 1, "attachments": 2},
             })
-            data = manifest.encode()
-            info = tarfile.TarInfo(name="manifest.json")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+            add_bytes("manifest.json", manifest.encode())
             with open(mini, "rb") as f:
                 db_bytes = f.read()
             os.unlink(mini)
-            info = tarfile.TarInfo(name="db/clinic.sqlite3")
-            info.size = len(db_bytes)
-            tar.addfile(info, io.BytesIO(db_bytes))
+            add_bytes("db/clinic.sqlite3", db_bytes)
 
     r = await client.post(
         "/api/v1/admin/backup/import",
@@ -323,6 +358,23 @@ async def test_import_partial_backup(client):
     assert r.status_code == 200
     assert r.json()["total"] == 1
     assert r.json()["items"][0]["first_name"] == "Partial"
+
+    # attachments were remapped to the PATIENT (legacy appointment_id resolved)
+    r = await client.get("/api/v1/patients/1/files", headers=auth(token))
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 2
+    assert all(f["patient_id"] == 1 for f in r.json())
+
+    # the legacy rx text was re-derived into a prescription (overflow notes —
+    # a single-row corpus admits no dictionary items)
+    r = await client.get("/api/v1/patients/1/prescriptions", headers=auth(token))
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == 1
+    rx = r.json()["items"][0]
+    assert rx["source_appointment_id"] == 201
+    # each parsed item preserved verbatim (overflow format: one per line)
+    assert "asthma 2" in rx["notes"] and "rhinitis" in rx["notes"]
+    assert rx["items"] == []
 
 
 async def test_import_hostile_table_names(client):
@@ -458,9 +510,9 @@ async def test_uploads_purge_removes_orphans_only(client):
     r = await client.post(f"/api/v1/patients/{pid}/appointments",
                           json={"scheduled_at": "2026-09-10T10:30:00+03:30"},
                           headers=auth(token))
-    appt = r.json()
+    r.json()  # appointment row (kept for realism)
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         files={"file": ("keep.txt", io.BytesIO(b"referenced"), "text/plain")},
         headers=auth(token),
     )
@@ -470,12 +522,12 @@ async def test_uploads_purge_removes_orphans_only(client):
 
     # soft-deleted attachment's file is still owned → kept
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{pid}/files",
         files={"file": ("del.txt", io.BytesIO(b"deleted-owner"), "text/plain")},
         headers=auth(token),
     )
     stored_del = r.json()["stored_filename"]
-    await client.delete(f"/api/v1/appointments/files/{r.json()['id']}", headers=auth(token))
+    await client.delete(f"/api/v1/files/{r.json()['id']}", headers=auth(token))
 
     # orphans: old uuid-named files (purgeable) + a foreign file (kept)
     old_orphan = os.path.join(upload_dir, "a" * 32 + ".bin")

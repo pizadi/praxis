@@ -1,5 +1,3 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -12,39 +10,25 @@ from app.api.deps import (
 )
 from app.core.tokens import utc_now
 from app.db.session import get_db
-from app.models import Appointment, Attachment, Patient, User
+from app.models import Attachment, Patient, User
 from app.schemas import AttachmentCreateIn, AttachmentOut, AttachmentUpdateIn
 from app.services import audit
 
-router = APIRouter(prefix="/appointments", tags=["attachments"])
+router = APIRouter(tags=["attachments"])
 
-
-async def _get_appt_or_404(db: AsyncSession, appointment_id: int) -> Appointment:
-    stmt = (
-        select(Appointment)
-        .join(Patient, Appointment.patient_id == Patient.id)
-        .where(
-            Appointment.id == appointment_id,
-            Appointment.deleted_at.is_(None),
-            Patient.deleted_at.is_(None),
-        )
-    )
-    appt = await db.scalar(stmt)
-    if appt is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Appointment not found")
-    return appt
+# Since 1.3 files belong to the PATIENT (they survive appointment deletion
+# and are managed from the patient page). Row-level routes (/files/…) stay
+# id-based and unchanged.
 
 
 async def _get_attachment_or_404(db: AsyncSession, attachment_id: int) -> Attachment:
-    # visible only if the attachment AND its parent chain are alive
+    # visible only if the attachment AND its parent patient are alive
     stmt = (
         select(Attachment)
-        .join(Appointment, Attachment.appointment_id == Appointment.id)
-        .join(Patient, Appointment.patient_id == Patient.id)
+        .join(Patient, Attachment.patient_id == Patient.id)
         .where(
             Attachment.id == attachment_id,
             Attachment.deleted_at.is_(None),
-            Appointment.deleted_at.is_(None),
             Patient.deleted_at.is_(None),
         )
     )
@@ -54,18 +38,20 @@ async def _get_attachment_or_404(db: AsyncSession, attachment_id: int) -> Attach
     return att
 
 
-@router.get("/{appointment_id}/files", response_model=list[AttachmentOut])
+@router.get("/patients/{patient_id}/files", response_model=list[AttachmentOut])
 async def list_files(
-    appointment_id: int,
+    patient_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_perm("files.read")),
 ):
-    await _get_appt_or_404(db, appointment_id)
+    from app.api.v1.patients import _get_or_404 as _patient_or_404
+
+    await _patient_or_404(db, patient_id)
     rows = (
         await db.scalars(
             select(Attachment)
             .where(
-                Attachment.appointment_id == appointment_id,
+                Attachment.patient_id == patient_id,
                 Attachment.deleted_at.is_(None),
             )
             .order_by(Attachment.created_at.desc())
@@ -75,12 +61,12 @@ async def list_files(
 
 
 @router.post(
-    "/{appointment_id}/files",
+    "/patients/{patient_id}/files",
     response_model=AttachmentOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_file(
-    appointment_id: int,
+    patient_id: int,
     file: UploadFile,
     request: Request,
     description: str = Form(""),
@@ -88,10 +74,12 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_perm("files.write")),
 ):
-    await _get_appt_or_404(db, appointment_id)
+    from app.api.v1.patients import _get_or_404 as _patient_or_404
+
+    await _patient_or_404(db, patient_id)
     meta = await save_upload_stream(file, file.filename or "upload.bin")
     att = Attachment(
-        appointment_id=appointment_id,
+        patient_id=patient_id,
         description=description[:128],
         notes=notes[:10000],
         stored_filename=meta["stored_filename"],
@@ -110,27 +98,29 @@ async def upload_file(
         entity_type="file",
         entity_id=att.id,
         summary=f"{meta['original_filename']} ({meta['stored_filename']})",
-        details={"appointment_id": appointment_id, "size": meta["size_bytes"]},
+        details={"patient_id": patient_id, "size": meta["size_bytes"]},
     )
     return att
 
 
 @router.post(
-    "/{appointment_id}/files/note",
+    "/patients/{patient_id}/files/note",
     response_model=AttachmentOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_note_file(
-    appointment_id: int,
+    patient_id: int,
     body: AttachmentCreateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_perm("files.write")),
 ):
     """Create a note-only attachment (description + notes, no physical file)."""
-    await _get_appt_or_404(db, appointment_id)
+    from app.api.v1.patients import _get_or_404 as _patient_or_404
+
+    await _patient_or_404(db, patient_id)
     att = Attachment(
-        appointment_id=appointment_id,
+        patient_id=patient_id,
         description=body.description[:128],
         notes=body.notes[:10000],
         stored_filename=None,
@@ -150,7 +140,7 @@ async def create_note_file(
         entity_type="file",
         entity_id=att.id,
         summary=f"note-only: {att.description or '(بدون شرح)'}",
-        details={"appointment_id": appointment_id, "note_only": True},
+        details={"patient_id": patient_id, "note_only": True},
     )
     return att
 
@@ -166,7 +156,7 @@ async def update_file(
     """Update description/notes. (Legacy bug: old system silently dropped these edits.)"""
     att = await _get_attachment_or_404(db, attachment_id)
     data = body.model_dump(exclude_unset=True)
-    before: dict[str, Any] = {
+    before: dict[str, object] = {
         f: getattr(att, f) for f in ("description", "notes") if f in data
     }
     if "description" in data:
@@ -221,7 +211,7 @@ async def set_attachment_content(
         entity_id=att.id,
         summary=meta["original_filename"],
         details={
-            "appointment_id": att.appointment_id,
+            "patient_id": att.patient_id,
             "replaced": had_file,
             "old_stored_filename": old_stored,
             "new_stored_filename": meta["stored_filename"],

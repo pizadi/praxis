@@ -32,6 +32,14 @@ Version history:
          birth year, phone, payment amount; questionnaire number inputs
          + patient search normalize Persian digits); range hints on
          questionnaire number questions
+  1.3.0.dev1  files belong to the PATIENT (not the appointment); structured
+         prescriptions (prescriptions / prescription_items / links with
+         quantities, autocomplete, patient-level history) replacing the
+         legacy free-text rx field; legacy rx → prescriptions data
+         migration (frequency-based dictionary admission, verbatim
+         overflow in notes, rx column kept as deprecated archive);
+         backup manifest schema_version 3 + pre-1.3 attachment remap on
+         import; legacy sqlite import script converts rx the same way
 """
 
-__version__ = "1.2.2"
+__version__ = "1.3.0.dev2"

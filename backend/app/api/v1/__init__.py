@@ -9,6 +9,7 @@ from app.api.v1 import (
     meta,
     patients,
     payments,
+    prescriptions,
     questionnaires,
     roles,
     stats,
@@ -29,6 +30,7 @@ api_router.include_router(attachments.router)
 api_router.include_router(transactions.router)
 api_router.include_router(payments.router)
 api_router.include_router(taxonomies.router)
+api_router.include_router(prescriptions.router)
 api_router.include_router(stats.router)
 api_router.include_router(trash.router)
 api_router.include_router(audit.router)

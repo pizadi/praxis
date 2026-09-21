@@ -17,7 +17,7 @@
 ## Tarball format
 
 ```
-manifest.json            {"schema_version": 2, "app_version": "1.2.0",
+manifest.json            {"schema_version": 3, "app_version": "1.3.0",
                           "created_at": ..., "app_timezone": ...,
                           "tables": {table: rowcount},
                           "table_columns": {table: [columns...]}}
@@ -37,12 +37,21 @@ uploads/<name>           the uploaded patient files
 
 ### Version rules
 
-- `schema_version` **newer than supported** → 422 `unsupported_schema`.
+- `schema_version` **newer than supported** (currently 3) → 422
+  `unsupported_schema`.
 - producer `app_version` **older** → imports cleanly: only tables present
   in the dump are replaced; columns are mapped through the manifest's
   `table_columns` (columns added after the dump are filled from their DDL
   default, else a type-aware fallback `''`/`0`; dump columns unknown to the
   live schema are dropped). Every skew is reported in the import summary.
+  **Pre-1.3 backups (schema_version ≤ 2)**: attachments arrive keyed by
+  `appointment_id` — the importer remaps them to `patient_id` through the
+  dumped appointments table (FK integrity of one dump makes the mapping
+  total; a dangling reference rolls back loudly). Because `TRUNCATE …
+  CASCADE` on patients also wipes prescriptions (they did not exist in the
+  old format), they are **re-derived from the restored `rx` text** inside
+  the same transaction (same frozen parser as the 1.3 migration;
+  `_rederived_from_rx` in the summary reports the counts).
 - `app_version` **newer** → 409 `newer_version` with the manifest summary —
   the UI asks whether to import anyway (`force=true`).
 - **Rollback**: the DB import is one transaction — any unresolvable error

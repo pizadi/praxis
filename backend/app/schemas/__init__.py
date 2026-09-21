@@ -200,7 +200,6 @@ class AppointmentBrief(BaseModel):
     patient_first_name: str
     patient_last_name: str
     patient_national_id: str
-    attachment_count: int = 0
 
 
 class AppointmentOut(BaseModel):
@@ -228,7 +227,7 @@ class AttachmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    appointment_id: int
+    patient_id: int
     description: str
     notes: str
     stored_filename: str | None
@@ -248,6 +247,60 @@ class AttachmentCreateIn(BaseModel):
 class AttachmentUpdateIn(BaseModel):
     description: str | None = Field(default=None, max_length=128)
     notes: str | None = Field(default=None, max_length=10000)
+
+
+# --- Prescriptions ------------------------------------------------------------------
+
+
+class PrescriptionItemLinkIn(BaseModel):
+    """One item of a prescription: an existing item id OR a new name
+    (auto-registered in the dictionary), plus an optional quantity."""
+
+    item_id: int | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    quantity: int | None = Field(default=None, ge=1, le=10**6)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("name must not be blank")
+        return v
+
+
+class PrescriptionItemLinkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    item_id: int
+    item_name: str
+    quantity: int | None
+
+
+class PrescriptionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    patient_id: int
+    prescribed_at: dt.datetime
+    notes: str
+    created_by_username: str | None = None
+    source_appointment_id: int | None = None
+    items: list[PrescriptionItemLinkOut] = []
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class PrescriptionCreateIn(BaseModel):
+    prescribed_at: dt.datetime | None = None
+    notes: str = Field(default="", max_length=10000)
+    items: list[PrescriptionItemLinkIn] = Field(default_factory=list)
+
+
+class PrescriptionUpdateIn(BaseModel):
+    prescribed_at: dt.datetime | None = None
+    notes: str | None = Field(default=None, max_length=10000)
+    items: list[PrescriptionItemLinkIn] | None = None
 
 
 # --- Transactions ------------------------------------------------------------------

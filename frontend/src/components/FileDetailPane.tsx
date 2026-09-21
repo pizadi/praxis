@@ -82,7 +82,7 @@ export default function FileDetailPane({ file }: { file: Attachment }) {
     try {
       const fd = new FormData()
       fd.append('file', f)
-      await api.post(`/appointments/files/${file.id}/content`, fd)
+      await api.post(`/files/${file.id}/content`, fd)
       message.success(replacing ? 'فایل جایگزین شد' : 'فایل پیوست شد')
       await qc.invalidateQueries({ queryKey: ['patient-files'] })
       await qc.invalidateQueries({ queryKey: ['appointment-files'] })
@@ -108,7 +108,7 @@ export default function FileDetailPane({ file }: { file: Attachment }) {
     let cancelled = false
     ;(async () => {
       try {
-        const res = await api.get(`/appointments/files/${file.id}/download`, {
+        const res = await api.get(`/files/${file.id}/download`, {
           responseType: 'blob',
         })
         const objUrl = URL.createObjectURL(res.data)

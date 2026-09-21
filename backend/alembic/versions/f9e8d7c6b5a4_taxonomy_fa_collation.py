@@ -4,8 +4,10 @@ Revision ID: f9e8d7c6b5a4
 Revises: e5f6a7b8c9d0
 Create Date: 2026-09-20
 
-Sets the `name` column collation of `tags`/`diagnoses` to an ICU `fa`
-collation so `ORDER BY name` returns Persian alphabetical order directly
+Sets the `name` column collation of `tags`/`diagnoses` (and
+`prescription_items` when that table already exists — see below) to an
+ICU `fa` collation so `ORDER BY name` returns Persian alphabetical order
+directly
 from the index — no per-request sort compute, correct order for
 ا ب پ ت ث ج چ … (byte order gets پ/چ/گ/ژ wrong).
 
@@ -19,6 +21,7 @@ from the index — no per-request sort compute, correct order for
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f9e8d7c6b5a4"
@@ -39,6 +42,19 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE diagnoses ALTER COLUMN name TYPE VARCHAR(128) COLLATE fa_sort"
     )
+    # prescription_items may already exist on databases where the 1.3
+    # migration (b1c2d3e4f5a6) ran BEFORE this one (pre-merge lineage) —
+    # give its name column the same collation. On fresh installs the table
+    # does not exist yet (b1c2d3e4f5a6 creates the column with the
+    # collation directly), so skip.
+    has_items = op.get_bind().execute(
+        sa.text("SELECT to_regclass('prescription_items') IS NOT NULL")
+    ).scalar()
+    if has_items:
+        op.execute(
+            "ALTER TABLE prescription_items ALTER COLUMN name TYPE VARCHAR(128)"
+            " COLLATE fa_sort"
+        )
 
 
 def downgrade() -> None:

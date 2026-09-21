@@ -34,6 +34,16 @@ Then, from this repo (target the Postgres mapped to host port 5434):
   `timestamptz` assuming Asia/Tehran (+03:30).
 - Files are copied to UUID names; the DB keeps `original_filename`;
   missing files are imported with `missing_file=true` (reported, not lost).
+  Since 1.3 attachments belong to the **patient** — the legacy
+  `Appointment_id` is resolved through the appointments table; an
+  unresolvable reference **halts** `--apply` (corruption signal).
+- **Legacy rx free text** is converted into structured prescriptions with
+  the same frozen parser as the 1.3 Alembic migration
+  (`app/services/rx_migration.py`): comma/newline items, trailing integer
+  → quantity, dictionary admission only for names seen ≥ 3 times,
+  everything rarer verbatim in the prescription notes. The raw text also
+  stays in the deprecated `appointments.rx` column. Re-runs skip
+  prescriptions already derived (`source_appointment_id`).
 - **Data-quality report** flags legacy rows violating the new validation
   (10-digit national ID, 4-digit year, digits-only phone). Non-blocking —
   fix them via the UI later. Duplicate national IDs **halt** `--apply`
@@ -41,7 +51,8 @@ Then, from this repo (target the Postgres mapped to host port 5434):
 - Legacy English payment descriptions (`Visit`/`Spiro`/`Other`) are
   translated to ویزیت/اسپیرو/سایر (case-insensitive; unmatched kept as-is).
 - Automatic verification compares per-table counts, POS/cash sums,
-  per-patient appointment counts, orphan FKs. Exit code 0 only on PASS.
+  per-patient appointment counts, orphan FKs, and the planned
+  prescriptions/items/links counts. Exit code 0 only on PASS.
 - Post-cutover: keep the old system read-only for two weeks as fallback.
 
 After `--apply`, run the independent cross-check (does NOT share code with

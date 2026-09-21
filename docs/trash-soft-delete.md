@@ -4,13 +4,14 @@
 
 - All deletions are **soft** (`deleted_at` timestamp) — domain tables,
   users, roles, questionnaire tables alike.
-- Uniqueness (national ID, tag/diagnosis/user/role/template names) is
-  enforced only among live rows via **partial unique indexes**
-  (`WHERE deleted_at IS NULL`), so a deleted value is reusable; restoring
-  conflicts only when a live duplicate exists (409).
+- Uniqueness (national ID, tag/diagnosis/user/role/template/prescription
+  item names) is enforced only among live rows via **partial unique
+  indexes** (`WHERE deleted_at IS NULL`), so a deleted value is reusable;
+  restoring conflicts only when a live duplicate exists (409).
 - Regular endpoints never hard-delete and never unlink physical files.
 - Read paths filter `deleted_at IS NULL` across the whole parent chain — a
-  file is visible only if itself + its appointment + its patient are alive.
+  file is visible only if itself + its patient are alive (patient-level
+  since 1.3).
 
 ## Trash API (`app/api/v1/trash.py`)
 
@@ -25,7 +26,8 @@
 - **Purge** is the only action that unlinks physical files — there is no
   undo.
 - Covered types: patients, appointments, transactions, attachments, tags,
-  diagnoses, users, roles, questionnaire_templates, questionnaire_responses.
+  diagnoses, users, roles, questionnaire_templates, questionnaire_responses,
+  prescriptions, prescription_items.
 
 ## Related: the automatic uploads purge
 

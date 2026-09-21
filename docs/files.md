@@ -1,5 +1,10 @@
 # Files (attachments)
 
+Since **1.3** files belong to the **PATIENT**, not the appointment — they
+survive appointment deletion (which is the point of the change: a file
+uploaded for a visit is the patient's document). Legacy appointments'
+files were re-parented by migration `b1c2d3e4f5a6`.
+
 ## Data model
 
 Two kinds of rows in `attachments`:
@@ -8,7 +13,7 @@ Two kinds of rows in `attachments`:
    `UPLOAD_DIR`), plus `original_filename`, `mime_type`, `size_bytes`.
 2. **Note-only rows** — `stored_filename IS NULL` **and**
    `original_filename IS NULL`; created via
-   `POST /appointments/{id}/files/note` (doctor+).
+   `POST /patients/{id}/files/note` (doctor+).
 
 `missing_file=True` means "a file was expected but is absent" (a migration
 artifact) — NOT note-only.
@@ -17,13 +22,13 @@ artifact) — NOT note-only.
 
 | Action | Endpoint | Perm |
 | --- | --- | --- |
-| List per appointment | `GET /appointments/{id}/files` | `files.read` |
-| Upload (multipart, description/notes as form fields) | `POST /appointments/{id}/files` | `files.write` |
-| Note-only row | `POST /appointments/{id}/files/note` | `files.write` |
-| Edit description/notes | `PATCH /appointments/files/{id}` | `files.write` |
-| **Attach/replace content** | `POST /appointments/files/{id}/content` | `files.write` |
-| Download | `GET /appointments/files/{id}/download` | `files.read` |
-| Soft delete | `DELETE /appointments/files/{id}` | `files.delete` |
+| List per patient | `GET /patients/{id}/files` | `files.read` |
+| Upload (multipart, description/notes as form fields) | `POST /patients/{id}/files` | `files.write` |
+| Note-only row | `POST /patients/{id}/files/note` | `files.write` |
+| Edit description/notes | `PATCH /files/{id}` | `files.write` |
+| **Attach/replace content** | `POST /files/{id}/content` | `files.write` |
+| Download | `GET /files/{id}/download` | `files.read` |
+| Soft delete | `DELETE /files/{id}` | `files.delete` |
 
 - **Attach/replace content**: a note-only row gains a file, a `missing_file`
   row is repaired, an existing file is replaced — description/notes are
@@ -38,13 +43,14 @@ artifact) — NOT note-only.
   upload is rejected (413) without ever buffering the whole body in memory,
   and no partial file is left behind.
 - Read paths filter the whole parent chain: a file is visible only if
-  itself + appointment + patient are alive.
+  itself + its patient are alive.
 
 ## UI
 
 - Patient page → «همه فایل‌ها»: sidebar list (row click selects — no
-  expandable rows) + `FileDetailPane`: title, شرح, upload date (Jalali),
-  size, editable notes (`FileNotesExpanded`), authorized download.
+  expandable rows; upload button opens the add-file modal) +
+  `FileDetailPane`: title, شرح, upload date (Jalali), size, editable notes
+  (`FileNotesExpanded`), authorized download.
 - **Preview**: images (zoom toolbar, in-page) and PDFs (browser viewer) are
   fetched as authorized blobs → object URLs (revoked on change/unmount, and
   refetched when `stored_filename` changes — the content-identity signal

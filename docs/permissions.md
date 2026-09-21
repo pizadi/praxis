@@ -32,6 +32,8 @@ Access control is **permission-based** — there is no role hierarchy in code.
 
 - `medical_notes.view` — the CM/HX/PX/RX fields of an appointment are
   **blanked server-side** for users without it (not just hidden in the UI).
+- `prescriptions.read`/`prescriptions.write` — structured prescriptions
+  (v1.3); doctor+ by default, receptionist none (see docs/prescriptions.md).
 - `users.manage` ≡ admin; `roles.manage`, `audit.view`, `backup.manage`,
   `trash.purge` are the other admin-only abilities.
 - `trash.view`/`trash.restore` — doctor+; `trash.purge` — admin only.

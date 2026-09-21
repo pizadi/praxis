@@ -75,9 +75,9 @@ async def test_soft_delete_appointment_subtree(client):
     token, _ = await login(client)
     p = await _mk_patient(client, token)
     appt = await _mk_appt(client, token, p["id"])
-    # add a file and a transaction
+    # add a file (patient-level since 1.3) and a transaction
     r = await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{p['id']}/files",
         data={"description": "report"},
         files={"file": ("r.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
         headers=auth(token),
@@ -94,10 +94,11 @@ async def test_soft_delete_appointment_subtree(client):
     r = await client.delete(f"/api/v1/appointments/{appt['id']}", headers=auth(token))
     assert r.status_code == 204
 
-    # children invisible: files list of that appointment 404s
-    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
-    assert r.status_code == 404
-    # stats exclude it
+    # files are PATIENT-level now — they stay visible after appointment deletion
+    r = await client.get(f"/api/v1/patients/{p['id']}/files", headers=auth(token))
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+    # stats exclude the deleted appointment
     r = await client.get(
         "/api/v1/stats/summary",
         params={"date_from": "2026-01-01", "date_to": "2026-12-31"},
@@ -114,13 +115,11 @@ async def test_soft_delete_appointment_subtree(client):
     r = await client.get("/api/v1/admin/trash/transactions", headers=auth(token))
     assert r.json()["total"] == 0
 
-    # restore appointment → children visible again
+    # restore appointment → transactions visible again (files never hid)
     r = await client.post(
         f"/api/v1/admin/trash/appointments/{appt['id']}/restore", headers=auth(token)
     )
     assert r.status_code == 200
-    r = await client.get(f"/api/v1/appointments/{appt['id']}/files", headers=auth(token))
-    assert len(r.json()) == 1
     r = await client.get(
         f"/api/v1/appointments/{appt['id']}/transactions", headers=auth(token)
     )
@@ -306,17 +305,24 @@ async def test_search_by_phone_and_omnibox(client):
     assert r.json()["items"][0]["national_id"] == "2222222222"
 
 
-async def test_appointment_brief_has_attachment_count(client):
+async def test_patient_file_listing_independent_of_appointments(client):
+    """Since 1.3 files belong to the patient: the appointment brief carries
+    no attachment_count anymore, and the patient files list is independent
+    of appointment lifecycle."""
     token, _ = await login(client)
     p = await _mk_patient(client, token)
     a1 = await _mk_appt(client, token, p["id"], at="2026-09-10T09:00:00+03:30")
     a2 = await _mk_appt(client, token, p["id"], at="2026-09-11T09:00:00+03:30")
-    await client.post(
-        f"/api/v1/appointments/{a2['id']}/files",
+    r = await client.post(
+        f"/api/v1/patients/{p['id']}/files",
         data={"description": "one"},
         files={"file": ("f.txt", io.BytesIO(b"data"), "text/plain")},
         headers=auth(token),
     )
+    assert r.status_code == 201
+    att = r.json()
+    assert att["patient_id"] == p["id"]
+    assert "appointment_id" not in att
 
     r = await client.get(
         "/api/v1/appointments",
@@ -324,16 +330,13 @@ async def test_appointment_brief_has_attachment_count(client):
         headers=auth(token),
     )
     items = {i["id"]: i for i in r.json()["items"]}
-    assert items[a1["id"]]["attachment_count"] == 0
-    assert items[a2["id"]]["attachment_count"] == 1
+    assert "attachment_count" not in items[a1["id"]]
+    assert "attachment_count" not in items[a2["id"]]
 
-    # soft-deleting the file drops the count without deleting the row
-    files = (await client.get(f"/api/v1/appointments/{a2['id']}/files", headers=auth(token))).json()
-    await client.delete(f"/api/v1/appointments/files/{files[0]['id']}", headers=auth(token))
-    r = await client.get(
-        "/api/v1/appointments",
-        params={"patient_id": p["id"]},
-        headers=auth(token),
-    )
-    items = {i["id"]: i for i in r.json()["items"]}
-    assert items[a2["id"]]["attachment_count"] == 0
+    # soft-deleting the file hides it from the patient list without
+    # deleting the row (restorable via trash)
+    await client.delete(f"/api/v1/files/{att['id']}", headers=auth(token))
+    r = await client.get(f"/api/v1/patients/{p['id']}/files", headers=auth(token))
+    assert r.json() == []
+    r = await client.get("/api/v1/admin/trash/attachments", headers=auth(token))
+    assert r.json()["total"] == 1

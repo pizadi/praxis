@@ -86,7 +86,7 @@ async def test_audit_appointment_and_payment(client):
         headers=auth(token),
     )
     await client.post(
-        f"/api/v1/appointments/{appt['id']}/files",
+        f"/api/v1/patients/{p['id']}/files",
         data={"description": "lab"},
         files={"file": ("r.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
         headers=auth(token),
@@ -125,20 +125,20 @@ async def test_patient_level_files_and_payments(client):
             headers=auth(token),
         )
     r = await client.post(
-        f"/api/v1/appointments/{a2['id']}/files",
+        f"/api/v1/patients/{p['id']}/files",
         data={"description": "report"},
         files={"file": ("f.txt", io.BytesIO(b"data"), "text/plain")},
         headers=auth(token),
     )
     assert r.status_code == 201
 
-    # all-files across both appointments
+    # all files of the patient
     r = await client.get(
-        f"/api/v1/patients/{p['id']}/all-files", headers=auth(token)
+        f"/api/v1/patients/{p['id']}/files", headers=auth(token)
     )
     assert r.status_code == 200
-    assert r.json()["total"] == 1
-    assert r.json()["items"][0]["appointment_id"] == a2["id"]
+    assert len(r.json()) == 1
+    assert r.json()[0]["patient_id"] == p["id"]
 
     # all-payments across both, newest appointment first
     r = await client.get(
@@ -149,10 +149,11 @@ async def test_patient_level_files_and_payments(client):
     assert body["items"][0]["appointment_id"] == a2["id"]
     assert "appointment_scheduled_at" in body["items"][0]
 
-    # soft-delete one appointment → its files/payments vanish from aggregates
+    # soft-delete one appointment → its payments vanish from the aggregate,
+    # but patient-level files are untouched
     await client.delete(f"/api/v1/appointments/{a2['id']}", headers=auth(token))
-    r = await client.get(f"/api/v1/patients/{p['id']}/all-files", headers=auth(token))
-    assert r.json()["total"] == 0
+    files = await client.get(f"/api/v1/patients/{p['id']}/files", headers=auth(token))
+    assert len(files.json()) == 1
     r = await client.get(
         f"/api/v1/patients/{p['id']}/all-transactions", headers=auth(token)
     )
