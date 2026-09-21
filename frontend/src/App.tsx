@@ -1,25 +1,38 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { Spin } from 'antd'
 
 import { getStoredUser, storeUser, api, type StoredUser } from './api/client'
 import AppLayout from './components/AppLayout'
-import LoginPage from './pages/LoginPage'
-import DashboardPage from './pages/DashboardPage'
-import PatientsPage from './pages/PatientsPage'
-import PatientDetailPage from './pages/PatientDetailPage'
-import AppointmentPage from './pages/AppointmentPage'
-import SchedulePage from './pages/SchedulePage'
-import TodayPaymentsPage from './pages/TodayPaymentsPage'
-import TaxonomiesPage from './pages/TaxonomiesPage'
-import StatsPage from './pages/StatsPage'
-import UsersPage from './pages/UsersPage'
-import RolesPage from './pages/RolesPage'
-import QuestionnairesPage from './pages/QuestionnairesPage'
-import QuestionnaireResponsesPage from './pages/QuestionnaireResponsesPage'
-import TrashPage from './pages/TrashPage'
-import BackupPage from './pages/BackupPage'
-import AuditPage from './pages/AuditPage'
+
+// route-level code splitting: antd-heavy pages load on demand instead of
+// one monolithic bundle
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const PatientsPage = lazy(() => import('./pages/PatientsPage'))
+const PatientDetailPage = lazy(() => import('./pages/PatientDetailPage'))
+const AppointmentPage = lazy(() => import('./pages/AppointmentPage'))
+const SchedulePage = lazy(() => import('./pages/SchedulePage'))
+const TodayPaymentsPage = lazy(() => import('./pages/TodayPaymentsPage'))
+const TaxonomiesPage = lazy(() => import('./pages/TaxonomiesPage'))
+const StatsPage = lazy(() => import('./pages/StatsPage'))
+const UsersPage = lazy(() => import('./pages/UsersPage'))
+const RolesPage = lazy(() => import('./pages/RolesPage'))
+const QuestionnairesPage = lazy(() => import('./pages/QuestionnairesPage'))
+const QuestionnaireResponsesPage = lazy(() => import('./pages/QuestionnaireResponsesPage'))
+const TrashPage = lazy(() => import('./pages/TrashPage'))
+const BackupPage = lazy(() => import('./pages/BackupPage'))
+const AuditPage = lazy(() => import('./pages/AuditPage'))
+
+const CenteredSpin = () => (
+  <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }}>
+    <Spin size="large" />
+  </div>
+)
+
+const Lazy = ({ children }: { children: ReactNode }) => (
+  <Suspense fallback={<CenteredSpin />}>{children}</Suspense>
+)
 
 export default function App() {
   const [user, setUser] = useState<StoredUser | null>(getStoredUser())
@@ -61,11 +74,7 @@ export default function App() {
   }, [])
 
   if (!checked) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }}>
-        <Spin size="large" />
-      </div>
-    )
+    return <CenteredSpin />
   }
 
   if (!user) {
@@ -79,22 +88,24 @@ export default function App() {
 
   return (
     <Routes>
-      <Route element={<AppLayout user={user} onLogout={() => { setUser(null); navigate('/login') }} />}>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/patients" element={<PatientsPage />} />
-        <Route path="/patients/:id" element={<PatientDetailPage />} />
-        <Route path="/appointments/:id" element={<AppointmentPage />} />
-        <Route path="/schedule" element={<SchedulePage />} />
-        <Route path="/payments" element={<TodayPaymentsPage />} />
-        <Route path="/taxonomies" element={<TaxonomiesPage />} />
-        <Route path="/stats" element={<StatsPage />} />
-        <Route path="/users" element={<UsersPage />} />
-        <Route path="/roles" element={<RolesPage />} />
-        <Route path="/questionnaires" element={<QuestionnairesPage />} />
-        <Route path="/questionnaire-responses" element={<QuestionnaireResponsesPage />} />
-        <Route path="/backup" element={<BackupPage />} />
-        <Route path="/trash" element={<TrashPage />} />
-        <Route path="/audit" element={<AuditPage />} />
+      <Route
+        element={<AppLayout user={user} onLogout={() => { setUser(null); navigate('/login') }} />}
+      >
+        <Route path="/" element={<Lazy><DashboardPage /></Lazy>} />
+        <Route path="/patients" element={<Lazy><PatientsPage /></Lazy>} />
+        <Route path="/patients/:id" element={<Lazy><PatientDetailPage /></Lazy>} />
+        <Route path="/appointments/:id" element={<Lazy><AppointmentPage /></Lazy>} />
+        <Route path="/schedule" element={<Lazy><SchedulePage /></Lazy>} />
+        <Route path="/payments" element={<Lazy><TodayPaymentsPage /></Lazy>} />
+        <Route path="/taxonomies" element={<Lazy><TaxonomiesPage /></Lazy>} />
+        <Route path="/stats" element={<Lazy><StatsPage /></Lazy>} />
+        <Route path="/users" element={<Lazy><UsersPage /></Lazy>} />
+        <Route path="/roles" element={<Lazy><RolesPage /></Lazy>} />
+        <Route path="/questionnaires" element={<Lazy><QuestionnairesPage /></Lazy>} />
+        <Route path="/questionnaire-responses" element={<Lazy><QuestionnaireResponsesPage /></Lazy>} />
+        <Route path="/backup" element={<Lazy><BackupPage /></Lazy>} />
+        <Route path="/trash" element={<Lazy><TrashPage /></Lazy>} />
+        <Route path="/audit" element={<Lazy><AuditPage /></Lazy>} />
       </Route>
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />

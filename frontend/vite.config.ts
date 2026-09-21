@@ -18,5 +18,19 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // split the framework/UI libraries out of the route chunks; antd is
+        // by far the largest and rarely changes between deploys
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('antd') || id.includes('@ant-design') || id.includes('rc-')) {
+            return 'antd'
+          }
+          if (id.includes('dayjs')) return 'dayjs'
+          return 'vendor'
+        },
+      },
+    },
   },
 })
