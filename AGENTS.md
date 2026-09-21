@@ -71,6 +71,8 @@ Verify order: ruff → mypy → pytest → (if frontend touched) tsc/eslint/buil
 
 ## Conventions
 
+- **Commit messages are brief — a single-line summary, nothing else** (no body). Details belong in code comments, docs, or the version history in `backend/app/__init__.py`, not the commit message.
+
 - API errors use the uniform envelope `{"error": {"code", "message", "details"}}` via `app/core/errors.py` (`ConflictError` 409, `BusinessRuleError`/validation 422, `NotFoundError` 404, `RateLimitedError` 429). Raise these instead of bare `HTTPException` where a code matters.
 - **FastAPI multipart**: fields alongside an `UploadFile` must be declared with `Form("...")` — a bare `param: str = ""` becomes a *query param* and the form field is silently dropped (this exact bug shipped once: upload description/notes never persisted).
 - UI is Persian/RTL with Jalali dates: internal state and API contract stay **Gregorian ISO/UTC**; only display/input is Jalali. Pickers: `frontend/src/components/JalaliDates.tsx` (react-multi-date-picker); display helpers: `src/lib/jalali.ts` (incl. `toFaDigits`/`toEnDigits` — normalize Persian-digit *input* with `toEnDigits` before sending; the DB stores ASCII digits). Backend day-boundary logic uses `APP_TZ` (Asia/Tehran) from `app/db/session.py`; day-based pages (dashboard/schedule/payments) take their initial date from `GET /meta/today` via `lib/today.ts::serverToday()` — never `new Date().toISOString()` (UTC ≠ Tehran between 20:30–24:00 UTC).
