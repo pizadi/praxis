@@ -40,6 +40,12 @@ Version history:
          overflow in notes, rx column kept as deprecated archive);
          backup manifest schema_version 3 + pre-1.3 attachment remap on
          import; legacy sqlite import script converts rx the same way
+  1.3.0.dev2  the app migrates the database at startup (fail-fast, any
+         launch path; create-all dev DBs stamped at head, fresh SQLite is
+         create_all+stamp); legacy Django models.py/views.py removed;
+         scripts/snapshot_db.py (pg_dump via docker exec / sqlite copy)
+         and scripts/purge_db.py (full reset incl. users, snapshot-gated,
+         admin re-bootstrapped, optional --uploads wipe)
 """
 
 __version__ = "1.3.0.dev2"
