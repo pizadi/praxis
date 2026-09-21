@@ -46,7 +46,7 @@ docker compose up -d --build
 
 | بخش | مستندات |
 | --- | --- |
-| بیماران، نوبت‌ها، یادداشت‌های پزشکی (CM/HX/PX/RX) | [docs_fa/patients-appointments.md](docs_fa/patients-appointments.md) |
+| بیماران، نوبت‌ها (مرحلهٔ ویزیت، تب‌های همین روز)، یادداشت‌های پزشکی | [docs_fa/patients-appointments.md](docs_fa/patients-appointments.md) |
 | فایل‌های پیوست: پیش‌نمایش، بزرگ‌نمایی، پیوست/جایگزینی | [docs_fa/files.md](docs_fa/files.md) |
 | پرداخت‌ها (کارت‌خوان/نقدی) + نمای روزانه | [docs_fa/payments.md](docs_fa/payments.md) |
 | آمار و گزارش‌ها | [docs_fa/reports.md](docs_fa/reports.md) |
@@ -54,9 +54,9 @@ docker compose up -d --build
 | کنترل دسترسی مبتنی بر permission (نقش‌های سفارشی) | [docs_fa/permissions.md](docs_fa/permissions.md) |
 | حذف نرم + سبد بازیافت (بازیابی/پاک‌سازی) | [docs_fa/trash-soft-delete.md](docs_fa/trash-soft-delete.md) |
 | لاگ اقدامات | [docs_fa/audit.md](docs_fa/audit.md) |
-| پشتیبان tarball: خروجی، واردسازی نسخه‌دار با بازگشت، پاک‌سازی خودکار فایل‌های بی‌صاحب | [docs_fa/backup-import.md](docs_fa/backup-import.md) |
+| پشتیبان tarball: خروجی، چک‌سام، رمزنگاری اختیاری AES-256-GCM، واردسازی نسخه‌دار با بازگشت، هشدار پشتیبانِ عقب‌افتاده | [docs_fa/backup-import.md](docs_fa/backup-import.md) |
 | معماری و نسخه‌گذاری | [docs_fa/architecture.md](docs_fa/architecture.md) |
-| توسعه (تست/لینت/تایپ‌چک) | [docs_fa/development.md](docs_fa/development.md) |
+| توسعه (تست/لینت/تایپ‌چک/e2e) | [docs_fa/development.md](docs_fa/development.md) |
 | مهاجرت از سامانهٔ قدیمی (SQLite → PostgreSQL) | [docs_fa/migration.md](docs_fa/migration.md) |
 
 ## تست‌ها
@@ -69,5 +69,13 @@ DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin/python -m pyt
 
 cd ../frontend
 npm run lint
+npm test              # vitest — واحد + قرارداد پرسش‌نامه
 npm run build
+
+# تست‌های پایان‌به‌انتها (بک‌اند موقتی :18001 + پیش‌نمایش :18010)
+npm run test:e2e
 ```
+
+ولیدیتورهای پرسش‌نامه (پایتون + تایپ‌اسکریپت) با یک کورپوس مشترک —
+`testdata/questionnaire_parity.json` — که هر دو مجموعهٔ تست اجرا می‌کنند
+هم‌تراز نگه داشته می‌شوند.

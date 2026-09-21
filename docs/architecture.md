@@ -68,3 +68,19 @@ docs/, docs_fa/  feature documentation (English / Persian)
   `__APP_VERSION__` via vite `define`, shown next to the header title.
 - Both are bumped together: minor = feature, patch = fix. Pre-release
   commits during development use `X.Y.Z.devN`.
+
+## Testing
+
+- **Backend** (pytest, SQLite by default, the full suite also runs on
+  PostgreSQL): `tests/unit/` (pure functions), `tests/api/` (per-resource
+  integration over the httpx ASGI client, including an endpoint × role
+  permissions matrix), `tests/parity/` (questionnaire validators).
+  Shared API builders live in `tests/factories.py`.
+- **Frontend**: vitest (`src/**/*.test.ts(x)`) for lib/component units, and
+  Playwright E2E (`e2e/`) against a scratch stack the config spins up
+  (uvicorn on :18001 + `vite preview` on :18010 with the `/api` proxy).
+- **Parity corpus**: `testdata/questionnaire_parity.json` — one shared
+  conformance corpus for the questionnaire validators, executed by BOTH
+  pytest (`tests/parity/`) and vitest (`src/parity/`). The server is
+  authoritative; the TS mirror must agree on every case.
+- Commands and quirks: [development.md](development.md).

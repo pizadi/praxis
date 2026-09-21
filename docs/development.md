@@ -8,7 +8,7 @@ Python venv is at the **repo root** (`.venv`), not in `backend/`.
 # backend tests (from backend/ — pyproject.toml lives there)
 cd backend && DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin/python -m pytest tests -q
 # single test
-../.venv/bin/python -m pytest tests/test_patients.py::test_patient_crud -q
+../.venv/bin/python -m pytest tests/api/test_patients.py::test_patient_crud -q
 
 # lint + typecheck
 .venv/bin/ruff check backend/app backend/tests scripts
@@ -17,12 +17,43 @@ cd backend && DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin
 # frontend (from frontend/)
 npm run lint        # eslint, zero warnings allowed
 npm run build       # tsc -b && vite build
+npm test            # vitest: unit + parity (jsdom)
+npm run test:e2e    # playwright: spins a scratch backend (18001) + preview (18010)
+
+# questionnaire-validator parity (both languages over one corpus)
+../.venv/bin/python -m pytest backend/tests/parity -q   # python side
+npx vitest run src/parity                               # TS side
 
 # deploy to the running compose stack
 docker compose up -d --build api web
 ```
 
-Verify order: ruff → mypy → pytest → (if frontend touched) tsc/eslint/build.
+Verify order: ruff → mypy → pytest → npm lint/test/build → e2e.
+
+## Test suite layout
+
+```
+backend/tests/
+  conftest.py   # env setup (BEFORE app imports) + client fixture + auth fixtures
+                # (admin_token / doctor / recep) + backup/import poll helpers
+  factories.py  # API builders: mk_patient/mk_appointment/mk_file/mk_template/
+                # mk_response/mk_prescription/mk_transaction/... — the single
+                # source for creating domain objects (asserts on CREATE responses)
+  unit/         # pure functions, no HTTP: scoring parser/eval, rx_migration
+                # (frozen rules), questionnaire format matrix, backup crypto,
+                # day_bounds (APP_TZ), audit ip/diffs
+  api/          # per-resource integration tests over the httpx ASGI client:
+                # auth/users, roles, permissions_matrix (endpoint × role sweep),
+                # patients, appointments+stages, payments, attachments,
+                # questionnaires, prescriptions, trash, audit, backup, meta/stats
+  parity/       # questionnaire-validator parity — the python half
+frontend/
+  src/**/*.test.ts(x)  # vitest: lib units + components + parity (TS half)
+  e2e/                 # playwright specs against a SCRATCH stack:
+                       #   uvicorn on 18001 (fresh tmp SQLite + bootstrap
+                       #   admin/admin123) + vite preview on 18010 proxying /api
+testdata/questionnaire_parity.json  # shared validator corpus (both runners)
+```
 
 ## Testing quirks
 
@@ -43,6 +74,18 @@ Verify order: ruff → mypy → pytest → (if frontend touched) tsc/eslint/buil
 - SQLAlchemy `Enum` columns persist the member **NAME** — any migration or
   script reading legacy enum columns must match case-insensitively and fail
   loudly on unexpected values instead of silently defaulting.
+- The parity corpus (`testdata/questionnaire_parity.json`) is law: the
+  questionnaire validators (py + ts) change only together with it and both
+  runners. Boundary facts live there (length 1000, depth 100 ⇒ 99 nested
+  parens).
+- Playwright E2E runs against its own scratch backend — never the live
+  containers (real patient data). `vite preview` binds localhost (IPv6) —
+  use `http://localhost:18010`, not 127.0.0.1; the chromium executable is
+  the system one (`/usr/bin/chromium --no-sandbox`) since browsers cannot
+  be downloaded here.
+- E2E auth tests must NOT lock out `admin` (the 5-failure lockout is
+  per-username and persists in the scratch DB for the whole run) — use a
+  dedicated throwaway user.
 
 ## Conventions (short list)
 

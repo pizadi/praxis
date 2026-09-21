@@ -622,8 +622,11 @@ async def import_rx_prescriptions(
                 new_rx_rows,
             )
 
-        # links: only for prescriptions created on THIS run; planned links
-        # are already deduped per prescription by normalized key
+        # links: only for prescriptions created on THIS run (a re-run must
+        # not re-insert links of prescriptions that already have them —
+        # uq_prescription_item_links_pair would reject the duplicates);
+        # planned links are already deduped per prescription by normalized key
+        new_appt_ids = {p.appointment_id for p in new_rx_rows}
         rx_id_by_appt = {
             int(r[0]): int(r[1])
             for r in await conn.execute(
@@ -632,6 +635,7 @@ async def import_rx_prescriptions(
                     " WHERE source_appointment_id IS NOT NULL"
                 )
             )
+            if int(r[0]) in new_appt_ids
         }
         link_rows = []
         for p in planned:
@@ -684,15 +688,12 @@ async def update_attachment_meta(
                 )
             )
         }
-    copied = note_only = missing = reused = 0
-    # Content index of the upload dir: prevents duplicate copies when the
-    # DB was re-imported fresh but the upload dir still holds files from a
-    # previous migration run (stale UUIDs). Identical content → reuse name.
-    content_index: dict[tuple[int, str], str] = {}
-    if apply:
-        for p in upload_dir.iterdir():
-            if p.is_file():
-                content_index.setdefault((_file_size(p), _file_sha(p)), p.name)
+    copied = note_only = missing = 0
+    # NOTE: no content-hash dedup across rows — uq_attachments_stored_filename_live
+    # forbids two LIVE rows sharing one stored_filename, so each attachment
+    # row gets its own copy (identical legacy content is stored multiple
+    # times by design). Re-run safety comes from the existing-skip above:
+    # rows already relocated (stored_filename set) are never reprocessed.
     for a in tables["attachments"]:
         legacy = (a.get("legacy_file") or "").strip()
         aid = a.get("id")
@@ -707,16 +708,9 @@ async def update_attachment_meta(
         if src and src.is_file():
             size = src.stat().st_size
             mime = guess_mime(src.name)
-            key = (size, _file_sha(src))
-            if key in content_index:
-                stored = content_index[key]
-                reused += 1
-            else:
-                stored = f"{uuid.uuid4().hex}{Path(legacy).suffix}"
-                content_index[key] = stored
-                if apply:
-                    shutil.copy2(src, upload_dir / stored)
+            stored = f"{uuid.uuid4().hex}{Path(legacy).suffix}"
             if apply:
+                shutil.copy2(src, upload_dir / stored)
                 async with engine.begin() as conn:
                     await conn.execute(
                         text(
@@ -738,9 +732,8 @@ async def update_attachment_meta(
             missing += 1
             log.warning("attachment %s: physical file missing for %r", aid, legacy)
     log.info(
-        "file relocation: copied=%s (reused=%s) note-only=%s missing=%s",
+        "file relocation: copied=%s note-only=%s missing=%s",
         copied,
-        reused,
         note_only,
         missing,
     )

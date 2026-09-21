@@ -78,6 +78,15 @@ Version history:
           stale-backup warning banner for admins (BACKUP_STALE_DAYS,
           default 7, 0 disables) driven by durable completion records in
           the audit trail
+  1.3.0.dev8  test-suite rewrite: backend unit/api/parity split with
+          shared factories + a permissions matrix sweep; frontend testing
+          (vitest + Testing Library; Playwright E2E against a scratch
+          stack); questionnaire-validator parity corpus
+          (testdata/questionnaire_parity.json) run by BOTH pytest and
+          vitest — pinned the TS formula length/depth limits and the
+          server's whitespace-only-formula normalization; testdata
+          contract keeps the error-message mapping in sync
+  1.3.0  release
 """
 
-__version__ = "1.3.0.dev7"
+__version__ = "1.3.0"

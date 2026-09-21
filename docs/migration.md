@@ -75,3 +75,39 @@ A synthetic legacy DB for testing the migration itself:
 
 `old_database/` in the repo is a real production snapshot — treat as
 sensitive; never commit anything into it.
+
+## Attachment files: where they must land
+
+`--upload-dir` must be the directory the running compose **api actually
+mounts** — on the compose stack that is the named volume `praxis_uploads`
+(`/data/uploads` inside the container). Files copied to a host path the
+container cannot see are invisible to the app AND to the backup job: the
+tarball ships with `uploads_files: 0` and a suspiciously small size (the
+Sep-14 import wrote to `data/uploads` on the host — backups were 2 MB
+instead of 360 MB until the files were copied into the volume).
+
+Two repair paths:
+
+```bash
+# after the host-side import, copy the files into the volume:
+docker cp data/uploads/. praxis-api-1:/data/uploads/
+
+# or re-run the idempotent file relocation (fills rows marked
+# missing_file=TRUE whose files exist; already-relocated rows are skipped):
+.venv/bin/python scripts/migrate_sqlite.py --source old_database/db.sqlite3 \
+  --files old_database/patient_files --database-url "$DATABASE_URL" \
+  --upload-dir data/uploads --apply
+```
+
+Notes:
+
+- Each attachment row owns its own stored copy — identical legacy content
+  is stored multiple times (the live-row unique index
+  `uq_attachments_stored_filename_live` forbids sharing a
+  `stored_filename`).
+- Rows whose legacy file is genuinely absent on disk stay
+  `missing_file=TRUE` (the UI flags them) — 7 files were lost in the
+  legacy snapshot itself.
+- The post-apply verify compares money totals against the LEGACY snapshot:
+  on a live system where users kept working after the import, a FAIL there
+  is a false alarm (post-import rows), not corruption.

@@ -17,14 +17,61 @@
 ## Tarball format
 
 ```
-manifest.json            {"schema_version": 3, "app_version": "1.3.0",
+manifest.json            {"schema_version": 4, "app_version": "1.3.0",
                           "created_at": ..., "app_timezone": ...,
                           "tables": {table: rowcount},
-                          "table_columns": {table: [columns...]}}
+                          "table_columns": {table: [columns...]},
+                          "member_sha256": {member: hex, ...}}
 db/<table>.copy          PostgreSQL COPY data (one per table)      ← PG
 db/clinic.sqlite3        raw SQLite database                      ← SQLite dev
 uploads/<name>           the uploaded patient files
 ```
+
+- Since schema_version 4 the manifest carries a **SHA-256 per member**
+  (everything except manifest.json itself — a file cannot contain its own
+  hash). The importer verifies every member **before** the destructive DB
+  transaction; a mismatch fails the import loudly.
+- A plaintext (`.tar.gz`) artifact is a gzip stream; an **encrypted**
+  artifact starts with the `PRAXISBK` magic and downloads as `.tar.gz.enc`
+  (see below).
+
+## Artifact checksum
+
+- `GET /admin/backup` returns `sha256` — the hash of the FINAL artifact
+  (the encrypted bytes when encryption is on, else the tarball); the same
+  value rides on the download as the `X-Checksum-Sha256` header. Verify
+  what landed on disk with `sha256sum`.
+- The import accepts an optional `expected_sha256` form field — a mismatch
+  refuses the restore with 422 `checksum_mismatch` before anything runs.
+  The UI computes the hash client-side (`crypto.subtle`) and always sends
+  it.
+
+## Encryption (optional)
+
+- Set `BACKUP_ENCRYPTION_KEY` (a long random passphrase) to encrypt
+  tarballs: **AES-256-GCM** with a per-archive random salt/nonce and a
+  scrypt-derived key. Wire format:
+  `PRAXISBK | 0x01 | salt(16) | nonce(12) | ciphertext | tag(16)`; the
+  magic doubles as GCM additional authenticated data. Streaming both ways
+  (1 MiB chunks) — the archive is never fully in memory.
+- The plaintext tarball is deleted after encryption — only the encrypted
+  artifact stays on disk.
+- **Losing the key means losing the backups** — it both encrypts new ones
+  and unlocks importing encrypted ones. Store it in a password manager.
+- Importing an encrypted artifact without a configured key (or with the
+  wrong one) refuses with 422 `invalid_backup` and a clear message.
+
+## Stale-backup warning
+
+- Every successful backup records a durable completion row in the audit
+  trail (`action='backup'`, username `system`, with size/sha/encrypted
+  details) — it survives restarts, unlike the in-memory job status.
+- `GET /admin/backup` returns `last_backup_at`, `backup_stale` and
+  `backup_stale_days` (from `BACKUP_STALE_DAYS`, default **7**; `0`
+  disables the warning → `backup_stale` is null).
+- Admins (`backup.manage`) see a dismissible warning banner on every page
+  while no successful backup is newer than the threshold — including
+  "never backed up" on a fresh install.
 
 ## Import (restore)
 
@@ -37,7 +84,7 @@ uploads/<name>           the uploaded patient files
 
 ### Version rules
 
-- `schema_version` **newer than supported** (currently 3) → 422
+- `schema_version` **newer than supported** (currently 4) → 422
   `unsupported_schema`.
 - producer `app_version` **older** → imports cleanly: only tables present
   in the dump are replaced; columns are mapped through the manifest's

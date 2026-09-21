@@ -37,6 +37,41 @@
   prescriptions replaced the rx text field in 1.3
   (see [prescriptions.md](prescriptions.md)); the rx column of old
   appointments is read-only («نسخه قدیمی» collapse).
+
+### Visit stages
+
+- Every appointment is in one of four stages, in a linear pipeline:
+  رزرو شده (Reserved) → پذیرش شده (Checked-in) → ارجاع داده شده
+  (Referred) → پایان یافته (Finished). Stored as a SmallInteger
+  (`appointments.stage`, values 0–3, mirroring
+  `app.models.domain.AppointmentStage`).
+- `PATCH /appointments/{id}/stage` moves ONE step: `{"direction":
+  "advance" | "regress"}`. The server computes the target and enforces the
+  boundaries — moving past finished / before reserved is 409
+  `stage_limit`. Perm: `appointments.stage` (admin/doctor/**receptionist**
+  — check-in is a front-desk task; appointment *editing* stays
+  `appointments.update`, doctor+). Every change is audited with the old/new
+  stage in the details.
+- UI: the appointment panel shows a stage tag with advance (one click) and
+  regress buttons — regression asks for confirmation first. The schedule
+  rows and the patient page's appointment list carry the tag + a
+  quick-advance chip.
+- Migration `d2e3f4a5b6c7` added the column and backfilled: appointments
+  already in the past became پایان یافته; future ones stayed رزرو شده.
+
+### Same-day visit tabs
+
+- Files, prescriptions and questionnaire responses belong to the PATIENT
+  (since 1.3). The opened appointment shows the **same-day** items of that
+  patient in three extra tabs: فایل‌های این روز / نسخه‌های این روز /
+  پرسش‌نامه‌های این روز (the all-history views stay on the patient page).
+- "Same day" = the appointment's `scheduled_at` **calendar day in
+  `APP_TZ`** — the three patient-level list endpoints accept a `date=`
+  filter (each still gated by its own read permission, so a receptionist
+  sees no prescriptions here either). The composite indexes
+  `(patient_id, created_at/prescribed_at)` (migration `d2e3f4a5b6c7`)
+  back the lookup.
+
 - The patient page is a four-segment workspace (نوبت‌ها / همه فایل‌ها /
   پرسش‌نامه‌ها / نسخه‌ها). Switching segments, switching appointments,
   leaving the page via the sidebar menu, or closing/refreshing the tab

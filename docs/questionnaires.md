@@ -67,6 +67,16 @@ whose `format_json` is a validated JSON document:
   AST — **never `eval`**), mirrored in `frontend/src/lib/questionnaire.ts`
   (`validateFormulaText`/`evaluateFormula`) for the builder's live check —
   keep the two in sync.
+- **Sync is enforced by a shared corpus**: `testdata/questionnaire_parity.json`
+  (107 cases: evaluation totals, formula validation outcomes, answer
+  error strings, format matrix) is executed by BOTH the pytest runner
+  (`backend/tests/parity/`) and the vitest runner
+  (`frontend/src/parity/`). It pins the length/depth limits
+  (`MAX_FORMULA_LENGTH = 1000`, `MAX_DEPTH = 100` — both sides), the
+  error-message contract with `faAnswerError`, and the whitespace-only
+  formula rule (the value is trimmed at validation — blank means "no
+  scoring"). Change validators only together with the corpus and both
+  runners.
 - Evaluation is **total**: any missing/invalid referenced answer, a chosen
   option without a score, or division by zero → the total is `None`,
   rendered as "—". A score is never invented.

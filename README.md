@@ -46,7 +46,7 @@ See [docs/deployment.md](docs/deployment.md) for operations details.
 
 | Area | Docs |
 | --- | --- |
-| Patients, appointments, medical notes (CM/HX/PX/RX) | [docs/patients-appointments.md](docs/patients-appointments.md) |
+| Patients, appointments (visit stages, same-day visit tabs), medical notes | [docs/patients-appointments.md](docs/patients-appointments.md) |
 | File attachments: preview, zoom, attach/replace | [docs/files.md](docs/files.md) |
 | Payments (POS/cash) + day-wide views | [docs/payments.md](docs/payments.md) |
 | Stats & reports | [docs/reports.md](docs/reports.md) |
@@ -54,20 +54,29 @@ See [docs/deployment.md](docs/deployment.md) for operations details.
 | Permission-based access control (custom roles) | [docs/permissions.md](docs/permissions.md) |
 | Soft deletes + trash (restore/purge) | [docs/trash-soft-delete.md](docs/trash-soft-delete.md) |
 | Audit trail | [docs/audit.md](docs/audit.md) |
-| Backup tarballs: export, versioned import with rollback, auto uploads purge | [docs/backup-import.md](docs/backup-import.md) |
+| Backup tarballs: export, checksums, optional AES-256-GCM encryption, versioned import with rollback, stale-backup warning | [docs/backup-import.md](docs/backup-import.md) |
 | Architecture & versioning | [docs/architecture.md](docs/architecture.md) |
-| Development (tests/lint/typecheck) | [docs/development.md](docs/development.md) |
+| Development (tests/lint/typecheck/e2e) | [docs/development.md](docs/development.md) |
 | Legacy migration (SQLite → PostgreSQL) | [docs/migration.md](docs/migration.md) |
 
 ## Tests
 
 ```bash
-cd backend
-DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin/python -m pytest tests -q
-../.venv/bin/ruff check app tests ../scripts
-../.venv/bin/mypy app
+# backend (ruff → mypy → pytest; also verified on real PostgreSQL)
+cd backend && DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin/python -m pytest tests -q
+../.venv/bin/ruff check backend/app backend/tests scripts
+(cd backend && ../.venv/bin/mypy app)
 
-cd ../frontend
+# frontend: eslint, vitest (units + questionnaire parity), tsc build
+cd frontend
 npm run lint
+npm test              # vitest — includes the TS side of testdata/questionnaire_parity.json
 npm run build
+
+# end-to-end (spins a scratch backend on :18001 + vite preview on :18010)
+npm run test:e2e
 ```
+
+The questionnaire validators (Python + TypeScript) are kept in sync by a
+shared conformance corpus — `testdata/questionnaire_parity.json` — executed
+by both test suites.
