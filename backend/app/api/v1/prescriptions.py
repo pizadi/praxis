@@ -12,6 +12,7 @@ below-threshold item text lands in the prescription `notes`, and the raw
 text also stays in the deprecated rx column.
 """
 
+import datetime as dt
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -269,20 +270,26 @@ async def delete_item(
 )
 async def list_patient_prescriptions(
     patient_id: int,
+    date: dt.date | None = None,
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_perm("prescriptions.read")),
 ):
+    """`date` (YYYY-MM-DD) restricts to one APP_TIMEZONE day (prescribed_at)
+    — used by the appointment view's «نسخه‌های این روز» tab."""
     from app.api.v1.patients import _get_or_404 as _patient_or_404
 
     await _patient_or_404(db, patient_id)
+    filters = [Prescription.patient_id == patient_id, Prescription.deleted_at.is_(None)]
+    if date:
+        from app.db.session import day_bounds
+
+        lo, hi = day_bounds(date)
+        filters += [Prescription.prescribed_at >= lo, Prescription.prescribed_at <= hi]
     stmt = (
         select(Prescription)
-        .where(
-            Prescription.patient_id == patient_id,
-            Prescription.deleted_at.is_(None),
-        )
+        .where(*filters)
         .options(selectinload(Prescription.links).selectinload(PrescriptionItemLink.item))
         .order_by(Prescription.prescribed_at.desc(), Prescription.id.desc())
     )

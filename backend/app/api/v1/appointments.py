@@ -8,13 +8,16 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate, paginate_rows
+from app.core.errors import ConflictError
 from app.core.tokens import utc_now
-from app.db.session import get_db
+from app.db.session import day_bounds, get_db
 from app.models import Appointment, Patient, Transaction, User
+from app.models.domain import STAGE_LABELS_FA, AppointmentStage
 from app.schemas import (
     AppointmentBrief,
     AppointmentCreateIn,
     AppointmentOut,
+    AppointmentStageChangeIn,
     AppointmentUpdateIn,
     PatientTransactionOut,
 )
@@ -49,6 +52,7 @@ def _out(appt: Appointment, user: User) -> AppointmentOut:
         "id": appt.id,
         "patient_id": appt.patient_id,
         "scheduled_at": appt.scheduled_at,
+        "stage": int(appt.stage),
         "notes": appt.notes,
         "cm": appt.cm,
         "hx": appt.hx,
@@ -72,6 +76,7 @@ def _brief(appt: Appointment) -> AppointmentBrief:
             "id": appt.id,
             "patient_id": appt.patient_id,
             "scheduled_at": appt.scheduled_at,
+            "stage": int(appt.stage),
             "patient_first_name": appt.patient.first_name,
             "patient_last_name": appt.patient.last_name,
             "patient_national_id": appt.patient.national_id,
@@ -92,17 +97,15 @@ async def list_appointments(
     """Date filters are interpreted in APP_TIMEZONE (day boundaries)."""
     filters: list = [Appointment.patient_id == patient_id] if patient_id else []
     if date_from or date_to:
-        from app.db.session import APP_TZ
-
         lo = (
-            dt.datetime.combine(date_from, dt.time.min, APP_TZ)
+            day_bounds(date_from)[0]
             if date_from
-            else dt.datetime(1, 1, 1, tzinfo=APP_TZ)
+            else dt.datetime(1, 1, 1, tzinfo=dt.UTC)
         )
         hi = (
-            dt.datetime.combine(date_to, dt.time.max, APP_TZ)
+            day_bounds(date_to)[1]
             if date_to
-            else dt.datetime(9999, 12, 31, tzinfo=APP_TZ)
+            else dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
         )
         if date_from and date_to and lo > hi:
             raise HTTPException(422, detail="date_from must be <= date_to")
@@ -210,6 +213,48 @@ async def update_appointment(
         summary=f"{appt.patient.first_name} {appt.patient.last_name} —"
         f" {appt.scheduled_at.isoformat()}",
         details=changed or None,
+    )
+    return _out(appt, user)
+
+
+@router.patch("/appointments/{appointment_id}/stage", response_model=AppointmentOut)
+async def change_appointment_stage(
+    appointment_id: int,
+    body: AppointmentStageChangeIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_perm("appointments.stage")),
+):
+    """Advance/regress the visit pipeline by ONE step.
+
+    Boundaries (below reserved / beyond finished) are a 409 conflict, not
+    validation errors — the direction is valid, the current stage just
+    can't move that way.
+    """
+    appt = await _get_or_404(db, appointment_id)
+    current = AppointmentStage(int(appt.stage))
+    step = 1 if body.direction == "advance" else -1
+    target_value = current.value + step
+    if not 0 <= target_value <= max(s.value for s in AppointmentStage):
+        raise ConflictError(
+            "مرحله نوبت در مرز مجاز است", code="stage_limit"
+        )
+    target = AppointmentStage(target_value)
+    appt.stage = target
+    await db.commit()
+    appt = await _get_or_404(db, appointment_id)
+    await audit.log_action(
+        db,
+        user=user,
+        request=request,
+        action=audit.UPDATE,
+        entity_type="appointment",
+        entity_id=appt.id,
+        summary=(
+            f"{appt.patient.first_name} {appt.patient.last_name} — مرحله:"
+            f" از {STAGE_LABELS_FA[current]} به {STAGE_LABELS_FA[target]}"
+        ),
+        details={"stage": {"old": current.name, "new": target.name}},
     )
     return _out(appt, user)
 

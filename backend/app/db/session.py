@@ -21,6 +21,16 @@ except zoneinfo.ZoneInfoNotFoundError:
     APP_TZ = dt.UTC
 
 
+def day_bounds(day: dt.date) -> tuple[dt.datetime, dt.datetime]:
+    """[start, end] of `day` in APP_TZ as aware UTC-comparable datetimes —
+    the shared day-boundary convention for date-filtered listings
+    (appointments, payments, same-day visit lookups)."""
+    return (
+        dt.datetime.combine(day, dt.time.min, tzinfo=APP_TZ),
+        dt.datetime.combine(day, dt.time.max, tzinfo=APP_TZ),
+    )
+
+
 async def get_db() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
         yield session

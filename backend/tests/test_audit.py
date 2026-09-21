@@ -158,3 +158,75 @@ async def test_patient_level_files_and_payments(client):
         f"/api/v1/patients/{p['id']}/all-transactions", headers=auth(token)
     )
     assert r.json()["total"] == 1
+
+
+async def test_audit_ip_uses_forwarded_headers(client):
+    """Behind the nginx proxy request.client.host is the proxy's address;
+    X-Forwarded-For (leftmost = original client) / X-Real-IP win."""
+    token, _ = await login(client)
+
+    # XFF: multi-hop chain → leftmost entry recorded
+    r = await client.post(
+        "/api/v1/patients",
+        json={
+            "national_id": "1000000001",
+            "first_name": "الف",
+            "last_name": "ب",
+            "year_of_birth": "1370",
+            "gender": 0,
+        },
+        headers={
+            **auth(token),
+            "X-Forwarded-For": "203.0.113.7, 10.0.0.1",
+        },
+    )
+    assert r.status_code == 201, r.text
+    pid1 = r.json()["id"]
+    r = await client.get(
+        "/api/v1/admin/audit",
+        params={"entity_type": "patient", "entity_id": pid1},
+        headers=auth(token),
+    )
+    assert r.json()["items"][0]["ip_address"] == "203.0.113.7"
+
+    # X-Real-IP only (nginx's other header) → used as fallback
+    r = await client.post(
+        "/api/v1/patients",
+        json={
+            "national_id": "1000000002",
+            "first_name": "ج",
+            "last_name": "د",
+            "year_of_birth": "1370",
+            "gender": 1,
+        },
+        headers={**auth(token), "X-Real-IP": "198.51.100.9"},
+    )
+    assert r.status_code == 201, r.text
+    pid2 = r.json()["id"]
+    r = await client.get(
+        "/api/v1/admin/audit",
+        params={"entity_type": "patient", "entity_id": pid2},
+        headers=auth(token),
+    )
+    assert r.json()["items"][0]["ip_address"] == "198.51.100.9"
+
+    # no proxy headers → the peer address (ASGI testclient loopback)
+    r = await client.post(
+        "/api/v1/patients",
+        json={
+            "national_id": "1000000003",
+            "first_name": "ه",
+            "last_name": "و",
+            "year_of_birth": "1370",
+            "gender": 0,
+        },
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    pid3 = r.json()["id"]
+    r = await client.get(
+        "/api/v1/admin/audit",
+        params={"entity_type": "patient", "entity_id": pid3},
+        headers=auth(token),
+    )
+    assert r.json()["items"][0]["ip_address"] == "127.0.0.1"

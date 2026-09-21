@@ -17,21 +17,40 @@ import {
   Statistic,
   Table,
   Tabs,
+  Tag,
+  Tooltip,
   Typography,
 } from 'antd'
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import {
+  DeleteOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
+  DownloadOutlined,
+  PlusOutlined,
+} from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
-import type { Appointment, Page, Prescription, Transaction } from '../api/types'
+import type {
+  Appointment,
+  Attachment,
+  Page,
+  Prescription,
+  QuestionnaireResponse,
+  QuestionnaireTemplate,
+  Transaction,
+} from '../api/types'
 import DigitInput from './DigitInput'
-import { formatMoney } from '../lib/jalali'
+import { downloadAttachment } from '../lib/files'
+import { formatJalali, formatJalaliTime, fileSize, formatMoney } from '../lib/jalali'
+import { LAST_STAGE, stageOf, tehranDay } from '../lib/stages'
 import { useUser } from './AppLayout'
 import {
   PrescriptionForm,
   PrescriptionView,
   type PrescriptionFormValues,
 } from './PrescriptionRender'
+import { QuestionnaireView } from './QuestionnaireRender'
 
 /** Imperative handle for the unsaved-changes guard in the patient page. */
 export interface AppointmentPanelHandle {
@@ -65,11 +84,12 @@ interface Props {
 }
 
 /**
- * Full detail view of one appointment (notes / prescriptions / payments
- * tabs). Files are patient-level since 1.3 and live on the patient page;
- * the legacy free-text rx shows read-only (deprecated — prescriptions are
- * structured rows now). Used both by the standalone /appointments/:id page
- * and embedded in the patient detail page's main pane.
+ * Full detail view of one appointment: stage header, then notes, the three
+ * same-day «این ویزیت» tabs (files / prescriptions / questionnaires the
+ * patient has on this appointment's Tehran day) and payments. Files and
+ * prescriptions belong to the PATIENT since 1.3 — the all-history views
+ * live on the patient page. The legacy free-text rx shows read-only
+ * (deprecated — prescriptions are structured rows now).
  */
 const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function AppointmentPanel(
   { appointmentId, onDirtyChange, onSaved, onSaveFailed },
@@ -93,18 +113,55 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
       })).data,
   })
 
-  // prescriptions of the panel's PATIENT (patient-level since 1.3); the
-  // quick-add modal pre-dates them to this visit's scheduled_at
+  // --- same-day associated items (patient-level rows on the visit's
+  // Tehran day); each endpoint enforces its own read permission
   const patientId = appt.data?.patient_id
+  const visitDay = appt.data ? tehranDay(appt.data.scheduled_at) : undefined
+
   const canRx = hasPerm('prescriptions.read')
-  const rxList = useQuery({
-    queryKey: ['patient-prescriptions', patientId],
+  const visitRx = useQuery({
+    queryKey: ['visit-prescriptions', appointmentId, patientId, visitDay],
     queryFn: async () =>
       (await api.get<Page<Prescription>>(`/patients/${patientId}/prescriptions`, {
+        params: { date: visitDay, limit: 100 },
+      })).data,
+    enabled: canRx && patientId != null && visitDay != null,
+  })
+
+  const canFiles = hasPerm('files.read')
+  const visitFiles = useQuery({
+    queryKey: ['visit-files', appointmentId, patientId, visitDay],
+    queryFn: async () =>
+      (await api.get<Attachment[]>(`/patients/${patientId}/files`, {
+        params: { date: visitDay },
+      })).data,
+    enabled: canFiles && patientId != null && visitDay != null,
+  })
+
+  const canQ = hasPerm('questionnaires.read')
+  const visitQ = useQuery({
+    queryKey: ['visit-questionnaires', appointmentId, patientId, visitDay],
+    queryFn: async () =>
+      (await api.get<Page<QuestionnaireResponse>>(`/patients/${patientId}/questionnaires`, {
+        params: { date: visitDay, limit: 100 },
+      })).data,
+    enabled: canQ && patientId != null && visitDay != null,
+  })
+
+  // formats for rendering the same-day responses (read-only merge view)
+  const qTemplates = useQuery({
+    queryKey: ['questionnaire-templates'],
+    queryFn: async () =>
+      (await api.get<Page<QuestionnaireTemplate>>('/questionnaires/templates', {
         params: { limit: 100 },
       })).data,
-    enabled: canRx && patientId != null,
+    enabled: canQ,
   })
+  const templateById = useMemo(() => {
+    const map = new Map<number, QuestionnaireTemplate>()
+    for (const t of qTemplates.data?.items ?? []) map.set(t.id, t)
+    return map
+  }, [qTemplates.data])
 
   const [notesForm] = Form.useForm<Appointment>()
   const [txnForm] = Form.useForm<{ description: string; amount: number; pos: boolean }>()
@@ -147,6 +204,18 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
       message.error(apiError(err).message)
       onSaveFailed?.()
     },
+  })
+
+  // --- stage advance/regress (±1; regress asks for confirmation) ---
+  const changeStage = useMutation({
+    mutationFn: async (direction: 'advance' | 'regress') =>
+      api.patch(`/appointments/${appointmentId}/stage`, { direction }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['appointment', appointmentId] })
+      await qc.invalidateQueries({ queryKey: ['patient-appointments'] })
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+    },
+    onError: (err) => message.error(apiError(err).message),
   })
 
   const addTxn = useMutation({
@@ -202,6 +271,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
       message.success('نسخه ثبت شد')
       setRxModalOpen(false)
       rxForm.resetFields()
+      void qc.invalidateQueries({ queryKey: ['visit-prescriptions', appointmentId] })
       void qc.invalidateQueries({ queryKey: ['patient-prescriptions', patientId] })
     },
     onError: (err) => message.error(apiError(err).message),
@@ -212,9 +282,49 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
   }
   const a = appt.data
   const hasLegacyRx = a.rx.trim().length > 0
+  const stage = stageOf(a.stage)
+
+  const regressStageConfirm = () => {
+    Modal.confirm({
+      title: `مرحله از «${stage.label}» به عقب برگردد؟`,
+      content: 'این تغییر در گزارش اقدامات ثبت می‌شود.',
+      okText: 'برگرداندن مرحله',
+      cancelText: 'انصراف',
+      maskClosable: false,
+      onOk: () => changeStage.mutate('regress'),
+    })
+  }
+
+  const stageControls = hasPerm('appointments.stage') && (
+    <Space size={4}>
+      <Tooltip title="مرحله قبل">
+        <Button
+          size="small"
+          icon={<DoubleRightOutlined />}
+          disabled={a.stage === 0}
+          onClick={regressStageConfirm}
+        />
+      </Tooltip>
+      <Tooltip title="مرحله بعد">
+        <Button
+          size="small"
+          icon={<DoubleLeftOutlined />}
+          disabled={a.stage === LAST_STAGE}
+          onClick={() => changeStage.mutate('advance')}
+        />
+      </Tooltip>
+    </Space>
+  )
 
   return (
     <>
+      {/* stage header: current stage + advance/regress (regress prompted) */}
+      <Space size={8} style={{ marginBottom: 12 }}>
+        <Tag color={stage.color} style={{ marginInlineEnd: 0 }}>
+          {stage.label}
+        </Tag>
+        {stageControls}
+      </Space>
       <Tabs
         tabBarExtraContent={
           hasPerm('appointments.delete') && (
@@ -289,8 +399,60 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
           ),
         },
         {
-          key: 'rx',
-          label: 'نسخه‌ها',
+          // same-day files (patient-level since 1.3) — all files on the patient page
+          key: 'visit-files',
+          label: 'فایل‌های این روز',
+          children: !canFiles ? (
+            <Typography.Text type="secondary">
+              دسترسی مشاهده فایل‌ها را ندارید
+            </Typography.Text>
+          ) : (
+            <Table<Attachment>
+              rowKey="id"
+              loading={visitFiles.isLoading}
+              dataSource={visitFiles.data ?? []}
+              pagination={false}
+              size="small"
+              locale={{ emptyText: 'فایلی در این روز ثبت نشده است' }}
+              columns={[
+                {
+                  title: 'عنوان / شرح',
+                  dataIndex: 'description',
+                  render: (v: string, rec) => v || rec.original_filename || 'یادداشت',
+                },
+                { title: 'تاریخ', dataIndex: 'created_at', render: (v: string) => formatJalali(v) },
+                {
+                  title: 'ساعت',
+                  dataIndex: 'created_at',
+                  render: (v: string) => formatJalaliTime(v),
+                },
+                {
+                  title: 'حجم',
+                  dataIndex: 'size_bytes',
+                  render: (v: number | null) => (v == null ? '—' : fileSize(v)),
+                },
+                {
+                  title: '',
+                  render: (_, rec) =>
+                    rec.stored_filename ? (
+                      <Button
+                        size="small"
+                        icon={<DownloadOutlined />}
+                        onClick={() => downloadAttachment(rec.id, rec.original_filename)}
+                      >
+                        دانلود
+                      </Button>
+                    ) : null,
+                },
+              ]}
+            />
+          ),
+        },
+        {
+          // same-day prescriptions (patient-level) — the all-history view
+          // lives on the patient page
+          key: 'visit-rx',
+          label: 'نسخه‌های این روز',
           children: !canRx ? (
             <Typography.Text type="secondary">
               دسترسی مشاهده نسخه‌ها را ندارید
@@ -308,19 +470,60 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
                   </Button>
                 </div>
               )}
-              {(rxList.data?.items ?? []).length === 0 ? (
+              {(visitRx.data?.items ?? []).length === 0 ? (
                 <Typography.Text type="secondary">
-                  نسخه ساختاریافته‌ای ثبت نشده است (نسخه‌های قدیمیِ متنی، در تب «یادداشت‌ها»
-                  دیده می‌شوند)
+                  در این روز نسخه‌ای ثبت نشده است
                 </Typography.Text>
               ) : (
-                (rxList.data?.items ?? []).map((rx) => (
+                (visitRx.data?.items ?? []).map((rx) => (
                   <Card key={rx.id} size="small">
                     <PrescriptionView rx={rx} />
                   </Card>
                 ))
               )}
             </Space>
+          ),
+        },
+        {
+          // same-day questionnaire responses (patient-level)
+          key: 'visit-q',
+          label: 'پرسش‌نامه‌های این روز',
+          children: !canQ ? (
+            <Typography.Text type="secondary">
+              دسترسی مشاهده پرسش‌نامه‌ها را ندارید
+            </Typography.Text>
+          ) : (
+            (visitQ.data?.items ?? []).length === 0 ? (
+              <Typography.Text type="secondary">
+                در این روز پرسش‌نامه‌ای ثبت نشده است
+              </Typography.Text>
+            ) : (
+              <Collapse
+                size="small"
+                items={(visitQ.data?.items ?? []).map((resp) => {
+                  const tpl = templateById.get(resp.template_id)
+                  return {
+                    key: String(resp.id),
+                    label: (
+                      <Space size={8} wrap>
+                        <Typography.Text strong>{resp.template_name}</Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {formatJalaliTime(resp.created_at)}
+                          {resp.created_by_username ? ` — ${resp.created_by_username}` : ''}
+                        </Typography.Text>
+                      </Space>
+                    ),
+                    children: tpl ? (
+                      <QuestionnaireView format={tpl.format} answers={resp.answers} />
+                    ) : (
+                      <Typography.Text type="warning">
+                        قالب این پاسخ یافت نشد (قالب حذف شده است).
+                      </Typography.Text>
+                    ),
+                  }
+                })}
+              />
+            )
           ),
         },
         {

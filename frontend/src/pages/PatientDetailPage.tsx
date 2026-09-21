@@ -19,6 +19,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
   Upload,
 } from 'antd'
@@ -26,6 +27,7 @@ import type { UploadFile } from 'antd'
 import {
   CalendarOutlined,
   DeleteOutlined,
+  DoubleLeftOutlined,
   EditOutlined,
   FileOutlined,
   FileDoneOutlined,
@@ -50,6 +52,7 @@ import type {
 import type { Answers, FormatDoc } from '../lib/questionnaire'
 import { faAnswerError, mergeResponse } from '../lib/questionnaire'
 import { fileSize, formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { LAST_STAGE, stageOf } from '../lib/stages'
 import { useUser } from '../components/AppLayout'
 import { useBeforeUnloadGuard, useNavGuard } from '../components/NavGuard'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
@@ -291,6 +294,19 @@ export default function PatientDetailPage() {
       message.success('نوبت به سبد بازیافت منتقل شد')
       setSearchParams({})
       await qc.invalidateQueries({ queryKey: ['patient-appointments', id] })
+    },
+    onError: (err) => message.error(apiError(err).message),
+  })
+
+  // quick stage advance from the appointment sidebar (regression lives on
+  // the appointment panel, behind a confirmation)
+  const advanceStage = useMutation({
+    mutationFn: async (apptId: number) =>
+      api.patch(`/appointments/${apptId}/stage`, { direction: 'advance' }),
+    onSuccess: async (_v, apptId) => {
+      await qc.invalidateQueries({ queryKey: ['patient-appointments', id] })
+      await qc.invalidateQueries({ queryKey: ['appointment', apptId] })
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
     },
     onError: (err) => message.error(apiError(err).message),
   })
@@ -640,49 +656,71 @@ export default function PatientDetailPage() {
                 loading={appts.isLoading}
                 dataSource={items}
                 locale={{ emptyText: <Empty description="نوبتی ثبت نشده است" /> }}
-                renderItem={(a) => (
-                  <List.Item
-                    style={{
-                      cursor: 'pointer',
-                      paddingInline: 16,
-                      background: selectedAppt === a.id ? themeToken.colorPrimaryBg : undefined,
-                    }}
-                    onClick={() => selectAppt(a.id)}
-                  >
-                    <Space
-                      style={{ width: '100%', justifyContent: 'space-between' }}
+                renderItem={(a) => {
+                  const stage = stageOf(a.stage)
+                  return (
+                    <List.Item
+                      style={{
+                        cursor: 'pointer',
+                        paddingInline: 16,
+                        background: selectedAppt === a.id ? themeToken.colorPrimaryBg : undefined,
+                      }}
+                      onClick={() => selectAppt(a.id)}
                     >
-                      <Space direction="vertical" size={0}>
-                        <Typography.Text strong>
-                          {formatJalali(a.scheduled_at)}
-                        </Typography.Text>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          ساعت {formatJalaliTime(a.scheduled_at)}
-                        </Typography.Text>
+                      <Space
+                        style={{ width: '100%', justifyContent: 'space-between' }}
+                      >
+                        <Space direction="vertical" size={0}>
+                          <Space size={6} wrap>
+                            <Typography.Text strong>
+                              {formatJalali(a.scheduled_at)}
+                            </Typography.Text>
+                            <Tag color={stage.color} style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '16px' }}>
+                              {stage.label}
+                            </Tag>
+                          </Space>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            ساعت {formatJalaliTime(a.scheduled_at)}
+                          </Typography.Text>
+                        </Space>
+                        <Space>
+                          {hasPerm('appointments.stage') && a.stage < LAST_STAGE && (
+                            <Tooltip title={`به مرحله «${stageOf(a.stage + 1).label}»`}>
+                              <Button
+                                size="small"
+                                type="text"
+                                icon={<DoubleLeftOutlined />}
+                                loading={advanceStage.isPending && advanceStage.variables === a.id}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  advanceStage.mutate(a.id)
+                                }}
+                              />
+                            </Tooltip>
+                          )}
+                          {isDoctor && (
+                            <Popconfirm
+                              title="نوبت به سبد بازیافت منتقل شود؟"
+                              onConfirm={(e) => {
+                                e?.stopPropagation()
+                                deleteAppt.mutate(a.id)
+                              }}
+                              onCancel={(e) => e?.stopPropagation()}
+                            >
+                              <Button
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </Popconfirm>
+                          )}
+                        </Space>
                       </Space>
-                      <Space>
-                        {isDoctor && (
-                          <Popconfirm
-                            title="نوبت به سبد بازیافت منتقل شود؟"
-                            onConfirm={(e) => {
-                              e?.stopPropagation()
-                              deleteAppt.mutate(a.id)
-                            }}
-                            onCancel={(e) => e?.stopPropagation()}
-                          >
-                            <Button
-                              size="small"
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </Popconfirm>
-                        )}
-                      </Space>
-                    </Space>
-                  </List.Item>
-                )}
+                    </List.Item>
+                  )
+                }}
               />
             </Card>
           )}

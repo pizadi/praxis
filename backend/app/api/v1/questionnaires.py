@@ -10,6 +10,7 @@ template edits later are reconciled at render time (client-side), with a
 clear-invalid-fields flow that goes through PATCH (re-validated).
 """
 
+import datetime as dt
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -308,22 +309,34 @@ async def _validate_answers_or_422(
 )
 async def list_patient_responses(
     patient_id: int,
+    date: dt.date | None = None,
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_perm("questionnaires.read")),
 ):
+    """`date` (YYYY-MM-DD) restricts to one APP_TIMEZONE day (created_at)
+    — used by the appointment view's «پرسش‌نامه‌های این روز» tab."""
     patient = await db.get(Patient, patient_id)
     if patient is None or patient.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Patient not found")
+    filters = [
+        QuestionnaireResponse.patient_id == patient_id,
+        QuestionnaireResponse.deleted_at.is_(None),
+        QuestionnaireTemplate.deleted_at.is_(None),
+    ]
+    if date:
+        from app.db.session import day_bounds
+
+        lo, hi = day_bounds(date)
+        filters += [
+            QuestionnaireResponse.created_at >= lo,
+            QuestionnaireResponse.created_at <= hi,
+        ]
     stmt = (
         select(QuestionnaireResponse)
         .join(QuestionnaireTemplate, QuestionnaireResponse.template_id == QuestionnaireTemplate.id)
-        .where(
-            QuestionnaireResponse.patient_id == patient_id,
-            QuestionnaireResponse.deleted_at.is_(None),
-            QuestionnaireTemplate.deleted_at.is_(None),
-        )
+        .where(*filters)
         .order_by(
             QuestionnaireResponse.created_at.desc(), QuestionnaireResponse.id.desc()
         )

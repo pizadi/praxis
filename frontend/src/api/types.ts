@@ -61,6 +61,7 @@ export interface Appointment {
   id: number
   patient_id: number
   scheduled_at: string
+  stage: number
   notes: string
   cm: string
   hx: string
@@ -77,6 +78,7 @@ export interface AppointmentBrief {
   id: number
   patient_id: number
   scheduled_at: string
+  stage: number
   patient_first_name: string
   patient_last_name: string
   patient_national_id: string

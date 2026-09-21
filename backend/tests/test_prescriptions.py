@@ -334,3 +334,46 @@ async def test_prescription_permission_gating(client):
         f"/api/v1/admin/trash/prescriptions/{rx['id']}", headers=auth(doctor)
     )
     assert r.status_code == 403
+
+
+async def test_prescriptions_date_filter(client):
+    """date= restricts to one APP_TIMEZONE day (prescribed_at) — the
+    appointment view's same-day prescriptions tab."""
+    import datetime as dt
+
+    from app.db.session import APP_TZ
+
+    token, _ = await login(client)
+    pid = await _mk_patient(client, token)
+
+    # one pre-dated prescription, one for "now" (defaults to the current time)
+    for at in ("2020-01-01T10:00:00+03:30", None):
+        body: dict = {"items": [{"name": "P1"}]}
+        if at:
+            body["prescribed_at"] = at
+        r = await client.post(
+            f"/api/v1/patients/{pid}/prescriptions", json=body, headers=auth(token)
+        )
+        assert r.status_code == 201, r.text
+
+    today = dt.datetime.now(APP_TZ).date().isoformat()
+    r = await client.get(
+        f"/api/v1/patients/{pid}/prescriptions",
+        params={"date": today},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 1
+
+    r = await client.get(
+        f"/api/v1/patients/{pid}/prescriptions",
+        params={"date": "2020-01-01"},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 1
+
+    r = await client.get(
+        f"/api/v1/patients/{pid}/prescriptions",
+        params={"date": "2019-12-31"},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 0

@@ -556,3 +556,36 @@ async def test_responses_report_endpoint(client):
         "/api/v1/questionnaires/responses?template_id=99999", headers=auth(admin)
     )
     assert r.status_code == 404
+
+
+async def test_responses_date_filter(client):
+    """date= restricts patient responses to one APP_TIMEZONE day — the
+    appointment view's same-day questionnaires tab."""
+    import datetime as dt
+
+    from app.db.session import APP_TZ
+
+    token, _ = await login(client)
+    tpl = await create_template(client, token)
+    pid = (await create_patient(client, token))["id"]
+    r = await client.post(
+        f"/api/v1/patients/{pid}/questionnaires",
+        json={"template_id": tpl["id"], "answers": {"pain_level": 2}},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+
+    today = dt.datetime.now(APP_TZ).date().isoformat()
+    r = await client.get(
+        f"/api/v1/patients/{pid}/questionnaires",
+        params={"date": today},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 1
+
+    r = await client.get(
+        f"/api/v1/patients/{pid}/questionnaires",
+        params={"date": "2001-01-01"},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 0

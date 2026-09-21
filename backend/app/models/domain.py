@@ -106,6 +106,26 @@ class Gender(enum.Enum):
     FEMALE = 1
 
 
+class AppointmentStage(int, enum.Enum):
+    """Linear visit pipeline, stored as SmallInteger (like patients.gender).
+
+    The UI advances/regresses one step at a time; the API enforces ±1.
+    """
+
+    RESERVED = 0
+    CHECKED_IN = 1
+    REFERRED = 2
+    FINISHED = 3
+
+
+STAGE_LABELS_FA: dict["AppointmentStage", str] = {
+    AppointmentStage.RESERVED: "رزرو شده",
+    AppointmentStage.CHECKED_IN: "پذیرش شده",
+    AppointmentStage.REFERRED: "ارجاع داده شده",
+    AppointmentStage.FINISHED: "پایان یافته",
+}
+
+
 class Patient(Base):
     __tablename__ = "patients"
     __table_args__ = (
@@ -162,6 +182,11 @@ class Appointment(Base):
     scheduled_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    # Visit stage (1.4): advanced/regressed explicitly via
+    # PATCH /appointments/{id}/stage (±1 step, perm appointments.stage).
+    stage: Mapped[AppointmentStage] = mapped_column(
+        SmallInteger, default=AppointmentStage.RESERVED, nullable=False
+    )
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     cm: Mapped[str] = mapped_column(Text, default="", nullable=False)
     hx: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -216,6 +241,9 @@ class Attachment(Base):
             unique=True,
             **partial_unique_where(),
         ),
+        # same-day visit lookups (files the patient has on an appointment's
+        # day) — also covers patient_id-only scans
+        Index("ix_attachments_patient_created_at", "patient_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -298,7 +326,13 @@ class QuestionnaireResponse(Base):
 
     __tablename__ = "questionnaire_responses"
     __table_args__ = (
-        Index("ix_questionnaire_responses_patient_id", "patient_id"),
+        # (patient_id, created_at) serves both patient-history and
+        # same-day visit lookups; replaces the plain patient_id index
+        Index(
+            "ix_questionnaire_responses_patient_created_at",
+            "patient_id",
+            "created_at",
+        ),
         Index("ix_questionnaire_responses_template_id", "template_id"),
     )
 
@@ -366,7 +400,9 @@ class Prescription(Base):
 
     __tablename__ = "prescriptions"
     __table_args__ = (
-        Index("ix_prescriptions_patient_id", "patient_id"),
+        # (patient_id, prescribed_at) serves both patient-history and
+        # same-day visit lookups; replaces the plain patient_id index
+        Index("ix_prescriptions_patient_prescribed_at", "patient_id", "prescribed_at"),
         Index("ix_prescriptions_source_appointment_id", "source_appointment_id"),
     )
 

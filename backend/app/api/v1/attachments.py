@@ -1,3 +1,5 @@
+import datetime as dt
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -41,20 +43,24 @@ async def _get_attachment_or_404(db: AsyncSession, attachment_id: int) -> Attach
 @router.get("/patients/{patient_id}/files", response_model=list[AttachmentOut])
 async def list_files(
     patient_id: int,
+    date: dt.date | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_perm("files.read")),
 ):
+    """`date` (YYYY-MM-DD) restricts to one APP_TIMEZONE day — used by the
+    appointment view's «فایل‌های این روز» tab."""
     from app.api.v1.patients import _get_or_404 as _patient_or_404
 
     await _patient_or_404(db, patient_id)
+    filters = [Attachment.patient_id == patient_id, Attachment.deleted_at.is_(None)]
+    if date:
+        from app.db.session import day_bounds
+
+        lo, hi = day_bounds(date)
+        filters += [Attachment.created_at >= lo, Attachment.created_at <= hi]
     rows = (
         await db.scalars(
-            select(Attachment)
-            .where(
-                Attachment.patient_id == patient_id,
-                Attachment.deleted_at.is_(None),
-            )
-            .order_by(Attachment.created_at.desc())
+            select(Attachment).where(*filters).order_by(Attachment.created_at.desc())
         )
     ).all()
     return list(rows)

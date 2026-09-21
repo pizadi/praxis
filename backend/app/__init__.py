@@ -60,6 +60,15 @@ Version history:
   1.3.0.dev5  prescription EDIT mode gets the trailing empty row too (new
          items were impossible to add when editing); taxonomies menu entry
          moved back to the management group
+  1.4.0  appointment visit stages (reserved → checked-in → referred →
+          finished) with ±1 advance/regress (regress confirmed, perm
+          appointments.stage for front-desk check-in); audit trail records
+          the real client IP behind the nginx proxy (X-Forwarded-For /
+          X-Real-IP); the appointment panel shows the patient's same-day
+          files, prescriptions and questionnaire responses («این روز»
+          tabs, APP_TZ day of the appointment; all-history views live on
+          the patient page); composite (patient_id, date) indexes on
+          attachments / questionnaire_responses / prescriptions
 """
 
-__version__ = "1.3.0.dev5"
+__version__ = "1.4.0"

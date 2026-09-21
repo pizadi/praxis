@@ -197,6 +197,7 @@ class AppointmentBrief(BaseModel):
     id: int
     patient_id: int
     scheduled_at: dt.datetime
+    stage: int
     patient_first_name: str
     patient_last_name: str
     patient_national_id: str
@@ -208,6 +209,7 @@ class AppointmentOut(BaseModel):
     id: int
     patient_id: int
     scheduled_at: dt.datetime
+    stage: int
     notes: str
     cm: str
     hx: str
@@ -218,6 +220,13 @@ class AppointmentOut(BaseModel):
     patient_national_id: str
     created_at: dt.datetime
     updated_at: dt.datetime
+
+
+class AppointmentStageChangeIn(BaseModel):
+    """One step along the visit pipeline (advance/regress); the server
+    computes the target stage and enforces the boundaries."""
+
+    direction: t.Literal["advance", "regress"]
 
 
 # --- Attachments -----------------------------------------------------------------
