@@ -16,6 +16,7 @@ import {
   DownloadOutlined,
   DeleteOutlined,
   FileZipOutlined,
+  LockOutlined,
 } from '@ant-design/icons'
 import type { RcFile } from 'antd/es/upload'
 
@@ -28,6 +29,11 @@ interface BackupStatus {
   finished_at: string | null
   error: string | null
   size_bytes: number | null
+  sha256: string | null
+  encrypted: boolean
+  last_backup_at: string | null
+  backup_stale: boolean | null
+  backup_stale_days: number
 }
 
 interface ImportSummary {
@@ -93,7 +99,8 @@ export default function BackupPage() {
       link.href = url
       const d = new Date()
       const p = (n: number) => String(n).padStart(2, '0')
-      link.download = `clinic-backup-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.tar.gz`
+      const suffix = status.data?.encrypted ? '.tar.gz.enc' : '.tar.gz'
+      link.download = `clinic-backup-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${suffix}`
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -119,10 +126,11 @@ export default function BackupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ist])
 
-  const doImport = async (f: RcFile, force: boolean) => {
+  const doImport = async (f: RcFile, force: boolean, sha256?: string) => {
     const fd = new FormData()
     fd.append('file', f)
     fd.append('force', force ? 'true' : 'false')
+    if (sha256) fd.append('expected_sha256', sha256)
     try {
       await api.post('/admin/backup/import', fd)
       message.success('واردسازی آغاز شد')
@@ -144,7 +152,7 @@ export default function BackupPage() {
           cancelText: 'انصراف',
           onOk: () => {
             const f2 = lastPicked.current
-            if (f2) void doImport(f2, true)
+            if (f2) void doImport(f2, true, sha256)
           },
         })
       } else {
@@ -153,10 +161,20 @@ export default function BackupPage() {
     }
   }
 
-  const pickImport = (f: RcFile) => {
+  const pickImport = async (f: RcFile) => {
     lastPicked.current = f
     setImportFile(f)
-    void doImport(f, false)
+    // client-side artifact checksum — the server verifies it before importing
+    let sha256: string | undefined
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', await f.arrayBuffer())
+      sha256 = Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    } catch {
+      sha256 = undefined // no WebCrypto (insecure context) — server check is optional
+    }
+    void doImport(f, false, sha256)
   }
 
   return (
@@ -191,6 +209,24 @@ export default function BackupPage() {
             <Typography.Text type="danger">
               خطا در ساخت پشتیبان: {status.data?.error}
             </Typography.Text>
+          )}
+
+          {st === 'ready' && (
+            <Alert
+              type={status.data?.encrypted ? 'success' : 'info'}
+              showIcon
+              icon={<LockOutlined />}
+              message={
+                status.data?.encrypted
+                  ? 'فایل پشتیبان رمزنگاری‌شده است (AES-256-GCM)'
+                  : 'فایل پشتیبان رمزنگاری نشده است — BACKUP_ENCRYPTION_KEY تنظیم نشده'
+              }
+              description={
+                <Typography.Text copyable style={{ fontSize: 12, direction: 'ltr' }}>
+                  SHA-256: {status.data?.sha256}
+                </Typography.Text>
+              }
+            />
           )}
 
           <Space wrap>
@@ -232,12 +268,12 @@ export default function BackupPage() {
         style={{ marginTop: 16 }}
         extra={
           <Upload
-            accept=".tar.gz,.tgz,application/gzip"
+            accept=".tar.gz,.tgz,.enc,application/gzip,application/octet-stream"
             maxCount={1}
             showUploadList={false}
             disabled={ist === 'importing'}
             beforeUpload={(f) => {
-              pickImport(f)
+              void pickImport(f)
               return false // POST via the axios client, with confirm-flow support
             }}
           >

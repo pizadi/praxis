@@ -60,7 +60,7 @@ Version history:
   1.3.0.dev5  prescription EDIT mode gets the trailing empty row too (new
          items were impossible to add when editing); taxonomies menu entry
          moved back to the management group
-  1.4.0  appointment visit stages (reserved → checked-in → referred →
+  1.3.0.dev6  appointment visit stages (reserved → checked-in → referred →
           finished) with ±1 advance/regress (regress confirmed, perm
           appointments.stage for front-desk check-in); audit trail records
           the real client IP behind the nginx proxy (X-Forwarded-For /
@@ -69,6 +69,15 @@ Version history:
           tabs, APP_TZ day of the appointment; all-history views live on
           the patient page); composite (patient_id, date) indexes on
           attachments / questionnaire_responses / prescriptions
+  1.3.0.dev7  backup tarballs: optional AES-256-GCM encryption
+          (BACKUP_ENCRYPTION_KEY — the artifact downloads as .enc, the
+          importer decrypts it), SHA-256 of the whole artifact in the
+          status + download header (optional expected_sha256 on import),
+          and member-level checksums in the manifest (schema_version 4,
+          verified member-by-member before the destructive import);
+          stale-backup warning banner for admins (BACKUP_STALE_DAYS,
+          default 7, 0 disables) driven by durable completion records in
+          the audit trail
 """
 
-__version__ = "1.4.0"
+__version__ = "1.3.0.dev7"

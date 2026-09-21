@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     app_timezone: str = "Asia/Tehran"
     api_v1_prefix: str = "/api/v1"
 
+    # --- Backup tarballs ---
+    # AES-256-GCM passphrase for downloaded artifacts (empty = no encryption).
+    # The key unlocks IMPORTS of encrypted tarballs too — losing it means
+    # losing the backups, so store it in a password manager.
+    backup_encryption_key: str = ""
+    # Stale-backup warning: when the last successful backup is older than
+    # this many days, admins see a banner (0 disables the warning).
+    backup_stale_days: int = 7
+
     # --- Bootstrap admin (created only if users table is empty) ---
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_password: str = "admin123"

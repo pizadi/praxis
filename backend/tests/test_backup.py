@@ -62,11 +62,16 @@ async def test_backup_full_flow(client):
             break
     assert status == "ready", r.text
     assert r.json()["size_bytes"] > 0
+    assert r.json()["sha256"]  # artifact checksum present
+    assert r.json()["encrypted"] is False
 
     # download and inspect the tarball
     r = await client.get("/api/v1/admin/backup/download", headers=auth(token))
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/gzip")
+    assert r.headers["x-checksum-sha256"] == (await client.get(
+        "/api/v1/admin/backup", headers=auth(token)
+    )).json()["sha256"]
     with tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz") as tar:
         names = tar.getnames()
         assert any(n == "manifest.json" for n in names)
@@ -76,6 +81,11 @@ async def test_backup_full_flow(client):
         assert manifest is not None
         content = manifest.read().decode()
         assert "patients" in content
+        # schema_version 4: member-level checksums
+        m = json.loads(content)
+        assert m["schema_version"] == 4
+        assert "db/clinic.sqlite3" in m["member_sha256"]
+        assert any(k.startswith("uploads/") for k in m["member_sha256"])
 
     # discard
     r = await client.delete("/api/v1/admin/backup", headers=auth(token))
@@ -83,12 +93,19 @@ async def test_backup_full_flow(client):
     r = await client.get("/api/v1/admin/backup/download", headers=auth(token))
     assert r.status_code == 409
 
-    # audit trail recorded both actions
+    # audit trail recorded all three: start (create), completion (backup),
+    # discard (delete)
     r = await client.get(
         "/api/v1/admin/audit", params={"entity_type": "backup"}, headers=auth(token)
     )
     assert r.status_code == 200
-    assert r.json()["total"] == 2
+    assert r.json()["total"] == 3
+    actions = {e["action"]: e for e in r.json()["items"]}
+    assert "create" in actions and "delete" in actions
+    # the completion row is written by the job thread as the system user
+    completion = actions.get("backup")
+    assert completion is not None
+    assert completion["username"] == "system"
 
 
 async def test_backup_receptionist_forbidden(client):
@@ -555,3 +572,279 @@ async def test_uploads_purge_removes_orphans_only(client):
     assert r.status_code == 200
     entries = r.json()["items"]
     assert entries and entries[0]["username"] == "system"
+
+
+async def test_backup_staleness_warning(client, monkeypatch):
+    """last_backup_at/staleness: never-backed-up → stale; a completed backup
+    clears it; BACKUP_STALE_DAYS=0 disables (null)."""
+    from app.core.config import settings as cfg
+
+    token, _ = await login(client)
+
+    # fresh test DB: no backup ever recorded → stale
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["backup_stale"] is True
+    assert r.json()["last_backup_at"] is None
+    assert r.json()["backup_stale_days"] == cfg.backup_stale_days
+
+    # disabled → null (UI hides the banner)
+    monkeypatch.setattr(cfg, "backup_stale_days", 0)
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["backup_stale"] is None
+    monkeypatch.setattr(cfg, "backup_stale_days", 7)
+
+    # run a backup → the completion record clears the staleness
+    r = await client.post("/api/v1/admin/backup", headers=auth(token))
+    assert r.status_code == 202
+    for _ in range(100):
+        r = await client.get("/api/v1/admin/backup", headers=auth(token))
+        if r.json()["status"] == "ready":
+            break
+    assert r.json()["backup_stale"] is False
+    assert r.json()["last_backup_at"] is not None
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+
+async def test_backup_encryption_round_trip(client, monkeypatch):
+    """With BACKUP_ENCRYPTION_KEY set: the artifact is AES-256-GCM encrypted
+    (plaintext never left on disk), checksummed, and imports back after
+    decryption — verifying the data + the checksum."""
+    import hashlib
+
+    from app.core.config import settings as cfg
+    from app.services.backup_crypto import decrypt_file
+
+    monkeypatch.setattr(cfg, "backup_encryption_key", "test-key-123")
+    token, _ = await login(client)
+    r = await client.post(
+        "/api/v1/patients",
+        json={"national_id": "1234567890", "first_name": "الف", "last_name": "ب",
+              "year_of_birth": "1370", "gender": 0},
+        headers=auth(token),
+    )
+    pid = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/patients/{pid}/files",
+        files={"file": ("enc.txt", io.BytesIO(b"encrypted-content"), "text/plain")},
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+
+    # build the encrypted artifact
+    r = await client.post("/api/v1/admin/backup", headers=auth(token))
+    assert r.status_code == 202
+    for _ in range(100):
+        st = (await client.get("/api/v1/admin/backup", headers=auth(token))).json()
+        if st["status"] == "ready":
+            break
+    assert st["encrypted"] is True
+    sha = st["sha256"]
+    assert sha
+
+    r = await client.get("/api/v1/admin/backup/download", headers=auth(token))
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert r.headers["x-checksum-sha256"] == sha
+    assert r.headers["content-disposition"].endswith('.tar.gz.enc"')
+    blob = r.content
+    assert blob[:9] == b"PRAXISBK\x01"
+    # the transferred bytes are exactly what the status checksummed
+    assert hashlib.sha256(blob).hexdigest() == sha
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+    # decrypt out-of-band → a valid v4 tarball with member hashes
+    with __import__("tempfile").TemporaryDirectory() as d:
+        enc_path = os.path.join(d, "b.tar.gz.enc")
+        plain_path = os.path.join(d, "b.tar.gz")
+        with open(enc_path, "wb") as f:
+            f.write(blob)
+        decrypt_file(enc_path, plain_path, "test-key-123")
+        with tarfile.open(plain_path, "r:gz") as tar:
+            manifest = json.loads(tar.extractfile("manifest.json").read().decode())
+            assert manifest["schema_version"] == 4
+            assert "db/clinic.sqlite3" in manifest["member_sha256"]
+
+    # destroy the data, then import the encrypted tarball WITH checksum check
+    r = await client.delete(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 204
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz.enc", io.BytesIO(blob), "application/octet-stream")},
+        data={"expected_sha256": sha},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+    r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 200
+    r = await client.get(f"/api/v1/patients/{pid}/files", headers=auth(token))
+    assert r.status_code == 200
+    fid = r.json()[0]["id"]
+    r = await client.get(f"/api/v1/files/{fid}/download", headers=auth(token))
+    assert r.status_code == 200 and r.content == b"encrypted-content"
+
+
+async def test_import_checksum_mismatch(client, monkeypatch):
+    from app.core.config import settings as cfg
+
+    monkeypatch.setattr(cfg, "backup_encryption_key", "")
+    token, _ = await login(client)
+    r = await client.post("/api/v1/admin/backup", headers=auth(token))
+    assert r.status_code == 202
+    for _ in range(100):
+        st = (await client.get("/api/v1/admin/backup", headers=auth(token))).json()
+        if st["status"] == "ready":
+            break
+    tarball = (await client.get("/api/v1/admin/backup/download", headers=auth(token))).content
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+    # wrong checksum → refuse BEFORE any import work
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", io.BytesIO(tarball), "application/gzip")},
+        data={"expected_sha256": "0" * 64},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "checksum_mismatch"
+
+    # correct checksum → accepted
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", io.BytesIO(tarball), "application/gzip")},
+        data={"expected_sha256": st["sha256"]},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+
+
+async def test_import_encrypted_backup_requires_key(client, monkeypatch):
+    """Encrypted artifact without a configured key (or with the wrong key)
+    refuses loudly; unconfigured state never tries to decrypt plaintexts."""
+    from app.core.config import settings as cfg
+
+    token, _ = await login(client)
+    monkeypatch.setattr(cfg, "backup_encryption_key", "right-key")
+    r = await client.post("/api/v1/admin/backup", headers=auth(token))
+    assert r.status_code == 202
+    for _ in range(100):
+        st = (await client.get("/api/v1/admin/backup", headers=auth(token))).json()
+        if st["status"] == "ready":
+            break
+    blob = (await client.get("/api/v1/admin/backup/download", headers=auth(token))).content
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+    # no key configured → refuse
+    monkeypatch.setattr(cfg, "backup_encryption_key", "")
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz.enc", io.BytesIO(blob), "application/octet-stream")},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "invalid_backup"
+    assert "BACKUP_ENCRYPTION_KEY" in r.json()["error"]["message"]
+
+    # wrong key → refuse
+    monkeypatch.setattr(cfg, "backup_encryption_key", "wrong-key")
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz.enc", io.BytesIO(blob), "application/octet-stream")},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "invalid_backup"
+
+    # right key → accepted
+    monkeypatch.setattr(cfg, "backup_encryption_key", "right-key")
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz.enc", io.BytesIO(blob), "application/octet-stream")},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+
+
+def test_verify_member_hashes_rejects_tampering(tmp_path):
+    """schema_version ≥ 4 member checksums: a corrupted or missing member
+    fails the pre-import verification loudly (before any DB work)."""
+    import hashlib as hl
+
+    from app.services.backup_import import _verify_member_hashes
+
+    p = tmp_path / "b.tar.gz"
+    member = b"1\tTamper\tProof\n"
+    good = hl.sha256(member).hexdigest()
+    with tarfile.open(p, "w:gz") as tar:
+        manifest = json.dumps({
+            "schema_version": 4, "tables": {},
+            "member_sha256": {"db/clinic.sqlite3": good},
+        }).encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(manifest)
+        tar.addfile(info, io.BytesIO(manifest))
+        info = tarfile.TarInfo(name="db/clinic.sqlite3")
+        info.size = len(member)
+        tar.addfile(info, io.BytesIO(member))
+
+    _verify_member_hashes(str(p), {"db/clinic.sqlite3": good})  # intact → passes
+
+    # corrupt the member (rebuild the tarball with different content)
+    with tarfile.open(p, "w:gz") as tar:
+        manifest = json.dumps({
+            "schema_version": 4, "tables": {},
+            "member_sha256": {"db/clinic.sqlite3": good},
+        }).encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(manifest)
+        tar.addfile(info, io.BytesIO(manifest))
+        bad = member + b"extra row\n"
+        info = tarfile.TarInfo(name="db/clinic.sqlite3")
+        info.size = len(bad)
+        tar.addfile(info, io.BytesIO(bad))
+    try:
+        _verify_member_hashes(str(p), {"db/clinic.sqlite3": good})
+        raise AssertionError("tampered member not detected")
+    except ValueError as e:
+        assert "checksum mismatch" in str(e)
+
+    # missing member
+    try:
+        _verify_member_hashes(str(p), {"db/nowhere.copy": good})
+        raise AssertionError("missing member not detected")
+    except ValueError as e:
+        assert "missing hashed members" in str(e)
+
+
+async def test_import_uploads_only_backup(client):
+    """A partial dump with NO db members (uploads-only) imports the files
+    without touching the DB. Regression: the PG path built an empty
+    'TRUNCATE  CASCADE' statement and crashed."""
+    manifest = json.dumps({
+        "schema_version": 3, "app_version": "1.0.0", "tables": {},
+    })
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(manifest)
+        tar.addfile(info, io.BytesIO(manifest.encode()))
+        data = b"uploads-only member"
+        info = tarfile.TarInfo(name="uploads/orphan.txt")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("u.tar.gz", buf.getvalue(), "application/gzip")},
+        headers=auth(token_holder := (await login(client))[0]),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token_holder)
+    assert done["status"] == "done", done
+    assert done["summary"]["uploads_moved"] == 1
+    assert done["summary"]["tables"] == {}

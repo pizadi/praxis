@@ -4,6 +4,7 @@ import { Layout, Menu, Button, Typography, theme as antdTheme } from 'antd'
 import { LogoutOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 
 import { clearAuth, api, getRefreshToken, hasPerm, type StoredUser } from '../api/client'
+import BackupStaleAlert from './BackupStaleAlert'
 import { roleFa } from '../lib/roles'
 import { NavGuardCtx, type NavBlocker } from './NavGuard'
 import { useTheme } from './ThemeContext'
@@ -158,6 +159,7 @@ export default function AppLayout({ user, onLogout }: Props) {
             />
           </Sider>
           <Content style={{ padding: 24, overflowY: 'auto', height: 'calc(100vh - 64px)' }}>
+            <BackupStaleAlert />
             <Outlet />
           </Content>
         </Layout>

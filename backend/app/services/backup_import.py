@@ -1,11 +1,15 @@
 """Restore DB + uploads from a backup tarball (upload-side of backup.py).
 
-Tarball layout (schema_version 3):
-    manifest.json          — {"schema_version": 3, "app_version": "1.3.0",
-                              "table_columns": {table: [cols...]}, ...}
+Tarball layout (schema_version 4):
+    manifest.json          — {"schema_version": 4, "app_version": "1.4.0",
+                              "table_columns": {table: [cols...]},
+                              "member_sha256": {member: hex}, ...}
     db/<table>.copy        — PostgreSQL COPY data (one file per table), or
     db/clinic.sqlite3      — SQLite (dev): the raw database file
     uploads/<name>         — the uploaded patient files (flat or nested)
+
+The whole ARTIFACT may additionally be encrypted (PRAXISBK magic, AES-256-
+GCM, see backup_crypto.py) — decrypted before the tarball is seen here.
 
 Import semantics:
 - PostgreSQL: ONE transaction — TRUNCATE every domain table, then COPY each
@@ -45,7 +49,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.services.backup_state import DUMP_TABLES
 
-SUPPORTED_SCHEMA_VERSION = 3
+SUPPORTED_SCHEMA_VERSION = 4
 
 # hard caps for hostile/buggy tarballs (admins upload, but still)
 MAX_MEMBER_BYTES = 4 * 1024 * 1024 * 1024  # 4 GiB per member
@@ -112,9 +116,48 @@ def read_manifest(path: str) -> dict:
     return manifest
 
 
+def _verify_member_hashes(tar_path: str, expected: dict[str, str]) -> None:
+    """Fail fast on any corrupted/tampered member BEFORE the destructive
+    DB transaction (schema_version ≥ 4 manifests carry member_sha256).
+
+    One extra streaming pass over the archive, but an import is rare and
+    the loud-early failure beats a mid-COPY rollback.
+    """
+    import hashlib
+
+    if not expected:
+        return
+    remaining = {name.lstrip("./"): hexdigest for name, hexdigest in expected.items()}
+    with tarfile.open(tar_path, "r:gz") as tar:
+        for m in tar:
+            name = m.name.lstrip("./")
+            if name not in remaining or m.isdir():
+                continue
+            want = remaining.pop(name)
+            f = tar.extractfile(m)
+            if f is None:
+                raise ValueError(f"member is not a regular file: {m.name}")
+            h = hashlib.sha256()
+            while chunk := f.read(1024 * 1024):
+                h.update(chunk)
+            actual = h.hexdigest()
+            if actual != want:
+                raise ValueError(
+                    f"checksum mismatch for {m.name} — the tarball is corrupted "
+                    f"(expected {want[:12]}…, got {actual[:12]}…)"
+                )
+            if not remaining:
+                return
+    if remaining:
+        raise ValueError(f"tarball is missing hashed members: {sorted(remaining)}")
+
+
 def run_import(tar_path: str) -> dict:
     """Execute the import; raises on any unresolvable error (the caller's
     DB transaction/lock discipline makes failures non-destructive)."""
+    manifest = read_manifest(tar_path)
+    _verify_member_hashes(tar_path, manifest.get("member_sha256") or {})
+
     summary = (
         _import_postgres(tar_path)
         if settings.database_url.startswith("postgres")
@@ -188,16 +231,20 @@ def _import_postgres(tar_path: str) -> dict:
 
                 # destructive part starts here; any error → ROLLBACK below.
                 # only tables the dump actually carries are replaced — tables
-                # absent from an older dump keep their current data
+                # absent from an older dump keep their current data (an
+                # uploads-only dump has no db members at all: nothing to
+                # truncate — an empty TRUNCATE list is a syntax error)
                 dumped_tables = {
                     m.name.lstrip("./")[len("db/") : -len(".copy")]
                     for m in tar
                     if m.name.lstrip("./").startswith("db/")
                     and m.name.lstrip("./").endswith(".copy")
                 }
-                cur.execute(
-                    f'TRUNCATE {", ".join(existing & dumped_tables)} CASCADE'  # noqa: S608
-                )
+                to_replace = existing & dumped_tables
+                if to_replace:
+                    cur.execute(
+                        f'TRUNCATE {", ".join(to_replace)} CASCADE'  # noqa: S608
+                    )
 
                 loaded: dict[str, int] = {}
                 skew: dict[str, dict] = {}

@@ -51,6 +51,8 @@ services:
       CLINIC_ENV: production
       LOGIN_MAX_FAILURES: ${LOGIN_MAX_FAILURES:-5}
       LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES:-15}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_STALE_DAYS: ${BACKUP_STALE_DAYS:-7}
       TZ: ${APP_TIMEZONE}
     volumes:
       # On the Pi: use an SSD-backed bind mount or named volume for files.
