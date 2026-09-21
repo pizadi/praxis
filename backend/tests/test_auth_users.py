@@ -148,6 +148,42 @@ async def test_logout_writes_audit_row(client):
     assert items[0]["username"] == "admin"
 
 
+async def test_bootstrap_heals_admin_role_permissions(client):
+    """The admin role is UI-locked, so bootstrap keeps it at the full catalog.
+
+    Heals databases whose roles were seeded before a permission existed
+    (create_all-built DBs are stamped at head — data migrations never run).
+    Editable system roles (doctor) must NOT be force-updated.
+    """
+    import json
+
+    from sqlalchemy import select
+
+    from app.db.session import SessionLocal
+    from app.main import ensure_system_roles
+    from app.models import Role
+
+    async with SessionLocal() as db:
+        await db.execute(
+            text("UPDATE roles SET permissions_json = :j WHERE name = 'admin'"),
+            {"j": json.dumps(["patients.read"])},
+        )
+        await db.execute(
+            text("UPDATE roles SET permissions_json = :j WHERE name = 'doctor'"),
+            {"j": json.dumps(["patients.read"])},
+        )
+        await db.commit()
+
+        await ensure_system_roles(db)
+
+        admin = await db.scalar(select(Role).where(Role.name == "admin"))
+        assert "patients.read" in json.loads(admin.permissions_json)
+        assert "users.manage" in json.loads(admin.permissions_json)
+        # editable role: bootstrap seeding never rewrites existing rows
+        doctor = await db.scalar(select(Role).where(Role.name == "doctor"))
+        assert json.loads(doctor.permissions_json) == ["patients.read"]
+
+
 async def test_user_crud_and_roles(client):
     admin = await login(client)
     token = admin[0]
