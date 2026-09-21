@@ -46,6 +46,13 @@ Version history:
          scripts/snapshot_db.py (pg_dump via docker exec / sqlite copy)
          and scripts/purge_db.py (full reset incl. users, snapshot-gated,
          admin re-bootstrapped, optional --uploads wipe)
+  1.3.0.dev3  bootstrap keeps the UI-locked admin role at the full permission
+         catalog (heals stamped/pre-1.3-seeded DBs); the UI refetches
+         /auth/me on every load (cached-permission staleness); prescription
+         items dictionary panel on the taxonomies page; unused JWT role
+         claim removed; route-level code splitting (antd/vendor/dayjs
+         chunks); stale artifacts removed, single nginx config source, MIT
+         license
 """
 
-__version__ = "1.3.0.dev2"
+__version__ = "1.3.0.dev3"
