@@ -22,6 +22,7 @@ PERMISSION_CATALOG: list[tuple[str, list[tuple[str, str]]]] = [
             ("appointments.read", "مشاهده نوبت‌ها"),
             ("appointments.create", "ثبت نوبت"),
             ("appointments.update", "ویرایش نوبت"),
+            ("appointments.stage", "تغییر مرحله نوبت"),
             ("appointments.delete", "حذف نوبت"),
         ],
     ),
@@ -46,6 +47,13 @@ PERMISSION_CATALOG: list[tuple[str, list[tuple[str, str]]]] = [
         "اطلاعات پزشکی",
         [
             ("medical_notes.view", "مشاهده یادداشت‌های پزشکی"),
+        ],
+    ),
+    (
+        "نسخ‌ها",
+        [
+            ("prescriptions.read", "مشاهده نسخ‌ها"),
+            ("prescriptions.write", "ثبت و ویرایش نسخ‌ها"),
         ],
     ),
     (
@@ -101,6 +109,7 @@ _DOCTOR_PERMS = [
     "appointments.read",
     "appointments.create",
     "appointments.update",
+    "appointments.stage",
     "appointments.delete",
     "files.read",
     "files.write",
@@ -116,14 +125,16 @@ _DOCTOR_PERMS = [
     "taxonomies.write",
     "trash.view",
     "trash.restore",
+    "prescriptions.read",
+    "prescriptions.write",
 ]
-
 _RECEPTIONIST_PERMS = [
     "patients.read",
     "patients.create",
     "patients.update",
     "appointments.read",
     "appointments.create",
+    "appointments.stage",
     "files.read",
     "transactions.read",
     "transactions.write",

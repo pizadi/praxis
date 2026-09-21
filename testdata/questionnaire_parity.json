@@ -1,0 +1,1429 @@
+{
+  "$schema": "questionnaire-parity-corpus-v1",
+  "description": "Shared conformance corpus for the questionnaire validators — consumed by backend/tests/parity/test_questionnaire_parity.py (pytest) AND frontend/src/parity/questionnaire.parity.test.ts (vitest). Both languages MUST agree on every case: the server is authoritative, the TS mirror drives the builder's live checks. Edit only together with both validators.",
+  "float_rule": "both sides use IEEE754 doubles with identical operations — exact equality",
+  "templates": {
+    "two_numbers": {
+      "version": 1,
+      "title": "t",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "type": "number"
+        }
+      ]
+    },
+    "neg_number": {
+      "version": 1,
+      "title": "t",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number",
+          "min": -5,
+          "max": 5
+        }
+      ]
+    },
+    "number_and_choice": {
+      "version": 1,
+      "title": "t",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "integer": true
+        },
+        {
+          "key": "c",
+          "label": "C",
+          "type": "choice",
+          "options": [
+            {
+              "value": "lo",
+              "label": "low",
+              "score": 1
+            },
+            {
+              "value": "hi",
+              "label": "high",
+              "score": 4
+            },
+            {
+              "value": "none",
+              "label": "none",
+              "score": null
+            }
+          ]
+        }
+      ]
+    },
+    "choice_only": {
+      "version": 1,
+      "title": "t",
+      "questions": [
+        {
+          "key": "c",
+          "label": "C",
+          "type": "choice",
+          "options": [
+            {
+              "value": "bad",
+              "label": "bad",
+              "score": 0
+            },
+            {
+              "value": "good",
+              "label": "good",
+              "score": 3
+            }
+          ]
+        }
+      ]
+    },
+    "named_abs": {
+      "version": 1,
+      "title": "t",
+      "questions": [
+        {
+          "key": "abs",
+          "label": "A",
+          "type": "number",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "type": "number"
+        }
+      ]
+    }
+  },
+  "formula_evaluation": [
+    {
+      "name": "single ref",
+      "template": "two_numbers",
+      "formula": "a",
+      "answers": {
+        "a": 7,
+        "b": 1
+      },
+      "expected": 7
+    },
+    {
+      "name": "add",
+      "template": "two_numbers",
+      "formula": "a + b",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 5
+    },
+    {
+      "name": "subtract",
+      "template": "two_numbers",
+      "formula": "a - b",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": -1
+    },
+    {
+      "name": "multiply",
+      "template": "two_numbers",
+      "formula": "a * b",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 6
+    },
+    {
+      "name": "divide",
+      "template": "two_numbers",
+      "formula": "a / b",
+      "answers": {
+        "a": 7,
+        "b": 2
+      },
+      "expected": 3.5
+    },
+    {
+      "name": "precedence * over +",
+      "template": "two_numbers",
+      "formula": "a + b * 2",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 8
+    },
+    {
+      "name": "parens override",
+      "template": "two_numbers",
+      "formula": "(a + b) * 2",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 10
+    },
+    {
+      "name": "left assoc minus",
+      "template": "two_numbers",
+      "formula": "10 - 4 - 3",
+      "answers": {},
+      "expected": 3
+    },
+    {
+      "name": "left assoc divide",
+      "template": "two_numbers",
+      "formula": "100 / 10 / 2",
+      "answers": {},
+      "expected": 5
+    },
+    {
+      "name": "mixed terms",
+      "template": "two_numbers",
+      "formula": "a + b * 2 - a / 2",
+      "answers": {
+        "a": 4,
+        "b": 1
+      },
+      "expected": 4
+    },
+    {
+      "name": "unary minus",
+      "template": "neg_number",
+      "formula": "-a",
+      "answers": {
+        "a": 3
+      },
+      "expected": -3
+    },
+    {
+      "name": "unary plus",
+      "template": "neg_number",
+      "formula": "+a",
+      "answers": {
+        "a": 3
+      },
+      "expected": 3
+    },
+    {
+      "name": "double unary",
+      "template": "neg_number",
+      "formula": "- -a",
+      "answers": {
+        "a": 3
+      },
+      "expected": 3
+    },
+    {
+      "name": "unary in expr",
+      "template": "neg_number",
+      "formula": "-a + 1",
+      "answers": {
+        "a": 3
+      },
+      "expected": -2
+    },
+    {
+      "name": "unary of paren",
+      "template": "neg_number",
+      "formula": "-(a - 1)",
+      "answers": {
+        "a": 3
+      },
+      "expected": -2
+    },
+    {
+      "name": "nested parens",
+      "template": "two_numbers",
+      "formula": "((a))",
+      "answers": {
+        "a": 5
+      },
+      "expected": 5
+    },
+    {
+      "name": "two products",
+      "template": "two_numbers",
+      "formula": "(a + b) * (a - b)",
+      "answers": {
+        "a": 5,
+        "b": 1
+      },
+      "expected": 24
+    },
+    {
+      "name": "min two",
+      "template": "two_numbers",
+      "formula": "min(a, b)",
+      "answers": {
+        "a": 2,
+        "b": 9
+      },
+      "expected": 2
+    },
+    {
+      "name": "max two",
+      "template": "two_numbers",
+      "formula": "max(a, b)",
+      "answers": {
+        "a": 2,
+        "b": 9
+      },
+      "expected": 9
+    },
+    {
+      "name": "min three with literal",
+      "template": "two_numbers",
+      "formula": "min(a, b, 5)",
+      "answers": {
+        "a": 7,
+        "b": 9
+      },
+      "expected": 5
+    },
+    {
+      "name": "max single arg",
+      "template": "two_numbers",
+      "formula": "max(a)",
+      "answers": {
+        "a": 7,
+        "b": 9
+      },
+      "expected": 7
+    },
+    {
+      "name": "abs expr",
+      "template": "neg_number",
+      "formula": "abs(0 - a)",
+      "answers": {
+        "a": 3
+      },
+      "expected": 3
+    },
+    {
+      "name": "abs ref",
+      "template": "neg_number",
+      "formula": "abs(a)",
+      "answers": {
+        "a": -3
+      },
+      "expected": 3
+    },
+    {
+      "name": "nested calls",
+      "template": "two_numbers",
+      "formula": "max(min(a, b), 0)",
+      "answers": {
+        "a": 7,
+        "b": 9
+      },
+      "expected": 7
+    },
+    {
+      "name": "decimal literal",
+      "template": "two_numbers",
+      "formula": "a + 0.5",
+      "answers": {
+        "a": 1,
+        "b": 2
+      },
+      "expected": 1.5
+    },
+    {
+      "name": "decimal multiply",
+      "template": "two_numbers",
+      "formula": "2.5 * a",
+      "answers": {
+        "a": 4,
+        "b": 2
+      },
+      "expected": 10
+    },
+    {
+      "name": "leading literal",
+      "template": "two_numbers",
+      "formula": "0.25 * a",
+      "answers": {
+        "a": 8,
+        "b": 2
+      },
+      "expected": 2
+    },
+    {
+      "name": "float 0.1+0.2",
+      "template": "two_numbers",
+      "formula": "0.1 + 0.2",
+      "answers": {},
+      "expected": 0.30000000000000004
+    },
+    {
+      "name": "float divide",
+      "template": "two_numbers",
+      "formula": "1 / 3",
+      "answers": {},
+      "expected": 0.3333333333333333
+    },
+    {
+      "name": "div by zero literal",
+      "template": "two_numbers",
+      "formula": "a / 0",
+      "answers": {
+        "a": 5,
+        "b": 2
+      },
+      "expected": null
+    },
+    {
+      "name": "div by zero answer",
+      "template": "two_numbers",
+      "formula": "a / b",
+      "answers": {
+        "a": 5,
+        "b": 0
+      },
+      "expected": null
+    },
+    {
+      "name": "no answers",
+      "template": "two_numbers",
+      "formula": "a + b",
+      "answers": {},
+      "expected": null
+    },
+    {
+      "name": "partial answers",
+      "template": "two_numbers",
+      "formula": "a + b",
+      "answers": {
+        "a": 1
+      },
+      "expected": null
+    },
+    {
+      "name": "null answer",
+      "template": "two_numbers",
+      "formula": "a + b",
+      "answers": {
+        "a": null,
+        "b": 2
+      },
+      "expected": null
+    },
+    {
+      "name": "wrong-type answer",
+      "template": "two_numbers",
+      "formula": "a + b",
+      "answers": {
+        "a": "5",
+        "b": 2
+      },
+      "expected": null
+    },
+    {
+      "name": "bool answer",
+      "template": "two_numbers",
+      "formula": "a + b",
+      "answers": {
+        "a": true,
+        "b": 2
+      },
+      "expected": null
+    },
+    {
+      "name": "choice score",
+      "template": "number_and_choice",
+      "formula": "c",
+      "answers": {
+        "c": "hi"
+      },
+      "expected": 4
+    },
+    {
+      "name": "choice score low",
+      "template": "number_and_choice",
+      "formula": "c",
+      "answers": {
+        "c": "lo"
+      },
+      "expected": 1
+    },
+    {
+      "name": "choice null score",
+      "template": "number_and_choice",
+      "formula": "c",
+      "answers": {
+        "c": "none"
+      },
+      "expected": null
+    },
+    {
+      "name": "choice invalid value",
+      "template": "number_and_choice",
+      "formula": "c",
+      "answers": {
+        "c": "nope"
+      },
+      "expected": null
+    },
+    {
+      "name": "choice non-string",
+      "template": "number_and_choice",
+      "formula": "c",
+      "answers": {
+        "c": 4
+      },
+      "expected": null
+    },
+    {
+      "name": "mixed number+choice",
+      "template": "number_and_choice",
+      "formula": "a + c",
+      "answers": {
+        "a": 10,
+        "c": "hi"
+      },
+      "expected": 14
+    },
+    {
+      "name": "mixed with missing choice",
+      "template": "number_and_choice",
+      "formula": "a + c",
+      "answers": {
+        "a": 10
+      },
+      "expected": null
+    },
+    {
+      "name": "ref named abs",
+      "template": "named_abs",
+      "formula": "abs + b",
+      "answers": {
+        "abs": 6,
+        "b": 1
+      },
+      "expected": 7
+    },
+    {
+      "name": "whitespace",
+      "template": "two_numbers",
+      "formula": "  a   +\t b ",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 5
+    },
+    {
+      "name": "newlines",
+      "template": "two_numbers",
+      "formula": "a +\nb",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 5
+    },
+    {
+      "name": "empty formula",
+      "template": "two_numbers",
+      "formula": "",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": null
+    },
+    {
+      "name": "blank formula",
+      "template": "two_numbers",
+      "formula": "   ",
+      "answers": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": null
+    },
+    {
+      "name": "large result",
+      "template": "two_numbers",
+      "formula": "a * 1000000",
+      "answers": {
+        "a": 123,
+        "b": 1
+      },
+      "expected": 123000000
+    },
+    {
+      "name": "negative result",
+      "template": "neg_number",
+      "formula": "a - 10",
+      "answers": {
+        "a": 3
+      },
+      "expected": -7
+    },
+    {
+      "name": "depth 99 parens valid",
+      "template": "two_numbers",
+      "formula": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "answers": {
+        "a": 4,
+        "b": 1
+      },
+      "expected": 4
+    },
+    {
+      "name": "length 1000 valid",
+      "template": "two_numbers",
+      "formula": "a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+11",
+      "answers": {
+        "a": 2,
+        "b": 1
+      },
+      "expected": 1009
+    }
+  ],
+  "formula_validation": [
+    {
+      "name": "valid simple",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + 1",
+      "valid": true
+    },
+    {
+      "name": "empty formula valid",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "",
+      "valid": true
+    },
+    {
+      "name": "unknown key",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "nope + 1",
+      "valid": false
+    },
+    {
+      "name": "string question ref",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        },
+        {
+          "key": "s",
+          "label": "S",
+          "type": "string"
+        }
+      ],
+      "formula": "a + s",
+      "valid": false
+    },
+    {
+      "name": "unknown function",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "clamp(a, 0, 1)",
+      "valid": false
+    },
+    {
+      "name": "abs wrong arity",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "abs(a, 2)",
+      "valid": false
+    },
+    {
+      "name": "min zero args",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "min()",
+      "valid": false
+    },
+    {
+      "name": "syntax: dangling op",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a +",
+      "valid": false
+    },
+    {
+      "name": "syntax: double op",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a +* 1",
+      "valid": false
+    },
+    {
+      "name": "syntax: unclosed paren",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "(a",
+      "valid": false
+    },
+    {
+      "name": "syntax: trailing paren",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a)",
+      "valid": false
+    },
+    {
+      "name": "syntax: missing operand",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a 2",
+      "valid": false
+    },
+    {
+      "name": "syntax: trailing dot",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "2.",
+      "valid": false
+    },
+    {
+      "name": "syntax: unicode char",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + ة",
+      "valid": false
+    },
+    {
+      "name": "syntax: empty parens",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "()",
+      "valid": false
+    },
+    {
+      "name": "length 999 ok",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a",
+      "valid": true
+    },
+    {
+      "name": "length 1000 ok",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+11",
+      "valid": true
+    },
+    {
+      "name": "length 1001 rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+111",
+      "valid": false
+    },
+    {
+      "name": "depth 99 parens ok",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "valid": true
+    },
+    {
+      "name": "depth 100 parens rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "valid": false
+    },
+    {
+      "name": "ref without paren stays ref",
+      "questions": [
+        {
+          "key": "min",
+          "label": "M",
+          "type": "number"
+        }
+      ],
+      "formula": "min + 1",
+      "valid": true
+    },
+    {
+      "name": "literal-only call valid",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "min(1)",
+      "valid": true
+    }
+  ],
+  "answer_validation": [
+    {
+      "name": "all good",
+      "template": "number_and_choice",
+      "answers": {
+        "a": 50,
+        "c": "hi"
+      },
+      "errors": {}
+    },
+    {
+      "name": "exact min/max ok",
+      "template": "two_numbers",
+      "answers": {
+        "a": 0
+      },
+      "errors": {}
+    },
+    {
+      "name": "absent answers ok",
+      "template": "number_and_choice",
+      "answers": {},
+      "errors": {}
+    },
+    {
+      "name": "null answers ok",
+      "template": "number_and_choice",
+      "answers": {
+        "a": null,
+        "c": null
+      },
+      "errors": {}
+    },
+    {
+      "name": "number: string rejected",
+      "template": "two_numbers",
+      "answers": {
+        "a": "5"
+      },
+      "errors": {
+        "a": "must be a number"
+      }
+    },
+    {
+      "name": "number: bool rejected",
+      "template": "two_numbers",
+      "answers": {
+        "a": true
+      },
+      "errors": {
+        "a": "must be a number"
+      }
+    },
+    {
+      "name": "number: integer required",
+      "template": "number_and_choice",
+      "answers": {
+        "c": "hi"
+      },
+      "errors": {}
+    },
+    {
+      "name": "integer violation",
+      "template": "number_and_choice",
+      "answers": {
+        "a": 1.5
+      },
+      "errors": {
+        "a": "must be an integer"
+      }
+    },
+    {
+      "name": "range below",
+      "template": "two_numbers",
+      "answers": {
+        "a": -1
+      },
+      "errors": {
+        "a": "must be between 0.0 and 100.0"
+      }
+    },
+    {
+      "name": "range above",
+      "template": "two_numbers",
+      "answers": {
+        "a": 101
+      },
+      "errors": {
+        "a": "must be between 0.0 and 100.0"
+      }
+    },
+    {
+      "name": "negative bounds ok",
+      "template": "neg_number",
+      "answers": {
+        "a": -5
+      },
+      "errors": {}
+    },
+    {
+      "name": "negative bounds below",
+      "template": "neg_number",
+      "answers": {
+        "a": -6
+      },
+      "errors": {
+        "a": "must be between -5.0 and 5.0"
+      }
+    },
+    {
+      "name": "choice unknown value",
+      "template": "choice_only",
+      "answers": {
+        "c": "nope"
+      },
+      "errors": {
+        "c": "must be one of the listed options"
+      }
+    },
+    {
+      "name": "choice non-string",
+      "template": "choice_only",
+      "answers": {
+        "c": 3
+      },
+      "errors": {
+        "c": "must be one of the listed options"
+      }
+    },
+    {
+      "name": "choice valid",
+      "template": "choice_only",
+      "answers": {
+        "c": "good"
+      },
+      "errors": {}
+    },
+    {
+      "name": "unknown key",
+      "template": "choice_only",
+      "answers": {
+        "bogus": 1
+      },
+      "errors": {
+        "bogus": "unknown question key"
+      }
+    },
+    {
+      "name": "multiple errors",
+      "template": "number_and_choice",
+      "answers": {
+        "a": "x",
+        "c": "nope",
+        "zz": 1
+      },
+      "errors": {
+        "a": "must be a number",
+        "c": "must be one of the listed options",
+        "zz": "unknown question key"
+      }
+    }
+  ],
+  "format_validation": [
+    {
+      "name": "valid minimal",
+      "format": {
+        "version": 1,
+        "title": "t",
+        "questions": [
+          {
+            "key": "a",
+            "label": "A",
+            "type": "number"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "valid full",
+      "format": {
+        "version": 1,
+        "title": "t",
+        "questions": [
+          {
+            "key": "a",
+            "label": "A",
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "integer": true
+          },
+          {
+            "key": "c",
+            "label": "C",
+            "type": "choice",
+            "options": [
+              {
+                "value": "lo",
+                "label": "low",
+                "score": 1
+              },
+              {
+                "value": "hi",
+                "label": "high",
+                "score": 4
+              },
+              {
+                "value": "none",
+                "label": "none",
+                "score": null
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "valid with formula",
+      "format": {
+        "version": 1,
+        "title": "t",
+        "questions": [
+          {
+            "key": "a",
+            "label": "A",
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "integer": true
+          },
+          {
+            "key": "c",
+            "label": "C",
+            "type": "choice",
+            "options": [
+              {
+                "value": "lo",
+                "label": "low",
+                "score": 1
+              },
+              {
+                "value": "hi",
+                "label": "high",
+                "score": 4
+              },
+              {
+                "value": "none",
+                "label": "none",
+                "score": null
+              }
+            ]
+          }
+        ],
+        "score_formula": "a + c"
+      },
+      "valid": true
+    },
+    {
+      "name": "formula unknown key",
+      "format": {
+        "version": 1,
+        "title": "t",
+        "questions": [
+          {
+            "key": "a",
+            "label": "A",
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "integer": true
+          },
+          {
+            "key": "c",
+            "label": "C",
+            "type": "choice",
+            "options": [
+              {
+                "value": "lo",
+                "label": "low",
+                "score": 1
+              },
+              {
+                "value": "hi",
+                "label": "high",
+                "score": 4
+              },
+              {
+                "value": "none",
+                "label": "none",
+                "score": null
+              }
+            ]
+          }
+        ],
+        "score_formula": "nope"
+      },
+      "valid": false
+    },
+    {
+      "name": "formula string ref",
+      "format": {
+        "version": 1,
+        "title": "t",
+        "questions": [
+          {
+            "key": "a",
+            "label": "A",
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "integer": true
+          },
+          {
+            "key": "c",
+            "label": "C",
+            "type": "choice",
+            "options": [
+              {
+                "value": "lo",
+                "label": "low",
+                "score": 1
+              },
+              {
+                "value": "hi",
+                "label": "high",
+                "score": 4
+              },
+              {
+                "value": "none",
+                "label": "none",
+                "score": null
+              }
+            ]
+          }
+        ],
+        "score_formula": "a + s"
+      },
+      "valid": false
+    },
+    {
+      "name": "bad key",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "Has Space",
+            "label": "x",
+            "type": "string"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "empty questions",
+      "format": {
+        "version": 1,
+        "questions": []
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicate keys",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "a",
+            "label": "x",
+            "type": "string"
+          },
+          {
+            "key": "a",
+            "label": "y",
+            "type": "string"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "min > max",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "n",
+            "label": "x",
+            "type": "number",
+            "min": 10,
+            "max": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "one option",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "c",
+            "label": "x",
+            "type": "choice",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicate option values",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "c",
+            "label": "x",
+            "type": "choice",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "a",
+                "label": "A2"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown question type",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "s",
+            "label": "x",
+            "type": "boolean"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "extra top-level key",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "s",
+            "label": "x",
+            "type": "string"
+          }
+        ],
+        "huh": 1
+      },
+      "valid": false
+    },
+    {
+      "name": "extra question key",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "s",
+            "label": "x",
+            "type": "string",
+            "bogus": 1
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "empty label",
+      "format": {
+        "version": 1,
+        "questions": [
+          {
+            "key": "s",
+            "label": "",
+            "type": "string"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "formula too long",
+      "format": {
+        "version": 1,
+        "title": "t",
+        "questions": [
+          {
+            "key": "a",
+            "label": "A",
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "integer": true
+          },
+          {
+            "key": "c",
+            "label": "C",
+            "type": "choice",
+            "options": [
+              {
+                "value": "lo",
+                "label": "low",
+                "score": 1
+              },
+              {
+                "value": "hi",
+                "label": "high",
+                "score": 4
+              },
+              {
+                "value": "none",
+                "label": "none",
+                "score": null
+              }
+            ]
+          }
+        ],
+        "score_formula": "a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +a +"
+      },
+      "valid": false
+    }
+  ],
+  "error_string_contract": [
+    "must be a number",
+    "must be an integer",
+    "must be between 0.0 and 100.0",
+    "must be between -5.0 and 5.0",
+    "must be one of the listed options",
+    "unknown question key",
+    "must be a string",
+    "max length 5"
+  ]
+}

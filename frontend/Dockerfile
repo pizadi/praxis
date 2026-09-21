@@ -12,4 +12,4 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /src/dist /usr/share/nginx/html
-COPY nginx-spa.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf

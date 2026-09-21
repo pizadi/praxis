@@ -87,6 +87,8 @@ export function faAnswerError(msg: string): string {
       return 'مقدار عددی نیست'
     case 'must be an integer':
       return 'باید عدد صحیح باشد'
+    case 'must be a string':
+      return 'مقدار متنی نیست'
     case 'must be one of the listed options':
       return 'گزینه نامعتبر'
     case 'unknown question key':
@@ -149,6 +151,11 @@ type FNode =
 
 type FToken = { kind: 'num' | 'ident' | 'op'; value: number | string }
 
+// keep in sync with backend app/services/scoring.py — the builder's live
+// check must reject exactly what the server will refuse (422)
+export const MAX_FORMULA_LENGTH = 1000
+export const MAX_DEPTH = 100
+
 const FA_NUM_RE = /^\d+(?:\.\d+)?$/
 
 function tokenizeFormula(text: string): FToken[] {
@@ -186,6 +193,7 @@ function tokenizeFormula(text: string): FToken[] {
 class FormulaParser {
   private toks: FToken[]
   private pos = 0
+  private depth = 0
 
   constructor(toks: FToken[]) {
     this.toks = toks
@@ -235,32 +243,38 @@ class FormulaParser {
   }
 
   private factor(): FNode {
-    const t = this.peek()
-    if (!t) throw new Error('فرمول ناتمام است')
-    if (t.kind === 'num') {
-      this.pos += 1
-      return { k: 'num', v: t.value as number }
-    }
-    if (t.kind === 'op' && t.value === '(') {
-      this.pos += 1
-      const node = this.expr()
-      this.expectOp(')')
-      return node
-    }
-    if (t.kind === 'op' && (t.value === '+' || t.value === '-')) {
-      this.pos += 1
-      return { k: 'un', op: t.value, operand: this.factor() }
-    }
-    if (t.kind === 'ident') {
-      this.pos += 1
-      const name = t.value as string
-      const next = this.peek()
-      if (['min', 'max', 'abs'].includes(name) && next && next.kind === 'op' && next.value === '(') {
-        return this.call(name as 'min' | 'max' | 'abs')
+    this.depth += 1
+    if (this.depth > MAX_DEPTH) throw new Error('فرمول بیش از حد تودرتو است')
+    try {
+      const t = this.peek()
+      if (!t) throw new Error('فرمول ناتمام است')
+      if (t.kind === 'num') {
+        this.pos += 1
+        return { k: 'num', v: t.value as number }
       }
-      return { k: 'ref', key: name }
+      if (t.kind === 'op' && t.value === '(') {
+        this.pos += 1
+        const node = this.expr()
+        this.expectOp(')')
+        return node
+      }
+      if (t.kind === 'op' && (t.value === '+' || t.value === '-')) {
+        this.pos += 1
+        return { k: 'un', op: t.value, operand: this.factor() }
+      }
+      if (t.kind === 'ident') {
+        this.pos += 1
+        const name = t.value as string
+        const next = this.peek()
+        if (['min', 'max', 'abs'].includes(name) && next && next.kind === 'op' && next.value === '(') {
+          return this.call(name as 'min' | 'max' | 'abs')
+        }
+        return { k: 'ref', key: name }
+      }
+      throw new Error(`نشانه نامعتبر: ${String(t.value)}`)
+    } finally {
+      this.depth -= 1
     }
-    throw new Error(`نشانه نامعتبر: ${String(t.value)}`)
   }
 
   private call(name: 'min' | 'max' | 'abs'): FNode {
@@ -304,6 +318,8 @@ export function validateFormulaText(
 ): string | null {
   const trimmed = (text ?? '').trim()
   if (!trimmed) return null
+  // raw length: the server's max_length fires before its strip-normalization
+  if ((text ?? '').length > MAX_FORMULA_LENGTH) return 'فرمول بیش از حد طولانی است'
   let ast: FNode
   try {
     ast = parseFormula(trimmed)

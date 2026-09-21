@@ -119,8 +119,15 @@ class QuestionnaireFormat(BaseModel):
         Annotated[NumberQuestion | ChoiceQuestion | StringQuestion, Field(discriminator="type")]
     ] = Field(min_length=1, max_length=200)
     # optional arithmetic formula over question keys for a total score
-    # ("" = no scoring); validated below, evaluated by score_of()
+    # ("" = no scoring); validated below, evaluated by score_of().
+    # Normalized (trimmed) so a whitespace-only value means "no scoring" —
+    # matching the client-side mirror.
     score_formula: str = Field(default="", max_length=MAX_FORMULA_LENGTH)
+
+    @field_validator("score_formula")
+    @classmethod
+    def strip_formula(cls, v: str) -> str:
+        return v.strip()
 
     @field_validator("questions")
     @classmethod

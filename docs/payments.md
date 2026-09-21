@@ -19,6 +19,6 @@
 
 - Tests must derive «today» from `APP_TZ` — UTC and Tehran dates differ
   between ~20:30–00:00 UTC (this made payment tests fail at night before
-  the fix; see `tests/test_payments.py::_today`).
+  the fix; see `tests/api/test_payments.py::_today`).
 - Legacy payment descriptions (`Visit`/`Spiro`/`Other`) are translated by
   the migration tooling to ویزیت/اسپیرو/سایر.

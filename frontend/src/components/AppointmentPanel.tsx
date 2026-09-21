@@ -5,36 +5,52 @@ import {
   AutoComplete,
   Button,
   Card,
-  Col,
+  Collapse,
   Form,
   Input,
+  Modal,
   Popconfirm,
   Radio,
   Row,
+  Col,
   Space,
   Statistic,
   Table,
   Tabs,
+  Tag,
+  Tooltip,
   Typography,
-  Upload,
 } from 'antd'
-import type { UploadFile } from 'antd'
 import {
   DeleteOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
   DownloadOutlined,
-  FileTextOutlined,
-  InboxOutlined,
-  SaveOutlined,
+  PlusOutlined,
 } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
-import type { Appointment, Attachment, Page, Transaction } from '../api/types'
+import type {
+  Appointment,
+  Attachment,
+  Page,
+  Prescription,
+  QuestionnaireResponse,
+  QuestionnaireTemplate,
+  Transaction,
+} from '../api/types'
 import DigitInput from './DigitInput'
 import { downloadAttachment } from '../lib/files'
-import { fileSize, formatMoney } from '../lib/jalali'
+import { formatJalali, formatJalaliTime, fileSize, formatMoney } from '../lib/jalali'
+import { LAST_STAGE, stageOf, tehranDay } from '../lib/stages'
 import { useUser } from './AppLayout'
-import FileNotesExpanded from './FileNotesExpanded'
+import {
+  PrescriptionForm,
+  PrescriptionView,
+  type PrescriptionFormValues,
+} from './PrescriptionRender'
+import { QuestionnaireView } from './QuestionnaireRender'
 
 /** Imperative handle for the unsaved-changes guard in the patient page. */
 export interface AppointmentPanelHandle {
@@ -43,6 +59,18 @@ export interface AppointmentPanelHandle {
   save: () => void
   /** Reset the notes form back to the server values. */
   reset: () => void
+}
+
+/** Browser-local ISO with offset (same format JalaliDateTimePicker emits). */
+function toLocalIso(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  const tz = -d.getTimezoneOffset()
+  const sign = tz >= 0 ? '+' : '-'
+  const abs = Math.abs(tz)
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+    `T${p(d.getHours())}:${p(d.getMinutes())}:00${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`
+  )
 }
 
 interface Props {
@@ -56,9 +84,12 @@ interface Props {
 }
 
 /**
- * Full detail view of one appointment (notes / files / payments tabs).
- * Used both by the standalone /appointments/:id page and embedded in the
- * patient detail page's main pane.
+ * Full detail view of one appointment: stage header, then notes, the three
+ * same-day «این ویزیت» tabs (files / prescriptions / questionnaires the
+ * patient has on this appointment's Tehran day) and payments. Files and
+ * prescriptions belong to the PATIENT since 1.3 — the all-history views
+ * live on the patient page. The legacy free-text rx shows read-only
+ * (deprecated — prescriptions are structured rows now).
  */
 const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function AppointmentPanel(
   { appointmentId, onDirtyChange, onSaved, onSaveFailed },
@@ -74,11 +105,6 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     queryFn: async () => (await api.get<Appointment>(`/appointments/${appointmentId}`)).data,
   })
 
-  const files = useQuery({
-    queryKey: ['appointment-files', appointmentId],
-    queryFn: async () => (await api.get<Attachment[]>(`/appointments/${appointmentId}/files`)).data,
-  })
-
   const txns = useQuery({
     queryKey: ['appointment-txns', appointmentId],
     queryFn: async () =>
@@ -87,10 +113,58 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
       })).data,
   })
 
+  // --- same-day associated items (patient-level rows on the visit's
+  // Tehran day); each endpoint enforces its own read permission
+  const patientId = appt.data?.patient_id
+  const visitDay = appt.data ? tehranDay(appt.data.scheduled_at) : undefined
+
+  const canRx = hasPerm('prescriptions.read')
+  const visitRx = useQuery({
+    queryKey: ['visit-prescriptions', appointmentId, patientId, visitDay],
+    queryFn: async () =>
+      (await api.get<Page<Prescription>>(`/patients/${patientId}/prescriptions`, {
+        params: { date: visitDay, limit: 100 },
+      })).data,
+    enabled: canRx && patientId != null && visitDay != null,
+  })
+
+  const canFiles = hasPerm('files.read')
+  const visitFiles = useQuery({
+    queryKey: ['visit-files', appointmentId, patientId, visitDay],
+    queryFn: async () =>
+      (await api.get<Attachment[]>(`/patients/${patientId}/files`, {
+        params: { date: visitDay },
+      })).data,
+    enabled: canFiles && patientId != null && visitDay != null,
+  })
+
+  const canQ = hasPerm('questionnaires.read')
+  const visitQ = useQuery({
+    queryKey: ['visit-questionnaires', appointmentId, patientId, visitDay],
+    queryFn: async () =>
+      (await api.get<Page<QuestionnaireResponse>>(`/patients/${patientId}/questionnaires`, {
+        params: { date: visitDay, limit: 100 },
+      })).data,
+    enabled: canQ && patientId != null && visitDay != null,
+  })
+
+  // formats for rendering the same-day responses (read-only merge view)
+  const qTemplates = useQuery({
+    queryKey: ['questionnaire-templates'],
+    queryFn: async () =>
+      (await api.get<Page<QuestionnaireTemplate>>('/questionnaires/templates', {
+        params: { limit: 100 },
+      })).data,
+    enabled: canQ,
+  })
+  const templateById = useMemo(() => {
+    const map = new Map<number, QuestionnaireTemplate>()
+    for (const t of qTemplates.data?.items ?? []) map.set(t.id, t)
+    return map
+  }, [qTemplates.data])
+
   const [notesForm] = Form.useForm<Appointment>()
   const [txnForm] = Form.useForm<{ description: string; amount: number; pos: boolean }>()
-  const [addFileForm] = Form.useForm<{ description: string; notes: string }>()
-  const [addFileList, setAddFileList] = useState<UploadFile[]>([])
 
   // --- unsaved-changes guard (notes form vs server values) ---
   const canMedical = hasPerm('medical_notes.view')
@@ -103,8 +177,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
       norm(notesValues.notes) !== norm(a2.notes) ||
       norm(notesValues.cm) !== norm(a2.cm) ||
       norm(notesValues.hx) !== norm(a2.hx) ||
-      norm(notesValues.px) !== norm(a2.px) ||
-      norm(notesValues.rx) !== norm(a2.rx)
+      norm(notesValues.px) !== norm(a2.px)
     )
   }, [canMedical, appt.data, notesValues])
 
@@ -133,6 +206,18 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     },
   })
 
+  // --- stage advance/regress (±1; regress asks for confirmation) ---
+  const changeStage = useMutation({
+    mutationFn: async (direction: 'advance' | 'regress') =>
+      api.patch(`/appointments/${appointmentId}/stage`, { direction }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['appointment', appointmentId] })
+      await qc.invalidateQueries({ queryKey: ['patient-appointments'] })
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+    },
+    onError: (err) => message.error(apiError(err).message),
+  })
+
   const addTxn = useMutation({
     mutationFn: async (v: { description: string; amount: number; pos: boolean }) =>
       api.post(`/appointments/${appointmentId}/transactions`, v),
@@ -153,41 +238,6 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     onError: (err) => message.error(apiError(err).message),
   })
 
-  const delFile = useMutation({
-    mutationFn: async (fileId: number) => api.delete(`/appointments/files/${fileId}`),
-    onSuccess: () => {
-      message.success('فایل به سبد بازیافت منتقل شد')
-      qc.invalidateQueries({ queryKey: ['appointment-files', appointmentId] })
-    },
-    onError: (err) => message.error(apiError(err).message),
-  })
-
-  const addFile = useMutation({
-    mutationFn: async (payload: { values: { description: string; notes: string }; file?: File }) => {
-      if (payload.file) {
-        const fd = new FormData()
-        fd.append('file', payload.file)
-        fd.append('description', payload.values.description ?? '')
-        fd.append('notes', payload.values.notes ?? '')
-        return (await api.post(`/appointments/${appointmentId}/files`, fd)).data
-      }
-      return (
-        await api.post(`/appointments/${appointmentId}/files/note`, {
-          description: payload.values.description ?? '',
-          notes: payload.values.notes ?? '',
-        })
-      ).data
-    },
-    onSuccess: async () => {
-      message.success('ثبت شد')
-      addFileForm.resetFields()
-      setAddFileList([])
-      await qc.invalidateQueries({ queryKey: ['appointment-files', appointmentId] })
-      await qc.invalidateQueries({ queryKey: ['patient-files'] })
-    },
-    onError: (err) => message.error(apiError(err).message),
-  })
-
   const deleteAppt = useMutation({
     mutationFn: async () => api.delete(`/appointments/${appointmentId}`),
     onSuccess: async () => {
@@ -200,21 +250,81 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     onError: (err) => message.error(apiError(err).message),
   })
 
-  const downloadFile = async (fileId: number, name: string | null) => {
-    try {
-      await downloadAttachment(fileId, name)
-    } catch (err) {
-      message.error(apiError(err).message)
-    }
-  }
+  // --- quick prescription add (patient-level; visit time pre-filled) ---
+  const [rxModalOpen, setRxModalOpen] = useState(false)
+  const [rxForm] = Form.useForm<PrescriptionFormValues>()
+  const rxSeed: PrescriptionFormValues = useMemo(
+    () => ({
+      prescribed_at: toLocalIso(new Date(appt.data?.scheduled_at ?? Date.now())),
+      notes: '',
+      items: [{ name: '' }],
+    }),
+    [appt.data?.scheduled_at],
+  )
+  const addRx = useMutation({
+    mutationFn: async (v: {
+      prescribed_at?: string
+      notes: string
+      items: { item_id?: number; name?: string; quantity?: number | null }[]
+    }) => api.post(`/patients/${patientId}/prescriptions`, v),
+    onSuccess: () => {
+      message.success('نسخه ثبت شد')
+      setRxModalOpen(false)
+      rxForm.resetFields()
+      void qc.invalidateQueries({ queryKey: ['visit-prescriptions', appointmentId] })
+      void qc.invalidateQueries({ queryKey: ['patient-prescriptions', patientId] })
+    },
+    onError: (err) => message.error(apiError(err).message),
+  })
 
   if (appt.isLoading || !appt.data) {
     return <Card loading />
   }
   const a = appt.data
+  const hasLegacyRx = a.rx.trim().length > 0
+  const stage = stageOf(a.stage)
+
+  const regressStageConfirm = () => {
+    Modal.confirm({
+      title: `مرحله از «${stage.label}» به عقب برگردد؟`,
+      content: 'این تغییر در گزارش اقدامات ثبت می‌شود.',
+      okText: 'برگرداندن مرحله',
+      cancelText: 'انصراف',
+      maskClosable: false,
+      onOk: () => changeStage.mutate('regress'),
+    })
+  }
+
+  const stageControls = hasPerm('appointments.stage') && (
+    <Space size={4}>
+      <Tooltip title="مرحله قبل">
+        <Button
+          size="small"
+          icon={<DoubleRightOutlined />}
+          disabled={a.stage === 0}
+          onClick={regressStageConfirm}
+        />
+      </Tooltip>
+      <Tooltip title="مرحله بعد">
+        <Button
+          size="small"
+          icon={<DoubleLeftOutlined />}
+          disabled={a.stage === LAST_STAGE}
+          onClick={() => changeStage.mutate('advance')}
+        />
+      </Tooltip>
+    </Space>
+  )
 
   return (
     <>
+      {/* stage header: current stage + advance/regress (regress prompted) */}
+      <Space size={8} style={{ marginBottom: 12 }}>
+        <Tag color={stage.color} style={{ marginInlineEnd: 0 }}>
+          {stage.label}
+        </Tag>
+        {stageControls}
+      </Space>
       <Tabs
         tabBarExtraContent={
           hasPerm('appointments.delete') && (
@@ -236,30 +346,25 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
             <Form
               form={notesForm}
               layout="vertical"
-              initialValues={{ notes: a.notes, cm: a.cm, hx: a.hx, px: a.px, rx: a.rx }}
+              initialValues={{ notes: a.notes, cm: a.cm, hx: a.hx, px: a.px }}
               onFinish={(v) => saveNotes.mutate(v)}
             >
               <Form.Item name="notes" label="یادداشت">
                 <Input.TextArea rows={2} />
               </Form.Item>
               <Row gutter={12}>
-                <Col span={12}>
+                <Col span={8}>
                   <Form.Item name="cm" label="CC / شرح حال فعلی">
                     <Input.TextArea rows={3} />
                   </Form.Item>
                 </Col>
-                <Col span={12}>
+                <Col span={8}>
                   <Form.Item name="hx" label="Hx — تاریخچه">
                     <Input.TextArea rows={3} />
                   </Form.Item>
                 </Col>
-                <Col span={12}>
+                <Col span={8}>
                   <Form.Item name="px" label="Px — معاینه">
-                    <Input.TextArea rows={3} />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="rx" label="Rx — نسخه">
                     <Input.TextArea rows={3} />
                   </Form.Item>
                 </Col>
@@ -267,6 +372,25 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
               <Button type="primary" htmlType="submit" loading={saveNotes.isPending}>
                 ذخیره
               </Button>
+              {hasLegacyRx && (
+                <Collapse
+                  size="small"
+                  style={{ marginTop: 16 }}
+                  items={[
+                    {
+                      key: 'legacy-rx',
+                      label: 'نسخه قدیمی (متن آزاد — از سیستم قبلی)',
+                      children: (
+                        <Typography.Paragraph
+                          style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}
+                        >
+                          {a.rx}
+                        </Typography.Paragraph>
+                      ),
+                    },
+                  ]}
+                />
+              )}
             </Form>
           ) : (
             <Typography.Text type="secondary">
@@ -275,119 +399,131 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
           ),
         },
         {
-          key: 'files',
-          label: `فایل‌ها (${files.data?.length ?? 0})`,
-          children: (
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              {hasPerm('files.write') && (
-                <Card
-                  title="افزودن فایل"
-                  size="small"
-                  styles={{ body: { paddingTop: 12 } }}
-                >
-                  <Form
-                    form={addFileForm}
-                    layout="vertical"
-                    onFinish={(v: { description: string; notes: string }) => {
-                      const f = addFileList[0]?.originFileObj
-                      if (f) addFile.mutate({ values: v, file: f })
-                      else addFile.mutate({ values: v })
-                    }}
-                  >
-                    <Form.Item
-                      name="description"
-                      label="شرح"
-                      rules={[{ required: true, message: 'شرح الزامی است' }]}
-                    >
-                      <Input maxLength={128} placeholder="مثلاً گزارش آزمایش" />
-                    </Form.Item>
-                    <Form.Item name="notes" label="یادداشت">
-                      <Input.TextArea rows={2} maxLength={10000} placeholder="اختیاری" />
-                    </Form.Item>
-                    <Form.Item label="فایل (اختیاری — بدون فایل، فقط شرح و یادداشت ثبت می‌شود)">
-                      <Upload
-                        maxCount={1}
-                        fileList={addFileList}
-                        beforeUpload={() => false}
-                        onChange={({ fileList }) => setAddFileList(fileList.slice(-1))}
+          // same-day files (patient-level since 1.3) — all files on the patient page
+          key: 'visit-files',
+          label: 'فایل‌های این روز',
+          children: !canFiles ? (
+            <Typography.Text type="secondary">
+              دسترسی مشاهده فایل‌ها را ندارید
+            </Typography.Text>
+          ) : (
+            <Table<Attachment>
+              rowKey="id"
+              loading={visitFiles.isLoading}
+              dataSource={visitFiles.data ?? []}
+              pagination={false}
+              size="small"
+              locale={{ emptyText: 'فایلی در این روز ثبت نشده است' }}
+              columns={[
+                {
+                  title: 'عنوان / شرح',
+                  dataIndex: 'description',
+                  render: (v: string, rec) => v || rec.original_filename || 'یادداشت',
+                },
+                { title: 'تاریخ', dataIndex: 'created_at', render: (v: string) => formatJalali(v) },
+                {
+                  title: 'ساعت',
+                  dataIndex: 'created_at',
+                  render: (v: string) => formatJalaliTime(v),
+                },
+                {
+                  title: 'حجم',
+                  dataIndex: 'size_bytes',
+                  render: (v: number | null) => (v == null ? '—' : fileSize(v)),
+                },
+                {
+                  title: '',
+                  render: (_, rec) =>
+                    rec.stored_filename ? (
+                      <Button
+                        size="small"
+                        icon={<DownloadOutlined />}
+                        onClick={() => downloadAttachment(rec.id, rec.original_filename)}
                       >
-                        <Button icon={<InboxOutlined />}>انتخاب فایل…</Button>
-                      </Upload>
-                    </Form.Item>
-                    <Button
-                      type="primary"
-                      htmlType="submit"
-                      loading={addFile.isPending}
-                      icon={<SaveOutlined />}
-                    >
-                      ذخیره
-                    </Button>
-                  </Form>
-                </Card>
+                        دانلود
+                      </Button>
+                    ) : null,
+                },
+              ]}
+            />
+          ),
+        },
+        {
+          // same-day prescriptions (patient-level) — the all-history view
+          // lives on the patient page
+          key: 'visit-rx',
+          label: 'نسخه‌های این روز',
+          children: !canRx ? (
+            <Typography.Text type="secondary">
+              دسترسی مشاهده نسخه‌ها را ندارید
+            </Typography.Text>
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {hasPerm('prescriptions.write') && (
+                <div>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setRxModalOpen(true)}
+                  >
+                    ثبت نسخه برای این بیمار
+                  </Button>
+                </div>
               )}
-              <Table<Attachment>
-                rowKey="id"
-                dataSource={files.data ?? []}
-                pagination={false}
-                size="small"
-                expandable={{
-                  expandedRowRender: (f) => <FileNotesExpanded file={f} />,
-                  rowExpandable: (f) => hasPerm('medical_notes.view') || !!f.notes.trim(),
-                }}
-                columns={[
-                  {
-                    title: 'شرح',
-                    dataIndex: 'description',
-                    render: (d: string, f) => (
-                      <Space>
-                        {!f.original_filename && <FileTextOutlined />}
-                        {d || (!f.original_filename ? 'بدون شرح' : '')}
-                      </Space>
-                    ),
-                  },
-                  {
-                    title: 'نام فایل',
-                    dataIndex: 'original_filename',
-                    render: (name: string | null) =>
-                      name ?? (
-                        <Typography.Text type="secondary">بدون فایل</Typography.Text>
-                      ),
-                  },
-                  { title: 'حجم', dataIndex: 'size_bytes', render: fileSize },
-                  {
-                    title: 'وضعیت',
-                    dataIndex: 'missing_file',
-                    render: (m: boolean) =>
-                      m ? <Typography.Text type="danger">مفقود</Typography.Text> : 'موجود',
-                  },
-                  {
-                    title: 'عملیات',
-                    render: (_, f) => (
-                      <Space>
-                        <Button
-                          size="small"
-                          icon={<DownloadOutlined />}
-                          disabled={f.missing_file || !f.original_filename}
-                          onClick={() => downloadFile(f.id, f.original_filename)}
-                        >
-                          دانلود
-                        </Button>
-                        {hasPerm('files.delete') && (
-                          <Popconfirm
-                            title="فایل به سبد بازیافت منتقل شود؟"
-                            onConfirm={() => delFile.mutate(f.id)}
-                          >
-                            <Button size="small" danger>
-                              حذف
-                            </Button>
-                          </Popconfirm>
-                        )}
-                      </Space>
-                    ),
-                  },
-                ]}
-              />
+              {(visitRx.data?.items ?? []).length === 0 ? (
+                <Typography.Text type="secondary">
+                  در این روز نسخه‌ای ثبت نشده است
+                </Typography.Text>
+              ) : (
+                (visitRx.data?.items ?? []).map((rx) => (
+                  <Card key={rx.id} size="small">
+                    <PrescriptionView rx={rx} />
+                  </Card>
+                ))
+              )}
             </Space>
+          ),
+        },
+        {
+          // same-day questionnaire responses (patient-level)
+          key: 'visit-q',
+          label: 'پرسش‌نامه‌های این روز',
+          children: !canQ ? (
+            <Typography.Text type="secondary">
+              دسترسی مشاهده پرسش‌نامه‌ها را ندارید
+            </Typography.Text>
+          ) : (
+            (visitQ.data?.items ?? []).length === 0 ? (
+              <Typography.Text type="secondary">
+                در این روز پرسش‌نامه‌ای ثبت نشده است
+              </Typography.Text>
+            ) : (
+              <Collapse
+                size="small"
+                items={(visitQ.data?.items ?? []).map((resp) => {
+                  const tpl = templateById.get(resp.template_id)
+                  return {
+                    key: String(resp.id),
+                    label: (
+                      <Space size={8} wrap>
+                        <Typography.Text strong>{resp.template_name}</Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {formatJalaliTime(resp.created_at)}
+                          {resp.created_by_username ? ` — ${resp.created_by_username}` : ''}
+                        </Typography.Text>
+                      </Space>
+                    ),
+                    children: tpl ? (
+                      <QuestionnaireView format={tpl.format} answers={resp.answers} />
+                    ) : (
+                      <Typography.Text type="warning">
+                        قالب این پاسخ یافت نشد (قالب حذف شده است).
+                      </Typography.Text>
+                    ),
+                  }
+                })}
+              />
+            )
           ),
         },
         {
@@ -477,7 +613,36 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
           ),
         },
       ]}
-    />
+      />
+
+      {/* quick-add prescription modal (patient-level, pre-dated to the visit);
+          mask-closable=false — closes only via its buttons */}
+      <Modal
+        open={rxModalOpen}
+        title="ثبت نسخه"
+        closable={false}
+        maskClosable={false}
+        width={640}
+        footer={null}
+        destroyOnHidden
+        onCancel={() => setRxModalOpen(false)}
+      >
+        <PrescriptionForm
+          form={rxForm}
+          seed={rxSeed}
+          submitting={addRx.isPending}
+          onFinish={(v) =>
+            addRx.mutate({
+              prescribed_at: v.prescribed_at,
+              notes: v.notes,
+              items: v.items.map((row) => ({
+                name: (row.name ?? '').trim() || undefined,
+                quantity: row.quantity == null ? null : Number(row.quantity),
+              })),
+            })
+          }
+        />
+      </Modal>
     </>
   )
 })

@@ -1,5 +1,10 @@
 # فایل‌ها (پیوست‌ها)
 
+از نسخهٔ **۱٫۳** فایل‌ها به **بیمار** تعلق دارند، نه نوبت — با حذف نوبت
+زنده می‌مانند (هدف همین تغییر است: فایلِ بارگذاری‌شده برای یک ویزیت، سندِ
+بیمار است). فایل‌های نوبت‌های قدیمی با مهاجرت `b1c2d3e4f5a6` به بیمار
+منتقل شده‌اند.
+
 ## مدل داده
 
 دو نوع ردیف در `attachments`:
@@ -7,7 +12,7 @@
 1. **فایل واقعی** — `stored_filename` مقدار دارد (UUID + پسوند پاک‌سازی‌شده
    زیر `UPLOAD_DIR`) به‌همراه `original_filename`، `mime_type`، `size_bytes`.
 2. **فقط یادداشت** — `stored_filename IS NULL` **و** `original_filename IS NULL`؛
-   با `POST /appointments/{id}/files/note` ساخته می‌شود (پزشک+).
+   با `POST /patients/{id}/files/note` ساخته می‌شود (پزشک+).
 
 `missing_file=True` یعنی «فایلی انتظار می‌رفت ولی غایب است» (میراث
 مهاجرت) — معنای «فقط یادداشت» نیست.
@@ -16,13 +21,13 @@
 
 | عمل | اندپوینت | دسترسی |
 | --- | --- | --- |
-| فهرست یک نوبت | `GET /appointments/{id}/files` | `files.read` |
-| بارگذاری (multipart) | `POST /appointments/{id}/files` | `files.write` |
-| ردیف فقط-یادداشت | `POST /appointments/{id}/files/note` | `files.write` |
-| ویرایش شرح/یادداشت | `PATCH /appointments/files/{id}` | `files.write` |
-| **پیوست/جایگزینی فایل** | `POST /appointments/files/{id}/content` | `files.write` |
-| دانلود | `GET /appointments/files/{id}/download` | `files.read` |
-| حذف نرم | `DELETE /appointments/files/{id}` | `files.delete` |
+| فهرست یک بیمار | `GET /patients/{id}/files` | `files.read` |
+| بارگذاری (multipart) | `POST /patients/{id}/files` | `files.write` |
+| ردیف فقط-یادداشت | `POST /patients/{id}/files/note` | `files.write` |
+| ویرایش شرح/یادداشت | `PATCH /files/{id}` | `files.write` |
+| **پیوست/جایگزینی فایل** | `POST /files/{id}/content` | `files.write` |
+| دانلود | `GET /files/{id}/download` | `files.read` |
+| حذف نرم | `DELETE /files/{id}` | `files.delete` |
 
 - **پیوست/جایگزینی محتوا**: به ردیف فقط-یادداشت فایل داده می‌شود، ردیف
   `missing_file` ترمیم می‌شود و فایل فعلی جایگزین می‌شود — شرح/یادداشت حفظ
@@ -37,12 +42,13 @@
   بزرگ‌تر از حد (413) هرگز کامل در حافظه بافر نمی‌شود و فایل ناقصی هم روی
   دیسک نمی‌ماند.
 - نماهای خواندن کل زنجیرهٔ والد را فیلتر می‌کنند: فایل فقط وقتی دیده می‌شود
-  که خودش + نوبت + بیمار زنده باشند.
+  که خودش + بیمارِ آن زنده باشند.
 
 ## رابط کاربری
 
 - صفحهٔ بیمار → «همه فایل‌ها»: فهرست کناری (کلیک روی ردیف = انتخاب؛ بدون
-  ردیف بازشو) + `FileDetailPane`: عنوان، شرح، تاریخ بارگذاری (جلالی)، حجم،
+  ردیف بازشو؛ دکمهٔ بارگذاری، مودال افزودن فایل را باز می‌کند) +
+  `FileDetailPane`: عنوان، شرح، تاریخ بارگذاری (جلالی)، حجم،
   یادداشتِ قابل ویرایش (`FileNotesExpanded`)، دانلود مجاز.
 - **پیش‌نمایش**: تصاویر (با نوار بزرگ‌نمایی، درون‌صفحه‌ای) و PDF (نمایشگر
   مرورگر) به‌صورت blob مجاز دریافت می‌شوند → object URL (با تغییر/بستن

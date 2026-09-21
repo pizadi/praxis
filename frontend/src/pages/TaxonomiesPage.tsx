@@ -24,16 +24,26 @@ import { useUser } from '../components/AppLayout'
 
 const PAGE_SIZE = 20
 
+type TaxonomyKind = 'tags' | 'diagnoses' | 'prescription-items'
+
 function TaxonomyPanel({
   kind,
   title,
   color,
   canEdit,
+  canCreate = true,
+  mergeOnRename = true,
+  deleteHint = 'از پرونده همه بیماران حذف می‌شود',
 }: {
-  kind: 'tags' | 'diagnoses'
+  kind: TaxonomyKind
   title: string
   color: string
   canEdit: boolean
+  /** dictionary has no create endpoint (items self-register from prescriptions) */
+  canCreate?: boolean
+  /** renaming onto an existing name merges links — prescription items just refuse */
+  mergeOnRename?: boolean
+  deleteHint?: string
 }) {
   const { message, modal } = AntApp.useApp()
   const qc = useQueryClient()
@@ -75,6 +85,10 @@ function TaxonomyPanel({
       // renaming onto an existing name → offer a merge (needs the same
       // taxonomies.write perm that gates tag/diag deletion)
       if (apiError(err).code === 'name_taken' && v.oldName) {
+        if (!mergeOnRename) {
+          message.error('این نام از قبل وجود دارد')
+          return
+        }
         const oldName = v.oldName
         modal.confirm({
           title: 'ادغام؟',
@@ -120,10 +134,7 @@ function TaxonomyPanel({
             >
               تغییر نام
             </Button>
-            <Popconfirm
-              title="حذف شود؟ (از پرونده همه بیماران حذف می‌شود)"
-              onConfirm={() => remove.mutate(item.id)}
-            >
+            <Popconfirm title={`حذف شود؟ (${deleteHint})`} onConfirm={() => remove.mutate(item.id)}>
               <Button size="small" danger>
                 حذف
               </Button>
@@ -148,7 +159,7 @@ function TaxonomyPanel({
         />
       }
     >
-      {canEdit && (
+      {canEdit && canCreate && (
         <Space.Compact style={{ marginBottom: 16 }}>
           <Input
             value={name}
@@ -219,14 +230,27 @@ export default function TaxonomiesPage() {
   const { hasPerm } = useUser()
   return (
     <div>
-      <Typography.Title level={3}>برچسب‌ها و تشخیص‌ها</Typography.Title>
+      <Typography.Title level={3}>برچسب‌ها، تشخیص‌ها و آیتم‌های نسخه</Typography.Title>
       <Row gutter={16}>
-        <Col span={12}>
+        <Col span={8}>
           <TaxonomyPanel kind="tags" title="برچسب‌ها" color="blue" canEdit={hasPerm('taxonomies.write')} />
         </Col>
-        <Col span={12}>
+        <Col span={8}>
           <TaxonomyPanel kind="diagnoses" title="تشخیص‌ها" color="red" canEdit={hasPerm('taxonomies.write')} />
         </Col>
+        {hasPerm('prescriptions.read') && (
+          <Col span={8}>
+            <TaxonomyPanel
+              kind="prescription-items"
+              title="آیتم‌های نسخه"
+              color="purple"
+              canEdit={hasPerm('prescriptions.write')}
+              canCreate={false}
+              mergeOnRename={false}
+              deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
+            />
+          </Col>
+        )}
       </Row>
     </div>
   )

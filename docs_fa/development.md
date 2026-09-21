@@ -8,7 +8,7 @@ venv پایتون در **ریشهٔ مخزن** است (`.venv`)، نه داخل 
 # تست‌های بک‌اند (از backend/ — pyproject.toml آنجاست)
 cd backend && DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin/python -m pytest tests -q
 # یک تست خاص
-../.venv/bin/python -m pytest tests/test_patients.py::test_patient_crud -q
+../.venv/bin/python -m pytest tests/api/test_patients.py::test_patient_crud -q
 
 # لینت + تایپ‌چک
 .venv/bin/ruff check backend/app backend/tests scripts

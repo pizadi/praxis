@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Button, Card, List, Space, Typography } from 'antd'
-import { LeftOutlined, RightOutlined } from '@ant-design/icons'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { App as AntApp, Button, Card, List, Space, Tag, Tooltip, Typography } from 'antd'
+import { DoubleLeftOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 
-import { api } from '../api/client'
+import { api, apiError } from '../api/client'
 import type { AppointmentBrief, Page } from '../api/types'
 import { formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { LAST_STAGE, stageOf } from '../lib/stages'
 import { localToday, serverToday } from '../lib/today'
 import { JalaliDatePicker } from '../components/JalaliDates'
+import { useUser } from '../components/AppLayout'
 
 function shiftDay(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00`) // midday avoids DST boundary issues
@@ -18,6 +20,9 @@ function shiftDay(iso: string, days: number): string {
 
 export default function SchedulePage() {
   const [date, setDate] = useState<string>(localToday())
+  const { hasPerm } = useUser()
+  const { message } = AntApp.useApp()
+  const qc = useQueryClient()
   useEffect(() => {
     serverToday().then(setDate)
   }, [])
@@ -28,6 +33,19 @@ export default function SchedulePage() {
       (await api.get<Page<AppointmentBrief>>('/appointments', {
         params: { date_from: date, date_to: date, limit: 100 },
       })).data,
+  })
+
+  // quick check-in: one click to the next stage (regression lives on the
+  // appointment panel, behind a confirmation)
+  const advance = useMutation({
+    mutationFn: async (id: number) =>
+      api.patch(`/appointments/${id}/stage`, { direction: 'advance' }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+      await qc.invalidateQueries({ queryKey: ['patient-appointments'] })
+      await qc.invalidateQueries({ queryKey: ['appointment'] })
+    },
+    onError: (err) => message.error(apiError(err).message),
   })
 
   return (
@@ -56,20 +74,45 @@ export default function SchedulePage() {
             loading={isLoading}
             dataSource={data?.items ?? []}
             locale={{ emptyText: 'نوبتی در این روز نیست' }}
-            renderItem={(a) => (
-              <List.Item
-                actions={[
-                  <Link key="d" to={`/patients/${a.patient_id}?appt=${a.id}`}>
-                    جزئیات
-                  </Link>,
-                ]}
-              >
-                <List.Item.Meta
-                  title={`${formatJalaliTime(a.scheduled_at)} — ${a.patient_first_name} ${a.patient_last_name}`}
-                  description={`کد ملی: ${toFaDigits(a.patient_national_id)}`}
-                />
-              </List.Item>
-            )}
+            renderItem={(a) => {
+              const stage = stageOf(a.stage)
+              return (
+                <List.Item
+                  actions={[
+                    <Link key="d" to={`/patients/${a.patient_id}?appt=${a.id}`}>
+                      جزئیات
+                    </Link>,
+                    ...(hasPerm('appointments.stage') && a.stage < LAST_STAGE
+                      ? [
+                          <Tooltip key="s" title={`به مرحله «${stageOf(a.stage + 1).label}»`}>
+                            <Button
+                              size="small"
+                              icon={<DoubleLeftOutlined />}
+                              loading={advance.isPending && advance.variables === a.id}
+                              onClick={() => advance.mutate(a.id)}
+                            >
+                              {stageOf(a.stage + 1).label}
+                            </Button>
+                          </Tooltip>,
+                        ]
+                      : []),
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={
+                      <Space size={8} wrap>
+                        <span>
+                          {formatJalaliTime(a.scheduled_at)} — {a.patient_first_name}{' '}
+                          {a.patient_last_name}
+                        </span>
+                        <Tag color={stage.color}>{stage.label}</Tag>
+                      </Space>
+                    }
+                    description={`کد ملی: ${toFaDigits(a.patient_national_id)}`}
+                  />
+                </List.Item>
+              )
+            }}
           />
         </Space>
       </Card>

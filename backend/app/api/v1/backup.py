@@ -16,6 +16,7 @@ endpoints at the bottom of this file. Backup and import share one job lock
 
 import contextlib
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
@@ -26,14 +27,16 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 
 from app.api.deps import require_perm
 from app.core.config import settings
 from app.core.errors import BusinessRuleError, ConflictError
 from app.core.tokens import utc_now
 from app.db.session import APP_TZ, get_db
-from app.models import User
+from app.models import AuditLog, User
 from app.services import audit
+from app.services.backup_crypto import encrypt_file, sha256_file, sniff_and_decrypt
 from app.services.backup_import import (
     SUPPORTED_SCHEMA_VERSION,
     import_status,
@@ -46,7 +49,14 @@ from app.services.backup_state import DUMP_TABLES, JOB_LOCK, psycopg2_url
 router = APIRouter(prefix="/admin/backup", tags=["backup"])
 
 _status_lock = threading.Lock()
-_status: dict = {"status": "idle", "started_at": None, "finished_at": None, "error": None}
+_status: dict = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+    "sha256": None,
+    "encrypted": False,
+}
 _file_path: str | None = None
 
 
@@ -58,7 +68,7 @@ def _backup_state() -> dict:
         else:
             st["size_bytes"] = None
             if _status["status"] == "ready":
-                _status.update(status="idle", finished_at=None)
+                _status.update(status="idle", finished_at=None, sha256=None, encrypted=False)
         return st
 
 
@@ -92,6 +102,11 @@ def _dump_postgres(tar: tarfile.TarFile, manifest: dict) -> None:
                     info = tarfile.TarInfo(name=f"db/{table}.copy")
                     info.size = buf.tell()
                     buf.seek(0)
+                    h = hashlib.sha256()
+                    while chunk := buf.read(1024 * 1024):
+                        h.update(chunk)
+                    manifest["member_sha256"][f"db/{table}.copy"] = h.hexdigest()
+                    buf.seek(0)
                     tar.addfile(info, buf)
         conn.rollback()
     finally:
@@ -120,6 +135,7 @@ def _dump_sqlite(tar: tarfile.TarFile, manifest: dict) -> None:
             manifest["tables"][t] = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]  # noqa: S608
     finally:
         con.close()
+    manifest["member_sha256"]["db/clinic.sqlite3"] = sha256_file(db_file)
     tar.add(db_file, arcname="db/clinic.sqlite3")
 
 
@@ -128,23 +144,29 @@ def _run_backup() -> None:
 
     manifest: dict = {
         "created_at": utc_now().isoformat(),
-        "schema_version": 2,
+        "schema_version": 4,
         "app_version": __version__,
         "app_timezone": settings.app_timezone,
         "tables": {},
         "table_columns": {},
+        # sha256 of every member except manifest.json itself (can't contain
+        # its own hash) — verified member-by-member on import
+        "member_sha256": {},
         "restore": (
             "1) create an empty DB and run `alembic upgrade head` "
             "2) for each db/<table>.copy (FK order): "
             'psql -c "COPY <table> (cols...) FROM STDIN" < db/<table>.copy '
             "3) unpack uploads/ into UPLOAD_DIR — or use the in-app import "
-            "(POST /admin/backup/import), which is transactional"
+            "(POST /admin/backup/import), which is transactional. "
+            "An encrypted artifact (PRAXISBK magic, .enc) is decrypted with "
+            "BACKUP_ENCRYPTION_KEY during import."
         ),
     }
     path: str | None = None
     try:
         fd, path = tempfile.mkstemp(prefix="clinic-backup-", suffix=".tar.gz")
         os.close(fd)
+        member_sha: dict[str, str] = manifest["member_sha256"]
         with tarfile.open(path, "w:gz") as tar:
             if settings.database_url.startswith("postgres"):
                 _dump_postgres(tar, manifest)
@@ -158,7 +180,9 @@ def _run_backup() -> None:
                 n_files = 0
                 for f in sorted(upload_dir.rglob("*")):
                     if f.is_file() and not f.parent.name.startswith("."):
-                        tar.add(f, arcname=f"uploads/{f.relative_to(upload_dir)}")
+                        arcname = f"uploads/{f.relative_to(upload_dir)}"
+                        member_sha[arcname] = sha256_file(f)
+                        tar.add(f, arcname=arcname)
                         n_files += 1
                 manifest["uploads_files"] = n_files
 
@@ -169,20 +193,93 @@ def _run_backup() -> None:
 
             tar.addfile(info, BytesIO(m))
 
+        # encryption wraps the finished tarball; the plaintext is removed so
+        # only the encrypted artifact stays on disk
+        encrypted = False
+        if settings.backup_encryption_key:
+            enc_path = path + ".enc"
+            encrypt_file(path, enc_path, settings.backup_encryption_key)
+            os.unlink(path)
+            path = enc_path
+            encrypted = True
+        digest = sha256_file(path)
+
+        _record_backup_completed(os.path.getsize(path), digest, encrypted)
+
         with _status_lock:
             global _file_path
             _file_path = path
             path = None
-            _status.update(status="ready", started_at=None, finished_at=utc_now(), error=None)
+            _status.update(
+                status="ready",
+                started_at=None,
+                finished_at=utc_now(),
+                error=None,
+                sha256=digest,
+                encrypted=encrypted,
+            )
     except Exception as exc:  # noqa: BLE001 — the job thread must never crash loudly
         logging.getLogger("clinic.backup").exception("backup failed")
         with _status_lock:
-            _status.update(status="error", started_at=None, finished_at=utc_now(), error=str(exc))
+            _status.update(
+                status="error", started_at=None, finished_at=utc_now(), error=str(exc),
+                sha256=None, encrypted=False,
+            )
         if path and os.path.exists(path):
             with contextlib.suppress(OSError):
                 os.unlink(path)
     finally:
         JOB_LOCK.release()
+
+
+def _record_backup_completed(size_bytes: int, sha256: str, encrypted: bool) -> None:
+    """Persist a successful-backup marker as an audit row (action='backup').
+
+    The staleness warning reads the newest such row — a durable record that
+    survives restarts (in-memory job status does not). Written synchronously
+    from the job thread with the dump driver (psycopg2/sqlite3); never
+    raises — audit failures must not break the backup itself.
+    """
+    from app import __version__
+
+    try:
+        details = json.dumps(
+            {"size_bytes": size_bytes, "sha256": sha256, "encrypted": encrypted,
+             "app_version": __version__},
+            ensure_ascii=False,
+        )
+        if settings.database_url.startswith("postgres"):
+            import psycopg2
+
+            conn = psycopg2.connect(psycopg2_url())
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO audit_log (user_id, username, action, entity_type,"
+                        " entity_id, summary, details, ip_address) VALUES"
+                        " (NULL, 'system', 'backup', 'backup', NULL, %s, %s, '')",
+                        (f"backup finished — {size_bytes} bytes", details),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        else:
+            import sqlite3
+
+            db_file = settings.database_url.split("///", 1)[-1]
+            con = sqlite3.connect(db_file, timeout=10)
+            try:
+                con.execute(
+                    "INSERT INTO audit_log (user_id, username, action, entity_type,"
+                    " entity_id, summary, details, ip_address) VALUES"
+                    " (NULL, 'system', 'backup', 'backup', NULL, ?, ?, '')",
+                    (f"backup finished — {size_bytes} bytes", details),
+                )
+                con.commit()
+            finally:
+                con.close()
+    except Exception:  # noqa: BLE001 — never break the backup over bookkeeping
+        logging.getLogger("clinic.backup").exception("backup completion audit failed")
 
 
 def _start_job() -> bool:
@@ -221,8 +318,42 @@ async def start_backup(
 
 
 @router.get("")
-async def backup_status(_: User = Depends(require_perm("backup.manage"))):
-    return _backup_state()
+async def backup_status(
+    db=Depends(get_db),
+    _: User = Depends(require_perm("backup.manage")),
+):
+    st = _backup_state()
+    st.update(await _staleness(db))
+    return st
+
+
+async def _staleness(db) -> dict:
+    """Days since the last SUCCESSFUL backup (persisted as action='backup'
+    audit rows by the job thread), and whether it exceeds the configured
+    threshold. `backup_stale` is None when the warning is disabled."""
+    if settings.backup_stale_days <= 0:
+        return {"last_backup_at": None, "backup_stale": None, "backup_stale_days": 0}
+    row = await db.scalar(
+        select(AuditLog.created_at)
+        .where(AuditLog.entity_type == "backup", AuditLog.action == "backup")
+        .order_by(AuditLog.created_at.desc())
+        .limit(1)
+    )
+    if row is None:
+        return {
+            "last_backup_at": None,
+            "backup_stale": True,
+            "backup_stale_days": settings.backup_stale_days,
+        }
+    # SQLite (dev) stores timezone-aware columns naive — assume UTC
+    if row.tzinfo is None:
+        row = row.replace(tzinfo=dt.UTC)
+    age_days = (utc_now() - row).total_seconds() / 86400
+    return {
+        "last_backup_at": row.isoformat(),
+        "backup_stale": age_days > settings.backup_stale_days,
+        "backup_stale_days": settings.backup_stale_days,
+    }
 
 
 @router.get("/download")
@@ -230,8 +361,21 @@ async def download_backup(_: User = Depends(require_perm("backup.manage"))):
     st = _backup_state()
     if st["status"] != "ready" or not _file_path:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="No ready backup file")
-    name = "clinic-backup-" + dt.datetime.now(APP_TZ).strftime("%Y%m%d-%H%M") + ".tar.gz"
-    return FileResponse(_file_path, media_type="application/gzip", filename=name)
+    name = "clinic-backup-" + dt.datetime.now(APP_TZ).strftime("%Y%m%d-%H%M")
+    if st["encrypted"]:
+        # encrypted artifact: opaque bytes — never let a browser unzip it
+        return FileResponse(
+            _file_path,
+            media_type="application/octet-stream",
+            filename=name + ".tar.gz.enc",
+            headers={"X-Checksum-Sha256": st["sha256"] or ""},
+        )
+    return FileResponse(
+        _file_path,
+        media_type="application/gzip",
+        filename=name + ".tar.gz",
+        headers={"X-Checksum-Sha256": st["sha256"] or ""},
+    )
 
 
 @router.delete("", status_code=204)
@@ -271,10 +415,17 @@ async def import_backup(
     request: Request,
     file: UploadFile = File(...),
     force: bool = Form(False),
+    expected_sha256: str = Form(""),
     db=Depends(get_db),
     user: User = Depends(require_perm("backup.manage")),
 ):
     """Restore DB + uploads from a backup tarball (see services/backup_import.py).
+
+    Integrity: `expected_sha256` (optional, hex) is checked against the
+    uploaded artifact before anything runs — a mismatch refuses the import
+    (422 checksum_mismatch). Encrypted artifacts (PRAXISBK magic) are
+    decrypted with BACKUP_ENCRYPTION_KEY; without a configured key, or with
+    the wrong one, the import refuses.
 
     Version handling: older tarball versions import via the manifest's
     column lists; a NEWER app_version refuses with 409 `newer_version`
@@ -284,12 +435,37 @@ async def import_backup(
     if not JOB_LOCK.acquire(blocking=False):
         raise ConflictError("A backup or import job is already running", code="backup_running")
     started = False
+    tar_path: str | None = None
     try:
         # spool the upload to a temp file the worker thread can re-open
         fd, tar_path = tempfile.mkstemp(prefix="clinic-import-", suffix=".tar.gz")
         with os.fdopen(fd, "wb") as out:
             while chunk := await file.read(1024 * 1024):
                 out.write(chunk)
+
+        # whole-artifact checksum (what the admin recorded at download time)
+        if expected_sha256.strip():
+            actual = sha256_file(tar_path)
+            if actual.lower() != expected_sha256.strip().lower():
+                raise BusinessRuleError(
+                    "پشتیبان دانلودشده با فایل بارگذاری‌شده مطابقت ندارد "
+                    "(checksum mismatch) — فایل را مجدداً دانلود کنید",
+                    code="checksum_mismatch",
+                    details={"expected_sha256": expected_sha256.strip(), "actual_sha256": actual},
+                )
+
+        # encrypted artifact → decrypt (key check inside); the encrypted
+        # spool is replaced by the plaintext tarball for the job
+        try:
+            plain_path, was_encrypted = sniff_and_decrypt(
+                tar_path, settings.backup_encryption_key or None
+            )
+        except ValueError as exc:
+            raise BusinessRuleError(str(exc), code="invalid_backup") from None
+        if was_encrypted and plain_path != tar_path:
+            os.unlink(tar_path)
+        tar_path = plain_path
+
         try:
             manifest = read_manifest(tar_path)
         except Exception as exc:
@@ -311,9 +487,13 @@ async def import_backup(
             name="clinic-import",
             daemon=True,
         ).start()
+        tar_path = None  # ownership moved to the job thread
         started = True
     finally:
         if not started:
+            if tar_path and os.path.exists(tar_path):
+                with contextlib.suppress(OSError):
+                    os.unlink(tar_path)
             JOB_LOCK.release()  # the worker releases it on success
     await audit.log_action(
         db,
@@ -326,6 +506,8 @@ async def import_backup(
             "app_version": manifest.get("app_version"),
             "schema_version": manifest.get("schema_version", 1),
             "forced": force,
+            "encrypted": was_encrypted,
+            "checksum_verified": bool(expected_sha256.strip()),
         },
     )
     return {"status": "importing"}

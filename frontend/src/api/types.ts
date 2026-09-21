@@ -61,6 +61,7 @@ export interface Appointment {
   id: number
   patient_id: number
   scheduled_at: string
+  stage: number
   notes: string
   cm: string
   hx: string
@@ -77,10 +78,10 @@ export interface AppointmentBrief {
   id: number
   patient_id: number
   scheduled_at: string
+  stage: number
   patient_first_name: string
   patient_last_name: string
   patient_national_id: string
-  attachment_count: number
 }
 
 export interface Transaction {
@@ -97,7 +98,8 @@ export interface PatientTransaction extends Transaction {
 
 export interface Attachment {
   id: number
-  appointment_id: number
+  /** files belong to the PATIENT since 1.3 (they survive appointment deletion) */
+  patient_id: number
   description: string
   notes: string
   /** server-side storage name (UUID) — changes when the content is replaced */
@@ -108,6 +110,32 @@ export interface Attachment {
   missing_file: boolean
   created_at: string
   updated_at: string
+}
+
+export interface PrescriptionItemLink {
+  id: number
+  item_id: number
+  item_name: string
+  quantity: number | null
+}
+
+export interface Prescription {
+  id: number
+  patient_id: number
+  prescribed_at: string
+  notes: string
+  created_by_username: string | null
+  /** legacy provenance: appointment the prescription was migrated from */
+  source_appointment_id: number | null
+  items: PrescriptionItemLink[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PrescriptionItemInput {
+  item_id?: number
+  name?: string
+  quantity?: number | null
 }
 
 export interface DescriptionStat {

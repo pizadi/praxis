@@ -10,24 +10,32 @@ from app import __version__
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.errors import register_error_handlers
+from app.db.migrations import run_migrations
 from app.db.session import SessionLocal
 from app.models import Role, User
 from app.services.uploads_purge import purge_loop
 
 
 async def ensure_system_roles(session) -> None:
-    """Seed the three system roles if missing (idempotent; also used by tests)."""
+    """Seed the three system roles if missing (idempotent; also used by tests).
+
+    The admin role is UI-locked (no edit/delete — lockout protection), so it
+    can never hold user-intended removals: keep it additively at the full
+    catalog on every call. This heals databases whose roles were seeded
+    before a permission existed (e.g. create_all-built DBs stamped at head —
+    data migrations never ran there).
+    """
     import json
 
     from sqlalchemy import select
 
-    from app.core.permissions import SYSTEM_ROLES
+    from app.core.permissions import ALL_PERMISSIONS, SYSTEM_ROLES
 
     for name, perms in SYSTEM_ROLES.items():
-        exists = await session.scalar(
+        role = await session.scalar(
             select(Role).where(Role.name == name, Role.deleted_at.is_(None))
         )
-        if exists is None:
+        if role is None:
             session.add(
                 Role(
                     name=name,
@@ -35,6 +43,10 @@ async def ensure_system_roles(session) -> None:
                     permissions_json=json.dumps(perms, ensure_ascii=False),
                 )
             )
+        elif name == "admin":
+            merged = sorted(set(json.loads(role.permissions_json or "[]")) | ALL_PERMISSIONS)
+            if merged != json.loads(role.permissions_json or "[]"):
+                role.permissions_json = json.dumps(merged, ensure_ascii=False)
     await session.commit()
 
 
@@ -79,6 +91,9 @@ async def bootstrap_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Fail-fast: migrate (or refuse to boot) before anything reads/writes the
+    # database. bootstrap_admin tolerates an unmigrated DB only as a fallback.
+    await asyncio.to_thread(run_migrations)
     await bootstrap_admin()
     purge_task = asyncio.create_task(purge_loop())  # automatic orphan sweeper
     yield

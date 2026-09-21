@@ -18,7 +18,8 @@
 backend/app
   api/v1/        روترها: auth، users، roles، patients، appointments،
                  attachments، transactions، payments، taxonomies،
-                 questionnaires، stats، trash، audit، backup، meta
+                 prescriptions، questionnaires، stats، trash، audit،
+                 backup، meta
   api/deps.py    وابستگی‌های احراز هویت، نگهبان دسترسی، امنیت فایل
   core/          پیکربندی، امنیت (JWT/argon2)، خطاها، توکن‌ها،
                  کاتالوگ دسترسی‌ها + نقش‌های سیستمی
@@ -66,3 +67,19 @@ docs/، docs_fa/  مستندات ویژگی‌ها (انگلیسی / فارسی)
   می‌شود.
 - هر دو هم‌زمان بالا می‌روند: minor برای ویژگی، patch برای رفع اشکال.
   در طول توسعه از `X.Y.Z.devN` استفاده می‌شود.
+
+## تست‌ها
+
+- **بک‌اند** (pytest، پیش‌فرض SQLite و کل مجموعه روی PostgreSQL هم سبز
+  است): `tests/unit/` (توابع خالص)، `tests/api/` (تست‌های یکپارچگی
+  به‌ازای هر منبع روی کلاینت httpx ASGI، شامل ماتریس اندپوینت×نقش)،
+  `tests/parity/` (ولیدیتور پرسش‌نامه). سازنده‌های مشترک در
+  `tests/factories.py`.
+- **فرانت‌اند**: vitest (`src/**/*.test.ts(x)`) برای واحدها/کامپوننت‌ها و
+  Playwright E2E (`e2e/`) روی یک استک موقتی که کانفیگ بالا می‌آورد
+  (uvicorn روی :18001 + `vite preview` روی :18010 با پروکسی `/api`).
+- **کورپوس قرارداد**: `testdata/questionnaire_parity.json` — یک کورپوس
+  مشترک برای ولیدیتورهای پرسش‌نامه که هم pytest (`tests/parity/`) و هم
+  vitest (`src/parity/`) اجرا می‌کنند. مرجع نهایی سرور است؛ قرینهٔ TS باید
+  با همهٔ موارد موافق باشد.
+- دستورها و نکته‌ها: [development.md](development.md).

@@ -24,7 +24,7 @@ _DUMMY_PASSWORD_HASH = pwd_context.hash("timing-equalizer-dummy")
 
 
 def _tokens_for(user: User, refresh: str) -> TokenPair:
-    access = create_access_token(user.id, user.role_name)
+    access = create_access_token(user.id)
     return TokenPair(
         access_token=access,
         refresh_token=refresh,

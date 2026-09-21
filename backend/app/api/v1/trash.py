@@ -24,6 +24,8 @@ from app.models import (
     Attachment,
     Diagnosis,
     Patient,
+    Prescription,
+    PrescriptionItem,
     QuestionnaireResponse,
     QuestionnaireTemplate,
     Role,
@@ -39,7 +41,7 @@ router = APIRouter(prefix="/admin/trash", tags=["trash"])
 TYPES = (
     "patients", "appointments", "transactions", "attachments", "tags",
     "diagnoses", "users", "roles", "questionnaire_templates",
-    "questionnaire_responses",
+    "questionnaire_responses", "prescriptions", "prescription_items",
 )
 
 
@@ -55,6 +57,8 @@ def _get_model(type_name: str):
         "roles": Role,
         "questionnaire_templates": QuestionnaireTemplate,
         "questionnaire_responses": QuestionnaireResponse,
+        "prescriptions": Prescription,
+        "prescription_items": PrescriptionItem,
     }
     if type_name not in mapping:
         raise HTTPException(
@@ -115,11 +119,11 @@ async def list_trash(
             if appt is not None:
                 parent_deleted = appt.deleted_at is not None
         elif isinstance(row, Attachment):
-            appt = await db.get(Appointment, row.appointment_id)
+            pat = await db.get(Patient, row.patient_id)
             title = row.description or (row.original_filename or f"attachment {row.id}")
             subtitle = row.original_filename or ""
-            if appt is not None:
-                parent_deleted = appt.deleted_at is not None
+            if pat is not None:
+                parent_deleted = pat.deleted_at is not None
         elif isinstance(row, (Tag, Diagnosis)):
             title = row.name
         elif isinstance(row, User):
@@ -137,6 +141,16 @@ async def list_trash(
             if pat is not None:
                 subtitle = f"{pat.first_name} {pat.last_name}"
                 parent_deleted = pat.deleted_at is not None
+        elif isinstance(row, Prescription):
+            pat = await db.get(Patient, row.patient_id)
+            if pat is not None:
+                title = f"{pat.first_name} {pat.last_name}"
+                subtitle = f"prescription at {row.prescribed_at.isoformat()}"
+                parent_deleted = pat.deleted_at is not None
+            else:
+                title = f"prescription {row.id}"
+        elif isinstance(row, PrescriptionItem):
+            title = row.name
 
         items.append(
             TrashItemOut(
@@ -167,7 +181,7 @@ async def _unique_conflict_exists(db: AsyncSession, model, row) -> bool:
             )
         )
         return bool(dup)
-    if isinstance(row, (Tag, Diagnosis, Role)):
+    if isinstance(row, (Tag, Diagnosis, Role, PrescriptionItem)):
         dup = await db.scalar(
             select(func.count())
             .select_from(type(row))
@@ -212,13 +226,13 @@ async def restore_item(
             raise ConflictError(
                 "Restore the parent patient first", code="parent_still_deleted"
             )
-    elif isinstance(row, (Transaction, Attachment)):
+    elif isinstance(row, (Transaction)):
         appt = await db.get(Appointment, row.appointment_id)
         if appt is not None and appt.deleted_at is not None:
             raise ConflictError(
                 "Restore the parent appointment first", code="parent_still_deleted"
             )
-    elif isinstance(row, QuestionnaireResponse):
+    elif isinstance(row, (Attachment, QuestionnaireResponse, Prescription)):
         pat = await db.get(Patient, row.patient_id)
         if pat is not None and pat.deleted_at is not None:
             raise ConflictError(
@@ -254,7 +268,7 @@ async def restore_item(
     if isinstance(row, Patient):
         title = f"{row.first_name} {row.last_name}"
         subtitle = row.national_id
-    elif isinstance(row, (Tag, Diagnosis)):
+    elif isinstance(row, (Tag, Diagnosis, PrescriptionItem)):
         title = row.name
     elif isinstance(row, User):
         title = row.username
@@ -276,6 +290,8 @@ async def restore_item(
     elif isinstance(row, QuestionnaireResponse):
         tpl = await db.get(QuestionnaireTemplate, row.template_id)
         title = tpl.name if tpl is not None else f"response {row.id}"
+    elif isinstance(row, Prescription):
+        title = f"prescription {row.id}"
 
     return TrashItemOut(
         id=row.id,
@@ -297,7 +313,7 @@ async def purge_item(
 ):
     """PERMANENTLY delete one trash item (admin only).
 
-    For patients this cascades to appointments → files/txns (hard delete);
+    For patients this cascades to appointments/txns/files (hard delete);
     physical files are unlinked from disk. There is no undo.
     """
     model = _get_model(type)
@@ -311,21 +327,8 @@ async def purge_item(
         names = (
             (
                 await db.execute(
-                    select(Attachment.stored_filename)
-                    .join(Appointment, Attachment.appointment_id == Appointment.id)
-                    .where(Appointment.patient_id == row.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        stored_names = list(names)
-    elif isinstance(row, Appointment):
-        names = (
-            (
-                await db.execute(
                     select(Attachment.stored_filename).where(
-                        Attachment.appointment_id == row.id
+                        Attachment.patient_id == row.id
                     )
                 )
             )

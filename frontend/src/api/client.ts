@@ -45,6 +45,10 @@ export function setTokens(access: string, refresh: string, user: StoredUser) {
   localStorage.setItem(REFRESH_KEY, refresh)
   localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
+/** Refresh only the cached user (permissions change server-side between logins). */
+export function storeUser(user: StoredUser) {
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
+}
 export function clearAuth() {
   localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(REFRESH_KEY)

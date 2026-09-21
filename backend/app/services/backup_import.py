@@ -1,11 +1,15 @@
 """Restore DB + uploads from a backup tarball (upload-side of backup.py).
 
-Tarball layout (schema_version 2):
-    manifest.json          — {"schema_version": 2, "app_version": "1.2.0",
-                              "table_columns": {table: [cols...]}, ...}
+Tarball layout (schema_version 4):
+    manifest.json          — {"schema_version": 4, "app_version": "1.4.0",
+                              "table_columns": {table: [cols...]},
+                              "member_sha256": {member: hex}, ...}
     db/<table>.copy        — PostgreSQL COPY data (one file per table), or
     db/clinic.sqlite3      — SQLite (dev): the raw database file
     uploads/<name>         — the uploaded patient files (flat or nested)
+
+The whole ARTIFACT may additionally be encrypted (PRAXISBK magic, AES-256-
+GCM, see backup_crypto.py) — decrypted before the tarball is seen here.
 
 Import semantics:
 - PostgreSQL: ONE transaction — TRUNCATE every domain table, then COPY each
@@ -25,6 +29,10 @@ Version rules (enforced in the API layer):
 - producer app_version newer than the running app → refuse (409) unless
   the user explicitly forces the import; even forced, an unresolvable
   error rolls everything back.
+- schema_version ≤ 2 (pre-1.3): attachments hung off APPOINTMENTS — the
+  importer remaps dump's attachments.appointment_id → patient_id through
+  the dumped appointments table (FK integrity inside one dump makes this
+  total; a dangling reference violates NOT NULL/FK and rolls back loudly).
 """
 
 import contextlib
@@ -41,7 +49,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.services.backup_state import DUMP_TABLES
 
-SUPPORTED_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSION = 4
 
 # hard caps for hostile/buggy tarballs (admins upload, but still)
 MAX_MEMBER_BYTES = 4 * 1024 * 1024 * 1024  # 4 GiB per member
@@ -108,9 +116,48 @@ def read_manifest(path: str) -> dict:
     return manifest
 
 
+def _verify_member_hashes(tar_path: str, expected: dict[str, str]) -> None:
+    """Fail fast on any corrupted/tampered member BEFORE the destructive
+    DB transaction (schema_version ≥ 4 manifests carry member_sha256).
+
+    One extra streaming pass over the archive, but an import is rare and
+    the loud-early failure beats a mid-COPY rollback.
+    """
+    import hashlib
+
+    if not expected:
+        return
+    remaining = {name.lstrip("./"): hexdigest for name, hexdigest in expected.items()}
+    with tarfile.open(tar_path, "r:gz") as tar:
+        for m in tar:
+            name = m.name.lstrip("./")
+            if name not in remaining or m.isdir():
+                continue
+            want = remaining.pop(name)
+            f = tar.extractfile(m)
+            if f is None:
+                raise ValueError(f"member is not a regular file: {m.name}")
+            h = hashlib.sha256()
+            while chunk := f.read(1024 * 1024):
+                h.update(chunk)
+            actual = h.hexdigest()
+            if actual != want:
+                raise ValueError(
+                    f"checksum mismatch for {m.name} — the tarball is corrupted "
+                    f"(expected {want[:12]}…, got {actual[:12]}…)"
+                )
+            if not remaining:
+                return
+    if remaining:
+        raise ValueError(f"tarball is missing hashed members: {sorted(remaining)}")
+
+
 def run_import(tar_path: str) -> dict:
     """Execute the import; raises on any unresolvable error (the caller's
     DB transaction/lock discipline makes failures non-destructive)."""
+    manifest = read_manifest(tar_path)
+    _verify_member_hashes(tar_path, manifest.get("member_sha256") or {})
+
     summary = (
         _import_postgres(tar_path)
         if settings.database_url.startswith("postgres")
@@ -184,24 +231,27 @@ def _import_postgres(tar_path: str) -> dict:
 
                 # destructive part starts here; any error → ROLLBACK below.
                 # only tables the dump actually carries are replaced — tables
-                # absent from an older dump keep their current data
+                # absent from an older dump keep their current data (an
+                # uploads-only dump has no db members at all: nothing to
+                # truncate — an empty TRUNCATE list is a syntax error)
                 dumped_tables = {
                     m.name.lstrip("./")[len("db/") : -len(".copy")]
                     for m in tar
                     if m.name.lstrip("./").startswith("db/")
                     and m.name.lstrip("./").endswith(".copy")
                 }
-                cur.execute(
-                    f'TRUNCATE {", ".join(existing & dumped_tables)} CASCADE'  # noqa: S608
-                )
+                to_replace = existing & dumped_tables
+                if to_replace:
+                    cur.execute(
+                        f'TRUNCATE {", ".join(to_replace)} CASCADE'  # noqa: S608
+                    )
 
                 loaded: dict[str, int] = {}
-                skew: dict[str, dict[str, list[str]]] = {}
+                skew: dict[str, dict] = {}
                 for t in DUMP_TABLES:
-                    info = tar.getmember(f"db/{t}.copy")
-                    if info is None:
+                    if t not in dumped_tables:
                         continue  # table absent from this (older) dump
-                    member = tar.extractfile(info)
+                    member = tar.extractfile(f"db/{t}.copy")
                     if member is None:
                         continue
                     live = live_cols.get(t, [])
@@ -231,6 +281,58 @@ def _import_postgres(tar_path: str) -> dict:
                         cols = live  # full-row COPY
                     else:
                         cols = live_cols.get(t)
+
+                    # pre-1.3 dump: attachments.appointment_id → patient_id via
+                    # the appointments rows restored earlier in this transaction.
+                    # A dangling appointment id maps to NULL → NOT NULL violation
+                    # → loud rollback (FK integrity of one dump makes this
+                    # impossible for a consistent backup).
+                    remap_appointment = (
+                        t == "attachments"
+                        and schema_version <= 2
+                        and "appointment_id" in (dumped.get(t) or [])
+                        and "patient_id" in live
+                        and "patient_id" not in (dumped.get(t) or [])
+                    )
+
+                    if remap_appointment:
+                        dump_cols = dumped[t]
+                        cols = [c for c in dump_cols if c in live and c != "appointment_id"]
+                        tmp = f"_imp_{t}"
+                        cur.execute(
+                            f'CREATE TEMP TABLE "{tmp}" AS '  # noqa: S608
+                            f'SELECT * FROM "{t}" WITH NO DATA'
+                        )
+                        # the stage table needs the dump-only column for the mapping
+                        cur.execute(
+                            f'ALTER TABLE "{tmp}" ADD COLUMN "appointment_id" integer'  # noqa: S608
+                        )
+                        stage_cols = ", ".join(f'"{c}"' for c in dump_cols)
+                        cur.copy_expert(  # noqa: S608
+                            f'COPY "{tmp}" ({stage_cols}) FROM STDIN', member
+                        )
+                        defaulted = [c for c in live if c not in cols]
+                        target_cols = [c for c in cols if c != "patient_id"] + defaulted
+                        target_sql = ", ".join(f'"{c}"' for c in target_cols)
+                        select_exprs = [f'"{c}"' for c in cols if c != "patient_id"] + [
+                            (
+                                # NULL for a dangling appointment_id → NOT NULL
+                                # violation → the whole import rolls back (loud)
+                                "(SELECT a.patient_id FROM appointments a"
+                                f' WHERE a.id = "{tmp}"."appointment_id")'
+                                if c == "patient_id"
+                                else _pg_fallback_expr(live_types.get(t, {}).get(c, ""))
+                            )
+                            for c in defaulted
+                        ]
+                        select_sql = ", ".join(select_exprs)
+                        cur.execute(
+                            f'INSERT INTO "{t}" ({target_sql}) '  # noqa: S608
+                            f'SELECT {select_sql} FROM "{tmp}"'
+                        )
+                        cur.execute(f'DROP TABLE "{tmp}"')  # noqa: S608
+                        loaded[t] = -1  # filled with real counts below
+                        continue
 
                     if cols and len(cols) < len(live):
                         # the dump lacks columns of the live table: stage into a
@@ -280,6 +382,20 @@ def _import_postgres(tar_path: str) -> dict:
                     )
                     cur.execute(f'SELECT COUNT(*) FROM "{t}"')  # noqa: S608
                     loaded[t] = int(cur.fetchone()[0])
+
+                # importing a pre-1.3 backup: the TRUNCATE ... CASCADE wiped
+                # prescriptions (FK dependents of patients) that the old dump
+                # cannot restore — re-derive them from the restored rx text
+                # (same frozen parser as the 1.3 migration; same transaction)
+                if schema_version <= 2 and "prescriptions" in live_cols:
+                    rederived = _rederive_prescriptions_from_rx(cur)
+                    if any(rederived):
+                        summary_rx = {"prescriptions": rederived[0],
+                                      "prescription_items": rederived[1],
+                                      "prescription_item_links": rederived[2]}
+                        for tbl, n in summary_rx.items():
+                            loaded[tbl] = loaded.get(tbl, 0) + n
+                        skew["_rederived_from_rx"] = summary_rx
             conn.commit()
         except Exception:
             conn.rollback()
@@ -287,6 +403,94 @@ def _import_postgres(tar_path: str) -> dict:
         finally:
             conn.close()
     return {"tables": loaded, "schema_version": schema_version, "skew": skew}
+
+
+def _rederive_prescriptions_from_rx(cur) -> tuple[int, int, int]:
+    """Rebuild prescriptions/prescription_item_links from appointments.rx.
+
+    Used after importing a pre-1.3 (schema_version ≤ 2) PostgreSQL backup:
+    the dump carries no prescription tables, and TRUNCATE CASCADE on
+    patients/appointments wiped whatever existed. Deterministic (same
+    frozen parser as the 1.3 Alembic migration) and idempotent
+    (source_appointment_id skips already-derived rows). Returns
+    (prescriptions, items, links) created.
+    """
+    from app.services.rx_migration import (
+        RX_MIN_FREQUENCY,
+        normalize_item_name,
+        overflow_notes,
+        plan_rx_migration,
+    )
+
+    cur.execute(
+        "SELECT id, patient_id, scheduled_at, rx FROM appointments "
+        "WHERE rx IS NOT NULL AND rx <> ''"
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return (0, 0, 0)
+    planned, dictionary = plan_rx_migration(
+        [(int(r[0]), int(r[1]), r[2], r[3]) for r in rows],
+        min_frequency=RX_MIN_FREQUENCY,
+    )
+
+    # dictionary: upsert by normalized name (existing items may have
+    # survived the truncate — prescription_items has no patient FK)
+    cur.execute("SELECT id, name FROM prescription_items")
+    item_id_by_key: dict[str, int] = {
+        normalize_item_name(str(r[1])): int(r[0]) for r in cur.fetchall()
+    }
+    n_items = 0
+    for key, display in sorted(dictionary.items()):
+        if key in item_id_by_key:
+            continue
+        cur.execute(
+            "INSERT INTO prescription_items (name) VALUES (%(name)s) RETURNING id",
+            {"name": display[:128]},
+        )
+        item_id_by_key[key] = int(cur.fetchone()[0])
+        n_items += 1
+
+    cur.execute(
+        "SELECT DISTINCT source_appointment_id FROM prescriptions "
+        "WHERE source_appointment_id IS NOT NULL"
+    )
+    done = {int(r[0]) for r in cur.fetchall()}
+
+    n_rx = 0
+    n_links = 0
+    rx_id_by_appt: dict[int, int] = {}
+    for p in planned:
+        if p.appointment_id in done:
+            continue
+        cur.execute(
+            "INSERT INTO prescriptions (patient_id, prescribed_at, notes,"
+            " source_appointment_id) VALUES (%(patient_id)s, %(prescribed_at)s,"
+            " %(notes)s, %(source_appointment_id)s) RETURNING id",
+            {
+                "patient_id": p.patient_id,
+                "prescribed_at": p.prescribed_at,
+                "notes": overflow_notes(p.notes_overflow)[:10000],
+                "source_appointment_id": p.appointment_id,
+            },
+        )
+        rx_id_by_appt[int(p.appointment_id)] = int(cur.fetchone()[0])
+        n_rx += 1
+    for p in planned:
+        rx_id = rx_id_by_appt.get(int(p.appointment_id))
+        if rx_id is None:
+            continue
+        for link in p.links:
+            item_id = item_id_by_key.get(normalize_item_name(link.name))
+            if item_id is None:  # pragma: no cover — dictionary is complete
+                continue
+            cur.execute(
+                "INSERT INTO prescription_item_links (prescription_id, item_id,"
+                " quantity) VALUES (%(rx)s, %(item)s, %(qty)s)",
+                {"rx": rx_id, "item": item_id, "qty": link.quantity},
+            )
+            n_links += 1
+    return (n_rx, n_items, n_links)
 
 
 # --- SQLite (dev/tests) ---------------------------------------------------------------
@@ -309,6 +513,88 @@ def _qi(name: str) -> str:
     Table/column names read from the imported (potentially hostile) SQLite
     file reach f-string SQL here; doubled quotes keep them contained."""
     return name.replace('"', '""')
+
+
+def _rederive_prescriptions_sqlite(con: sqlite3.Connection) -> tuple[int, int, int]:
+    """SQLite twin of _rederive_prescriptions_from_rx (dev/tests path)."""
+    from app.services.rx_migration import (
+        RX_MIN_FREQUENCY,
+        normalize_item_name,
+        overflow_notes,
+        plan_rx_migration,
+    )
+
+    cur = con.execute(
+        'SELECT id, patient_id, scheduled_at, rx FROM main.appointments '
+        "WHERE rx IS NOT NULL AND rx <> ''"
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return (0, 0, 0)
+    planned, dictionary = plan_rx_migration(
+        [(int(r[0]), int(r[1]), r[2], r[3]) for r in rows],
+        min_frequency=RX_MIN_FREQUENCY,
+    )
+
+    item_id_by_key: dict[str, int] = {}
+    for item_id, name in con.execute("SELECT id, name FROM main.prescription_items"):
+        item_id_by_key[normalize_item_name(str(name))] = int(item_id)
+    n_items = 0
+    for key, display in sorted(dictionary.items()):
+        if key in item_id_by_key:
+            continue
+        cur = con.execute(
+            "INSERT INTO main.prescription_items (name) VALUES (:name)", {"name": display[:128]}
+        )
+        new_id = con.execute("SELECT MAX(id) FROM main.prescription_items").fetchone()[0]
+        item_id_by_key[key] = int(new_id)
+        n_items += 1
+
+    done = {
+        int(r[0])
+        for r in con.execute(
+            "SELECT DISTINCT source_appointment_id FROM main.prescriptions "
+            "WHERE source_appointment_id IS NOT NULL"
+        )
+    }
+
+    n_rx = 0
+    n_links = 0
+    rx_id_by_appt: dict[int, int] = {}
+    for p in planned:
+        if p.appointment_id in done:
+            continue
+        con.execute(
+            "INSERT INTO main.prescriptions (patient_id, prescribed_at, notes,"
+            " source_appointment_id) VALUES (:patient_id, :prescribed_at,"
+            " :notes, :source_appointment_id)",
+            {
+                "patient_id": p.patient_id,
+                "prescribed_at": p.prescribed_at,
+                "notes": overflow_notes(p.notes_overflow)[:10000],
+                "source_appointment_id": p.appointment_id,
+            },
+        )
+        rx_id = con.execute(
+            "SELECT MAX(id) FROM main.prescriptions"
+        ).fetchone()[0]
+        rx_id_by_appt[int(p.appointment_id)] = int(rx_id)
+        n_rx += 1
+    for p in planned:
+        rx_id = rx_id_by_appt.get(int(p.appointment_id))
+        if rx_id is None:
+            continue
+        for link in p.links:
+            item_id = item_id_by_key.get(normalize_item_name(link.name))
+            if item_id is None:  # pragma: no cover — dictionary is complete
+                continue
+            con.execute(
+                "INSERT INTO main.prescription_item_links (prescription_id,"
+                " item_id, quantity) VALUES (:rx, :item, :qty)",
+                {"rx": rx_id, "item": item_id, "qty": link.quantity},
+            )
+            n_links += 1
+    return (n_rx, n_items, n_links)
 
 
 def _import_sqlite(tar_path: str) -> dict:
@@ -366,13 +652,13 @@ def _import_sqlite(tar_path: str) -> dict:
                 if not r[0].startswith("sqlite_")
             }
             con.execute("BEGIN")
-            summary_skew: dict[str, dict[str, list[str]]] = {}
+            summary_skew: dict[str, dict] = {}
             try:
                 # clear only the dump's tables (absent tables keep their data)
                 for t in set(aux_tables) & live_tables:
                     con.execute(f'DELETE FROM main."{_qi(t)}"')  # noqa: S608
                 loaded = {}
-                skew: dict[str, dict[str, list[str]]] = {}
+                skew: dict[str, dict] = {}
                 for t in aux_tables:
                     aux_cols = [r[1] for r in con.execute(f'PRAGMA aux.table_info("{_qi(t)}")')]  # noqa: S608
                     if t not in live_tables:
@@ -391,6 +677,19 @@ def _import_sqlite(tar_path: str) -> dict:
                     fill_exprs = []
                     for c in defaulted:
                         dflt = live_defaults.get(c)
+                        if (
+                            t == "attachments"
+                            and c == "patient_id"
+                            and "appointment_id" in aux_cols
+                        ):
+                            # pre-1.3 dump: map appointment_id → patient_id via
+                            # the OLD appointments (aux); NULL → NOT NULL
+                            # violation → loud rollback
+                            fill_exprs.append(
+                                '(SELECT a.patient_id FROM aux.appointments a'
+                                f' WHERE a.id = aux."{_qi(t)}"."appointment_id") AS "{c}"'
+                            )
+                            continue
                         if dflt is not None:
                             fill_exprs.append(f"{dflt} AS \"{c}\"")
                         else:
@@ -407,6 +706,25 @@ def _import_sqlite(tar_path: str) -> dict:
                         f'SELECT {sel_sql} FROM aux."{_qi(t)}"'
                     )
                     loaded[t] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+                # importing a pre-1.3 backup: prescriptions are absent from
+                # the dump (or orphaned by the DELETE of their patients) —
+                # re-derive from the restored rx text (same frozen parser as
+                # the 1.3 migration; same transaction)
+                if (
+                    schema_version <= 2
+                    and "prescriptions" in live_tables
+                    and "appointments" in live_tables
+                ):
+                    n_rx, n_items, n_links = _rederive_prescriptions_sqlite(con)
+                    if n_rx:
+                        loaded["prescriptions"] = loaded.get("prescriptions", 0) + n_rx
+                        loaded["prescription_items"] = n_items
+                        loaded["prescription_item_links"] = n_links
+                        skew["_rederived_from_rx"] = {
+                            "prescriptions": n_rx,
+                            "prescription_items": n_items,
+                            "prescription_item_links": n_links,
+                        }
                 con.execute("COMMIT")
             except Exception:
                 con.execute("ROLLBACK")

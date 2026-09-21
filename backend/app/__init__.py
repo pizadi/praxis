@@ -32,6 +32,61 @@ Version history:
          birth year, phone, payment amount; questionnaire number inputs
          + patient search normalize Persian digits); range hints on
          questionnaire number questions
+  1.3.0.dev1  files belong to the PATIENT (not the appointment); structured
+         prescriptions (prescriptions / prescription_items / links with
+         quantities, autocomplete, patient-level history) replacing the
+         legacy free-text rx field; legacy rx → prescriptions data
+         migration (frequency-based dictionary admission, verbatim
+         overflow in notes, rx column kept as deprecated archive);
+         backup manifest schema_version 3 + pre-1.3 attachment remap on
+         import; legacy sqlite import script converts rx the same way
+  1.3.0.dev2  the app migrates the database at startup (fail-fast, any
+         launch path; create-all dev DBs stamped at head, fresh SQLite is
+         create_all+stamp); legacy Django models.py/views.py removed;
+         scripts/snapshot_db.py (pg_dump via docker exec / sqlite copy)
+         and scripts/purge_db.py (full reset incl. users, snapshot-gated,
+         admin re-bootstrapped, optional --uploads wipe)
+  1.3.0.dev3  bootstrap keeps the UI-locked admin role at the full permission
+         catalog (heals stamped/pre-1.3-seeded DBs); the UI refetches
+         /auth/me on every load (cached-permission staleness); prescription
+         items dictionary panel on the taxonomies page; unused JWT role
+         claim removed; route-level code splitting (antd/vendor/dayjs
+         chunks); stale artifacts removed, single nginx config source, MIT
+         license
+  1.3.0.dev4  prescription update no longer violates the links unique
+         constraint when item pairs are kept (flush orphan deletes first);
+         prescription form rows: trailing empty row auto-appends on typing,
+         abandoned empty rows removed on blur, Enter never submits
+  1.3.0.dev5  prescription EDIT mode gets the trailing empty row too (new
+         items were impossible to add when editing); taxonomies menu entry
+         moved back to the management group
+  1.3.0.dev6  appointment visit stages (reserved → checked-in → referred →
+          finished) with ±1 advance/regress (regress confirmed, perm
+          appointments.stage for front-desk check-in); audit trail records
+          the real client IP behind the nginx proxy (X-Forwarded-For /
+          X-Real-IP); the appointment panel shows the patient's same-day
+          files, prescriptions and questionnaire responses («این روز»
+          tabs, APP_TZ day of the appointment; all-history views live on
+          the patient page); composite (patient_id, date) indexes on
+          attachments / questionnaire_responses / prescriptions
+  1.3.0.dev7  backup tarballs: optional AES-256-GCM encryption
+          (BACKUP_ENCRYPTION_KEY — the artifact downloads as .enc, the
+          importer decrypts it), SHA-256 of the whole artifact in the
+          status + download header (optional expected_sha256 on import),
+          and member-level checksums in the manifest (schema_version 4,
+          verified member-by-member before the destructive import);
+          stale-backup warning banner for admins (BACKUP_STALE_DAYS,
+          default 7, 0 disables) driven by durable completion records in
+          the audit trail
+  1.3.0.dev8  test-suite rewrite: backend unit/api/parity split with
+          shared factories + a permissions matrix sweep; frontend testing
+          (vitest + Testing Library; Playwright E2E against a scratch
+          stack); questionnaire-validator parity corpus
+          (testdata/questionnaire_parity.json) run by BOTH pytest and
+          vitest — pinned the TS formula length/depth limits and the
+          server's whitespace-only-formula normalization; testdata
+          contract keeps the error-message mapping in sync
+  1.3.0  release
 """
 
-__version__ = "1.2.2"
+__version__ = "1.3.0"

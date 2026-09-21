@@ -3,16 +3,23 @@
 
 Reads the frozen snapshot of the legacy SQLite database directly, copies rows
 1:1 into the new schema (PKs preserved), relocates attachment files to UUID
-storage, prints a data-quality report, and verifies counts/sums automatically.
+storage, converts legacy free-text rx into structured prescriptions,
+prints a data-quality report, and verifies counts/sums automatically.
 
 Design constraints:
-- Idempotent: safe to re-run; upserts keyed on preserved PKs.
+- Idempotent: safe to re-run; upserts keyed on preserved PKs (prescriptions
+  keyed by source_appointment_id, dictionary items by normalized name).
 - Non-destructive: never writes to the source SQLite file.
-- 1:1 mapping: no renaming/normalization of legacy values, with ONE
-  documented exception — transaction descriptions are translated from the
+- 1:1 mapping: no renaming/normalization of legacy values, with TWO
+  documented exceptions — transaction descriptions are translated from the
   legacy English types ("Visit"/"Spiro"/"Other") to their current Persian
-  variants (ویزیت/اسپیرو/سایر); unmatched values are kept as-is.
-- Halts ONLY on duplicate national IDs (ambiguous — needs manual resolution).
+  variants (ویزیت/اسپیرو/سایر); unmatched values are kept as-is. Legacy
+  attachments hang off appointments and are re-parented to the patient
+  (resolved via the appointment); legacy free-text rx is converted into
+  prescriptions with the same frozen parser as the 1.3 Alembic migration
+  (backend/app/services/rx_migration.py).
+- Halts ONLY on duplicate national IDs or attachments with unresolvable
+  appointment references (ambiguous — needs manual resolution).
 
 Usage:
   python migrate_sqlite.py --source /path/to/db.sqlite3 \
@@ -176,6 +183,13 @@ def load_source(source_path: Path) -> dict[str, list[dict[str, Any]]]:
         else:
             tables[key] = rows
 
+    # attachments carry the legacy Appointment_id — the new schema hangs
+    # files on the PATIENT, resolved below (after both tables are loaded)
+    for a in tables["attachments"]:
+        a["legacy_appointment_id"] = a.get("appointment_id")
+        a["appointment_id"] = None
+        a["patient_id"] = None
+
     # M2M through-tables: Django names FKs like <model>_id and <model>__id.
     # Map the FK pointing at patients → patient_id; the other → tag/diagnosis_id.
     def normalize_m2m(key: str, other: str, other_col: str) -> None:
@@ -195,6 +209,59 @@ def load_source(source_path: Path) -> dict[str, list[dict[str, Any]]]:
     normalize_m2m("patient_diagnoses", "diagnoses", "diagnosis_id")
     con.close()
     return tables
+
+
+def resolve_attachment_patients(tables: dict[str, list[dict[str, Any]]]) -> list[int]:
+    """Fill attachments.patient_id from the legacy appointment's patient.
+
+    Returns the ids of attachments that could not be resolved (dangling
+    appointment reference — FK integrity of the legacy DB makes this a
+    corruption signal; the caller halts).
+    """
+    appt_patient = {
+        (a.get("id") or a.get("index")): a.get("patient_id")
+        for a in tables["appointments"]
+    }
+    unresolved: list[int] = []
+    for a in tables["attachments"]:
+        pid = appt_patient.get(a.get("legacy_appointment_id"))
+        if pid is None:
+            unresolved.append(a.get("id"))
+            continue
+        a["patient_id"] = pid
+    return unresolved
+
+
+def plan_rx_prescriptions(
+    tables: dict[str, list[dict[str, Any]]],
+) -> tuple[list[Any], dict[str, str]]:
+    """Convert legacy rx free text into planned prescriptions.
+
+    Uses the SAME frozen parser as the 1.3 Alembic migration
+    (app.services.rx_migration) — see that module for the semantics.
+    `prescribed_at` is the appointment's date (legacy tz → UTC).
+    Returns (planned prescriptions, dictionary {norm key: display name}).
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+    from app.services.rx_migration import plan_rx_migration
+
+    rows = []
+    for a in tables["appointments"]:
+        rx = (a.get("rx") or "").strip()
+        if not rx:
+            continue
+        rows.append(
+            (
+                a.get("id") or a.get("index"),
+                a.get("patient_id"),
+                to_utc(parse_legacy_date(a.get("scheduled_at"))),
+                rx,
+            )
+        )
+    return plan_rx_migration(rows)
 
 
 def data_quality_report(tables: dict[str, list[dict[str, Any]]]) -> list[str]:
@@ -418,10 +485,16 @@ async def import_rows(
         if a.get("id") in existing_atts:
             continue
         legacy = (a.get("legacy_file") or "").strip()
+        if a.get("patient_id") is None:
+            # guarded by the halt check in main() — should never happen
+            raise SystemExit(
+                f"attachment {a.get('id')} has no resolvable patient "
+                f"(legacy appointment {a.get('legacy_appointment_id')})"
+            )
         new_rows.append(
             {
                 "id": a.get("id"),
-                "appointment_id": a.get("appointment_id"),
+                "patient_id": a.get("patient_id"),
                 "description": a.get("description") or "",
                 "notes": a.get("notes") or "",
                 # original_filename kept only for rows that ever had a file;
@@ -441,7 +514,7 @@ async def import_rows(
             "attachments",
             [
                 "id",
-                "appointment_id",
+                "patient_id",
                 "description",
                 "notes",
                 "stored_filename",
@@ -454,6 +527,11 @@ async def import_rows(
         )
     c.inserted = len(new_rows)
     results["attachments"] = c
+
+    # --- prescriptions (from legacy rx free text) ---------------------------------
+    results["prescriptions"], results["prescription_items"], results["rx_links"] = (
+        await import_rx_prescriptions(engine, tables)
+    )
 
     # --- M2M links --------------------------------------------------------------------
     for name, table, cols in (
@@ -468,6 +546,129 @@ async def import_rows(
         results[name] = c
 
     return results
+
+
+async def import_rx_prescriptions(
+    engine: Any, tables: dict[str, list[dict[str, Any]]]
+) -> tuple[Counts, Counts, Counts]:
+    """Create prescriptions/prescription_items/links from legacy rx text.
+
+    Idempotent: prescriptions are keyed by source_appointment_id (legacy
+    appointment ids are preserved), dictionary items by normalized name.
+    Uses the same frozen parser as the 1.3 Alembic migration.
+    """
+    from app.services.rx_migration import normalize_item_name, overflow_notes
+    from sqlalchemy import text as sa_text
+
+    planned, dictionary = plan_rx_prescriptions(tables)
+    n_source_rx = len(
+        [a for a in tables["appointments"] if (a.get("rx") or "").strip()]
+    )
+
+    async with engine.begin() as conn:
+        # dictionary: dedupe against existing items by NORMALIZED name
+        # (case/edge punctuation are only display variants)
+        item_id_by_key: dict[str, int] = {}
+        for item_id, name in (
+            await conn.execute(sa_text("SELECT id, name FROM prescription_items"))
+        ).all():
+            item_id_by_key[normalize_item_name(str(name))] = int(item_id)
+
+        inserted_items = 0
+        for key, display in sorted(dictionary.items()):
+            if key in item_id_by_key:
+                continue
+            new_id = (
+                await conn.execute(
+                    sa_text(
+                        "INSERT INTO prescription_items (name) VALUES (:name)"
+                        " RETURNING id"
+                    ),
+                    {"name": display[:128]},
+                )
+            ).scalar_one()
+            item_id_by_key[key] = int(new_id)
+            inserted_items += 1
+
+        done_appts = {
+            int(r[0])
+            for r in await conn.execute(
+                sa_text(
+                    "SELECT source_appointment_id FROM prescriptions"
+                    " WHERE source_appointment_id IS NOT NULL"
+                )
+            )
+        }
+
+        new_rx_rows = []
+        for p in planned:
+            if p.appointment_id in done_appts:
+                continue
+            new_rx_rows.append(
+                {
+                    "patient_id": p.patient_id,
+                    "prescribed_at": p.prescribed_at,
+                    "notes": overflow_notes(p.notes_overflow)[:10000],
+                    "source_appointment_id": p.appointment_id,
+                }
+            )
+        if new_rx_rows:
+            await conn.execute(
+                sa_text(
+                    "INSERT INTO prescriptions (patient_id, prescribed_at, notes,"
+                    " source_appointment_id) VALUES (:patient_id, :prescribed_at,"
+                    " :notes, :source_appointment_id)"
+                ),
+                new_rx_rows,
+            )
+
+        # links: only for prescriptions created on THIS run (a re-run must
+        # not re-insert links of prescriptions that already have them —
+        # uq_prescription_item_links_pair would reject the duplicates);
+        # planned links are already deduped per prescription by normalized key
+        new_appt_ids = {p.appointment_id for p in new_rx_rows}
+        rx_id_by_appt = {
+            int(r[0]): int(r[1])
+            for r in await conn.execute(
+                sa_text(
+                    "SELECT source_appointment_id, id FROM prescriptions"
+                    " WHERE source_appointment_id IS NOT NULL"
+                )
+            )
+            if int(r[0]) in new_appt_ids
+        }
+        link_rows = []
+        for p in planned:
+            rx_id = rx_id_by_appt.get(p.appointment_id)
+            if rx_id is None:  # skipped (previously imported)
+                continue
+            for link in p.links:
+                item_id = item_id_by_key.get(normalize_item_name(link.name))
+                if item_id is None:  # pragma: no cover — dictionary is complete
+                    continue
+                link_rows.append(
+                    {"prescription_id": rx_id, "item_id": item_id, "quantity": link.quantity}
+                )
+        if link_rows:
+            await conn.execute(
+                sa_text(
+                    "INSERT INTO prescription_item_links (prescription_id,"
+                    " item_id, quantity) VALUES (:prescription_id, :item_id,"
+                    " :quantity)"
+                ),
+                link_rows,
+            )
+
+    rx_counts = Counts(
+        source=n_source_rx,
+        inserted=len(new_rx_rows),
+        skipped_existing=n_source_rx - len(new_rx_rows),
+    )
+    item_counts = Counts(source=len(dictionary), inserted=inserted_items)
+    link_counts = Counts(
+        source=sum(len(p.links) for p in planned), inserted=len(link_rows)
+    )
+    return rx_counts, item_counts, link_counts
 
 
 async def update_attachment_meta(
@@ -487,15 +688,12 @@ async def update_attachment_meta(
                 )
             )
         }
-    copied = note_only = missing = reused = 0
-    # Content index of the upload dir: prevents duplicate copies when the
-    # DB was re-imported fresh but the upload dir still holds files from a
-    # previous migration run (stale UUIDs). Identical content → reuse name.
-    content_index: dict[tuple[int, str], str] = {}
-    if apply:
-        for p in upload_dir.iterdir():
-            if p.is_file():
-                content_index.setdefault((_file_size(p), _file_sha(p)), p.name)
+    copied = note_only = missing = 0
+    # NOTE: no content-hash dedup across rows — uq_attachments_stored_filename_live
+    # forbids two LIVE rows sharing one stored_filename, so each attachment
+    # row gets its own copy (identical legacy content is stored multiple
+    # times by design). Re-run safety comes from the existing-skip above:
+    # rows already relocated (stored_filename set) are never reprocessed.
     for a in tables["attachments"]:
         legacy = (a.get("legacy_file") or "").strip()
         aid = a.get("id")
@@ -510,16 +708,9 @@ async def update_attachment_meta(
         if src and src.is_file():
             size = src.stat().st_size
             mime = guess_mime(src.name)
-            key = (size, _file_sha(src))
-            if key in content_index:
-                stored = content_index[key]
-                reused += 1
-            else:
-                stored = f"{uuid.uuid4().hex}{Path(legacy).suffix}"
-                content_index[key] = stored
-                if apply:
-                    shutil.copy2(src, upload_dir / stored)
+            stored = f"{uuid.uuid4().hex}{Path(legacy).suffix}"
             if apply:
+                shutil.copy2(src, upload_dir / stored)
                 async with engine.begin() as conn:
                     await conn.execute(
                         text(
@@ -541,9 +732,8 @@ async def update_attachment_meta(
             missing += 1
             log.warning("attachment %s: physical file missing for %r", aid, legacy)
     log.info(
-        "file relocation: copied=%s (reused=%s) note-only=%s missing=%s",
+        "file relocation: copied=%s note-only=%s missing=%s",
         copied,
-        reused,
         note_only,
         missing,
     )
@@ -588,10 +778,13 @@ async def set_sequences(engine: Any, apply: bool) -> None:
     seqs = {
         "tags": "tags_id_seq",
         "diagnoses": "diagnoses_id_seq",
+        "prescription_items": "prescription_items_id_seq",
         "patients": "patients_id_seq",
         "appointments": "appointments_id_seq",
         "transactions": "transactions_id_seq",
         "attachments": "attachments_id_seq",
+        "prescriptions": "prescriptions_id_seq",
+        "prescription_item_links": "prescription_item_links_id_seq",
         "users": "users_id_seq",
     }
     async with engine.begin() as conn:
@@ -604,12 +797,21 @@ async def set_sequences(engine: Any, apply: bool) -> None:
                 )
 
 
-async def verify(engine: Any, tables: dict[str, list[dict[str, Any]]], apply: bool) -> bool:
+async def verify(
+    engine: Any,
+    tables: dict[str, list[dict[str, Any]]],
+    apply: bool,
+    rx_expected: tuple[int, int, int] | None = None,
+) -> bool:
     """Compare source vs target counts and money sums; print pass/fail.
 
     In dry-run mode nothing was written, so target comparisons are skipped;
     we only verify internal source consistency (FK references inside the
     legacy snapshot) and the money-sum split by payment method.
+
+    ``rx_expected``: (prescriptions, items, links) planned counts for the
+    rx → prescriptions conversion (target may be higher when the DB
+    already holds rows; only monotonic growth is checked).
     """
     from sqlalchemy import text
 
@@ -665,6 +867,22 @@ async def verify(engine: Any, tables: dict[str, list[dict[str, Any]]], apply: bo
             if src != tgt:
                 ok = False
             print(f"  [{match}] {name:<14} source={src:<7} target={tgt}")
+
+        # rx conversion: the planned rows must all be present (target can
+        # exceed the plan only via pre-existing/user-created rows)
+        if rx_expected is not None:
+            for label, table, expected in (
+                ("prescriptions", "prescriptions", rx_expected[0]),
+                ("prescription_items", "prescription_items", rx_expected[1]),
+                ("prescription_item_links", "prescription_item_links", rx_expected[2]),
+            ):
+                tgt = (
+                    await conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                ).scalar()
+                match = "OK " if int(tgt) >= expected else "FAIL"
+                if int(tgt) < expected:
+                    ok = False
+                print(f"  [{match}] {label:<14} expected>={expected:<7} target={tgt}")
 
         src_pos = sum(int(t.get("amount") or 0) for t in tables["transactions"] if t.get("pos"))
         src_cash = sum(
@@ -790,6 +1008,17 @@ async def main() -> int:
     ):
         print(f"  {k:<18} {len(tables[k])} rows")
 
+    # attachments hang on PATIENTS in the new schema — resolve via the
+    # legacy appointment; a dangling reference is corruption → halt
+    unresolved_atts = resolve_attachment_patients(tables)
+    if unresolved_atts:
+        log.error(
+            "attachments whose legacy appointment_id has no matching"
+            " appointment row: %s — resolve manually before importing",
+            unresolved_atts,
+        )
+        return 3
+
     issues = data_quality_report(tables)
     print("\n=== DATA-QUALITY REPORT (non-blocking) ===")
     if not issues:
@@ -802,6 +1031,19 @@ async def main() -> int:
     if dupes and args.apply:
         log.error("Refusing to APPLY with duplicate national IDs present. Resolve first.")
         return 3
+
+    # rx → structured prescriptions (same parser as the 1.3 Alembic migration)
+    planned, dictionary = plan_rx_prescriptions(tables)
+    n_overflow = sum(1 for p in planned if p.notes_overflow)
+    print("\n=== RX CONVERSION PLAN ===")
+    print(f"  appointments with rx text : {len(planned)}")
+    print(f"  prescriptions to create   : {len(planned)}")
+    print(f"  dictionary items (≥ freq) : {len(dictionary)}")
+    print(f"  item links                : {sum(len(p.links) for p in planned)}")
+    print(
+        f"  prescriptions with free-text overflow in notes: {n_overflow}"
+        " (original rx text is also preserved in appointments.rx)"
+    )
 
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -853,7 +1095,16 @@ async def main() -> int:
         await set_sequences(engine, True)
         print(f"  files copied into {args.upload_dir} (UUID names, DB metadata updated)")
 
-    ok = await verify(engine, tables, args.apply)
+    ok = await verify(
+        engine,
+        tables,
+        args.apply,
+        rx_expected=(
+            len(planned),
+            len(dictionary),
+            sum(len(p.links) for p in planned),
+        ),
+    )
     await engine.dispose()
 
     print(f"\nRESULT: {'PASS' if ok else 'FAIL'}")

@@ -10,7 +10,9 @@ recorded in the `audit_log` table before the endpoint returns:
   amount)
 - a JSON `details` payload with field-level diffs (old/new name, backup
   import summaries, purge counts…)
-- the client IP
+- the client IP — resolved as the leftmost `X-Forwarded-For` hop (the
+  original client behind the nginx proxy), falling back to `X-Real-IP`,
+  then to the peer address for direct (non-proxied) access
 
 Login attempts live in the separate `login_audit` table; session end
 (logout) is audited as action `logout` / entity `session`.

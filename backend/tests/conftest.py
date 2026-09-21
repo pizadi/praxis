@@ -3,6 +3,13 @@
 IMPORTANT: environment is configured at module import time, BEFORE any
 `app.*` import happens elsewhere. Pydantic-settings caches values at first
 import, so ordering matters.
+
+Layout:
+- tests/factories.py          — API builders (mk_patient, mk_appointment, …)
+- tests/unit/                 — pure-function tests (no HTTP, no DB)
+- tests/api/                  — per-resource API tests (httpx ASGI client)
+- tests/parity/               — questionnaire-validator parity (shared corpus
+                                with frontend/src/parity)
 """
 
 import os
@@ -35,7 +42,7 @@ async def client():
         yield c
 
 
-# --- Helpers -------------------------------------------------------------------
+# --- auth helpers ----------------------------------------------------------------
 
 
 async def login(
@@ -68,3 +75,46 @@ async def make_user(
         headers=auth(admin_token),
     )
     assert r.status_code == 201, r.text
+
+
+# --- ready-made role fixtures (token strings) --------------------------------------
+
+
+@pytest.fixture
+async def admin_token(client) -> str:
+    return (await login(client))[0]
+
+
+@pytest.fixture
+async def doctor(client, admin_token) -> str:
+    await make_user(client, admin_token, "drhouse", role="doctor")
+    return (await login(client, "drhouse", "passw0rd123"))[0]
+
+
+@pytest.fixture
+async def recep(client, admin_token) -> str:
+    await make_user(client, admin_token, "recep1", role="receptionist")
+    return (await login(client, "recep1", "passw0rd123"))[0]
+
+
+# --- job polling (backup/import run in daemon threads; the tests poll) -------------
+
+
+async def wait_backup_status(client: AsyncClient, token: str, status: str) -> dict:
+    for _ in range(100):
+        r = await client.get("/api/v1/admin/backup", headers=auth(token))
+        st = r.json()
+        if st["status"] == status:
+            return st
+    raise AssertionError(f"backup never reached {status!r}: {st}")
+
+
+async def wait_import_done(client: AsyncClient, token: str) -> dict:
+    for _ in range(100):
+        r = await client.get("/api/v1/admin/backup/import", headers=auth(token))
+        if r.status_code != 200:
+            raise AssertionError(f"import status endpoint: {r.status_code} {r.text}")
+        st = r.json()
+        if st["status"] != "importing":
+            return st
+    raise AssertionError("import did not finish")
