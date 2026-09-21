@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import SQLAlchemyError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -59,8 +60,8 @@ if args.database_url:
     # override must land in the environment BEFORE any app.* import.
     os.environ["DATABASE_URL"] = args.database_url
 
-from app.core.config import settings  # noqa: E402
-from app.db.migrations import run_migrations, sync_url  # noqa: E402
+from app.core.config import settings
+from app.db.migrations import run_migrations, sync_url
 
 
 def current_revision() -> str:
@@ -70,7 +71,7 @@ def current_revision() -> str:
             return "none (no alembic_version)"
         rev = engine.connect().execute(text("SELECT version_num FROM alembic_version")).scalar()
         return str(rev) if rev else "none (empty alembic_version)"
-    except Exception as exc:  # unreachable DB etc. — a purge would fail anyway
+    except (SQLAlchemyError, OSError) as exc:  # unreachable DB — a purge would fail anyway
         sys.exit(f"Cannot reach the target database: {exc}")
     finally:
         engine.dispose()
@@ -107,7 +108,7 @@ def drop_schema() -> None:
                 conn.execute(text("PRAGMA foreign_keys = OFF"))
                 names = inspect(engine).get_table_names()
                 for name in names:
-                    conn.execute(text(f'DROP TABLE IF EXISTS "{name}"'))  # noqa: S608
+                    conn.execute(text(f'DROP TABLE IF EXISTS "{name}"'))
                 conn.execute(text("PRAGMA foreign_keys = ON"))
             else:
                 conn.execute(text("DROP SCHEMA public CASCADE"))

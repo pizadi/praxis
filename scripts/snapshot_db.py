@@ -60,7 +60,7 @@ def snapshot_postgres(container: str, out: Path) -> None:
         'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom',
     ]
     with out.open("wb") as fh:
-        proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.PIPE)  # noqa: S603
+        proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.PIPE, check=False)
     if proc.returncode != 0:
         out.unlink(missing_ok=True)
         sys.exit(f"pg_dump failed ({proc.returncode}):\n{proc.stderr.decode(errors='replace')}")
@@ -71,11 +71,12 @@ def validate_postgres(container: str, out: Path) -> None:
     if len(data) < 100 or not data.startswith(MAGIC):
         sys.exit(f"{out}: not a pg_dump custom archive (size {len(data)})")
     with out.open("rb") as fh:
-        check = subprocess.run(  # noqa: S603
+        check = subprocess.run(
             ["docker", "exec", "-i", container, "pg_restore", "--list"],
             stdin=fh,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            check=False,
         )
     if check.returncode != 0:
         sys.exit(
