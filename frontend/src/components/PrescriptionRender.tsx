@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
   App as AntApp,
   AutoComplete,
@@ -12,7 +12,7 @@ import {
   Typography,
   type FormInstance,
 } from 'antd'
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 
 import { api, apiError } from '../api/client'
 import type { NamedRef, Prescription, PrescriptionItemInput } from '../api/types'
@@ -149,21 +149,41 @@ export function PrescriptionForm({
   }
 
   const finish = (values: PrescriptionFormValues) => {
-    const items: PrescriptionItemInput[] = (values.items ?? []).map((row) => {
-      const id = knownIds.current.get((row.name ?? '').trim().toLowerCase())
-      return {
-        item_id: id,
-        name: id === undefined ? (row.name ?? '').trim() : undefined,
-        quantity: row.quantity == null ? null : Number(row.quantity),
+    const items: PrescriptionItemInput[] = []
+    for (const row of values.items ?? []) {
+      const name = (row.name ?? '').trim()
+      const qtyStr = row.quantity == null ? '' : String(row.quantity).trim()
+      const qty = qtyStr === '' ? null : Number(qtyStr)
+      if (!name && qtyStr === '') continue // an abandoned empty row — drop silently
+      if (!name) {
+        message.error('برای قلمی که تعداد دارد، نام را وارد کنید')
+        return
       }
-    })
+      const id = knownIds.current.get(name.toLowerCase())
+      items.push({
+        item_id: id,
+        name: id === undefined ? name : undefined,
+        quantity: qty,
+      })
+    }
     onFinish({ prescribed_at: values.prescribed_at, notes: values.notes ?? '', items })
+  }
+
+  // Enter must never submit the form (a half-typed row is not a save
+  // intention). Block the browser's implicit submit for every input except
+  // textareas (newlines are legitimate there) and buttons (keyboard
+  // activation of ذخیره must keep working).
+  const blockSubmitEnter = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement
+    if (e.key !== 'Enter' || t.tagName === 'TEXTAREA' || t.tagName === 'BUTTON') return
+    e.preventDefault()
   }
 
   return (
     <Form
       form={form}
       layout="vertical"
+      onKeyDown={blockSubmitEnter}
       onFinish={finish}
       initialValues={{
         notes: initial?.notes ?? '',
@@ -177,50 +197,74 @@ export function PrescriptionForm({
         <JalaliDateTimePicker />
       </Form.Item>
       <Form.List name="items">
-        {(fields, { add, remove }) => (
-          <>
-            {fields.map((field) => (
-              <Space key={field.key} align="baseline" wrap>
-                <Form.Item
-                  name={[field.name, 'name']}
-                  rules={[{ required: true, message: 'نام قلم الزامی است' }]}
-                  style={{ minWidth: 280 }}
-                >
-                  <AutoComplete
-                    placeholder="نام دارو/آزمایش (مثلاً P1)"
-                    options={suggestions
-                      .filter((s) => s.name !== form.getFieldValue(['items', field.name, 'name']))
-                      .map((s) => ({ value: s.name }))}
-                    onSearch={(text) => void searchItems(text)}
-                    filterOption={false}
-                    notFoundContent={searching ? '…' : undefined}
+        {(fields, { add, remove }) => {
+          // trailing-empty-row invariant: the list always ends with one
+          // empty row — typing in it spawns another row underneath; a row
+          // left completely empty is dropped when it loses focus (unless it
+          // IS the trailing affordance row)
+          const isLast = (idx: number) => idx === fields.length - 1
+          const appendIfLast = (idx: number, value: unknown) => {
+            const filled = typeof value === 'string' ? value.trim() !== '' : value != null
+            if (isLast(idx) && filled) add({ name: '' })
+          }
+          const dropIfAbandoned = (idx: number) => {
+            const list: PrescriptionRow[] = form.getFieldValue('items') ?? []
+            const row = list[idx]
+            const name = String(row?.name ?? '').trim()
+            const qtyStr = row?.quantity == null ? '' : String(row.quantity).trim()
+            if (name === '' && qtyStr === '' && !isLast(idx)) remove(idx)
+          }
+          return (
+            <>
+              {fields.map((field) => (
+                <Space key={field.key} align="baseline" wrap>
+                  <Form.Item
+                    name={[field.name, 'name']}
+                    style={{ minWidth: 280 }}
+                  >
+                    <AutoComplete
+                      placeholder="نام دارو/آزمایش (مثلاً P1)"
+                      options={suggestions
+                        .filter((s) => s.name !== form.getFieldValue(['items', field.name, 'name']))
+                        .map((s) => ({ value: s.name }))}
+                      onSearch={(text) => void searchItems(text)}
+                      onChange={(v) => appendIfLast(field.name, v)}
+                      onBlur={() => dropIfAbandoned(field.name)}
+                      filterOption={false}
+                      notFoundContent={searching ? '…' : undefined}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name={[field.name, 'quantity']}
+                    rules={[
+                      {
+                        type: 'integer',
+                        min: 1,
+                        message: 'تعداد باید عدد صحیح ≥ ۱ باشد (خالی = بدون تعداد)',
+                      },
+                    ]}
+                  >
+                    <InputNumber
+                      placeholder="تعداد"
+                      style={{ width: 120 }}
+                      onChange={(v) => appendIfLast(field.name, v)}
+                      onBlur={() => dropIfAbandoned(field.name)}
+                    />
+                  </Form.Item>
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => {
+                      remove(field.name)
+                      if (fields.length <= 1) add({ name: '' }) // keep the affordance row
+                    }}
                   />
-                </Form.Item>
-                <Form.Item
-                  name={[field.name, 'quantity']}
-                  rules={[
-                    {
-                      type: 'integer',
-                      min: 1,
-                      message: 'تعداد باید عدد صحیح ≥ ۱ باشد (خالی = بدون تعداد)',
-                    },
-                  ]}
-                >
-                  <InputNumber placeholder="تعداد" style={{ width: 120 }} />
-                </Form.Item>
-                <Button
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => remove(field.name)}
-                />
-              </Space>
-            ))}
-            <Button type="dashed" onClick={() => add({ name: '' })} icon={<PlusOutlined />} block>
-              افزودن قلم
-            </Button>
-          </>
-        )}
+                </Space>
+              ))}
+            </>
+          )
+        }}
       </Form.List>
       <Form.Item name="notes" label="یادداشت" style={{ marginTop: 16 }}>
         <Input.TextArea rows={2} maxLength={10000} placeholder="اختیاری" />
