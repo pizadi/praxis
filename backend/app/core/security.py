@@ -20,7 +20,7 @@ def verify_password(password: str, hashed: str) -> bool:
     return pwd_context.verify(password, hashed)
 
 
-def _create_token(sub: str, token_type: TokenType, minutes: int, role: str | None = None) -> str:
+def _create_token(sub: str, token_type: TokenType, minutes: int) -> str:
     now = dt.datetime.now(dt.UTC)
     payload: dict[str, Any] = {
         "sub": sub,
@@ -29,13 +29,11 @@ def _create_token(sub: str, token_type: TokenType, minutes: int, role: str | Non
         "exp": now + dt.timedelta(minutes=minutes),
         "jti": uuid.uuid4().hex,
     }
-    if role is not None:
-        payload["role"] = role
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
-def create_access_token(user_id: int, role: str) -> str:
-    return _create_token(str(user_id), "access", settings.access_token_expire_minutes, role)
+def create_access_token(user_id: int) -> str:
+    return _create_token(str(user_id), "access", settings.access_token_expire_minutes)
 
 
 def create_refresh_token(user_id: int) -> str:
