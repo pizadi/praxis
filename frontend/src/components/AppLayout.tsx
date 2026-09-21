@@ -21,7 +21,7 @@ const GROUPS: { title: string; items: MenuItem[] }[] = [
       { key: '/', label: 'داشبورد' },
       { key: '/schedule', label: 'برنامه روزانه' },
       { key: '/patients', label: 'بیماران' },
-      { key: '/taxonomies', label: 'برچسب‌ها و تشخیص‌ها' },
+      { key: '/taxonomies', label: 'برچسب‌ها، تشخیص‌ها و نسخه‌ها' },
     ],
   },
   {
