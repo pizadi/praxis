@@ -53,6 +53,10 @@ Version history:
          claim removed; route-level code splitting (antd/vendor/dayjs
          chunks); stale artifacts removed, single nginx config source, MIT
          license
+  1.3.0.dev4  prescription update no longer violates the links unique
+         constraint when item pairs are kept (flush orphan deletes first);
+         prescription form rows: trailing empty row auto-appends on typing,
+         abandoned empty rows removed on blur, Enter never submits
 """
 
-__version__ = "1.3.0.dev3"
+__version__ = "1.3.0.dev4"
