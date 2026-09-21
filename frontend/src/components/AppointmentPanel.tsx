@@ -30,6 +30,7 @@ import { useSearchParams } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
 import type { Appointment, Attachment, Page, Transaction } from '../api/types'
+import DigitInput from './DigitInput'
 import { downloadAttachment } from '../lib/files'
 import { fileSize, formatMoney } from '../lib/jalali'
 import { useUser } from './AppLayout'
@@ -425,8 +426,14 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
                     style={{ width: 180 }}
                   />
                 </Form.Item>
-                <Form.Item name="amount" rules={[{ required: true }]}>
-                  <Input type="number" placeholder="مبلغ" min={0} />
+                <Form.Item
+                  name="amount"
+                  rules={[
+                    { required: true },
+                    { pattern: /^\d+$/, message: 'مبلغ فقط عدد است' },
+                  ]}
+                >
+                  <DigitInput inputMode="numeric" placeholder="مبلغ" />
                 </Form.Item>
                 <Form.Item name="pos" label="روش">
                   <Radio.Group>

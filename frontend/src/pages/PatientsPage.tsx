@@ -121,7 +121,7 @@ export default function PatientsPage() {
             placeholder="جستجو بر اساس نام، کد ملی یا شماره تلفن…"
             allowClear
             onSearch={(v) => {
-              setQ(v)
+              setQ(toEnDigits(v.trim()))
               setPage(1)
             }}
           />

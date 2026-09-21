@@ -28,6 +28,8 @@ Version history:
          tag/diagnosis lists ordered too); rename-onto-existing offers a
          merge (links move to the survivor, source soft-deleted, one
          transaction, audited as action merge)
+  1.2.2.dev3  questionnaire fill form: brief valid-range hint under number
+         questions ("0-12", "≥12", "≤12")
 """
 
-__version__ = "1.2.2.dev2"
+__version__ = "1.2.2.dev3"

@@ -127,6 +127,17 @@ export function questionRule(q: Question): Rule[] {
   return rules
 }
 
+/** Brief valid-range hint for number questions ("≥-5 ≤12", "≥0", "≤12");
+ * bounds are inclusive (matching the server-side check). ≥/≤ everywhere —
+ * more readable than a dash range when negative values are allowed. Empty
+ * when the question has no bounds. */
+export function rangeHint(q: NumberQuestion): string {
+  if (q.min != null && q.max != null) return `≥${q.min} ≤${q.max}`
+  if (q.min != null) return `≥${q.min}`
+  if (q.max != null) return `≤${q.max}`
+  return ''
+}
+
 // --- score formula (mirror backend app/services/scoring.py) ---------------------
 
 type FNode =

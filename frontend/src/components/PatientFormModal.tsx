@@ -4,6 +4,7 @@ import { App as AntApp, Form, Input, Modal, Select } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 
 import { api, apiError } from '../api/client'
+import DigitInput from './DigitInput'
 import { useUser } from './AppLayout'
 import type { NamedRef, Page, Patient } from '../api/types'
 
@@ -120,7 +121,7 @@ export default function PatientFormModal({
             { pattern: /^\d{10}$/, message: 'کد ملی باید ۱۰ رقم باشد' },
           ]}
         >
-          <Input />
+          <DigitInput inputMode="numeric" />
         </Form.Item>
         <Form.Item name="first_name" label="نام" rules={[{ required: true }]}>
           <Input />
@@ -136,7 +137,7 @@ export default function PatientFormModal({
             { pattern: /^\d{4}$/, message: 'سال تولد باید ۴ رقم باشد' },
           ]}
         >
-          <Input />
+          <DigitInput inputMode="numeric" />
         </Form.Item>
         <Form.Item name="gender" label="جنسیت" rules={[{ required: true }]}>
           <Select
@@ -151,7 +152,7 @@ export default function PatientFormModal({
           label="تلفن"
           rules={[{ pattern: /^\d+$/, message: 'فقط رقم' }]}
         >
-          <Input />
+          <DigitInput inputMode="tel" />
         </Form.Item>
         <Form.Item name="insurance" label="بیمه">
           <Input />

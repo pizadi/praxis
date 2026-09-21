@@ -16,7 +16,8 @@ import {
 import { ClearOutlined, EditOutlined } from '@ant-design/icons'
 
 import type { Answers, FormatDoc, Question } from '../lib/questionnaire'
-import { mergeResponse, questionRule } from '../lib/questionnaire'
+import { mergeResponse, questionRule, rangeHint } from '../lib/questionnaire'
+import { toEnDigits } from '../lib/jalali'
 
 /**
  * Read-only rendering of a saved response merged against the CURRENT
@@ -217,7 +218,18 @@ export function QuestionnaireForm({
           rules={questionRule(q)}
         >
           {q.type === 'number' ? (
-            <InputNumber style={{ width: 200 }} addonAfter={q.unit || undefined} />
+            <InputNumber
+              style={{ width: 200 }}
+              parser={(v) => toEnDigits(v ?? '')}
+              addonAfter={q.unit || undefined}
+              suffix={
+                rangeHint(q) ? (
+                  <span style={{ color: themeToken.colorTextSecondary, fontSize: 11, direction: 'ltr' }}>
+                    {rangeHint(q)}
+                  </span>
+                ) : undefined
+              }
+            />
           ) : q.type === 'choice' ? (
             <Radio.Group>
               <Space direction="vertical" size={2}>
