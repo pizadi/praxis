@@ -583,8 +583,17 @@ async def import_backup(
     started = False
     tar_path: str | None = None
     try:
-        # spool the upload to a temp file the worker thread can re-open
-        fd, tar_path = tempfile.mkstemp(prefix="clinic-import-", suffix=".tar.gz")
+        # spool the upload to a temp file the worker thread can re-open.
+        # BACKUP_DIR (the persistent volume, hidden dir) — tarballs can be
+        # huge; they must not fill the container layer. The dot-dir is
+        # skipped by the archiver and the uploads purge alike. No size cap:
+        # this endpoint does NOT use MAX_UPLOAD_BYTES (attachment cap) —
+        # imports are admin-initiated and streamed to disk.
+        backup_dir = settings.backup_dir_resolved
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        fd, tar_path = tempfile.mkstemp(
+            prefix="clinic-import-", suffix=".tar.gz", dir=backup_dir
+        )
         with os.fdopen(fd, "wb") as out:
             while chunk := await file.read(1024 * 1024):
                 out.write(chunk)

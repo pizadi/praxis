@@ -127,6 +127,12 @@ Version history:
           logged 'server closed the connection unexpectedly' (harmless
           but alarming); verified: stray holder → 1 disconnect, no pool
           noise, purge completes
+  1.3.1.dev6  backup import accepts huge tarballs: nginx drops the body
+          cap for exactly POST /admin/backup/import (client_max_body_size
+          0 + request buffering off — attachments keep their 50 MB cap);
+          the upload spools onto the persistent volume (BACKUP_DIR, not
+          container /tmp); the UI hashes the file incrementally (never
+          whole-file in memory) and shows live hashing + upload progress
 """
 
-__version__ = "1.3.1.dev5"
+__version__ = "1.3.1.dev6"

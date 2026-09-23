@@ -106,6 +106,13 @@ uploads/<name>           the uploaded patient files
 - `POST /admin/backup/import` — multipart tarball (perm `backup.manage`,
   audited). `GET /admin/backup/import` polls; the job runs in a background
   thread sharing one lock with backup (409 `backup_running` if busy).
+- **No size cap**: the tarball is exempt from `MAX_UPLOAD_BYTES` (that limit
+  guards patient attachments only) — nginx accepts an unlimited body for
+  this exact route (`client_max_body_size 0`) with request buffering off,
+  so the upload streams straight through to the api, which spools it to
+  `BACKUP_DIR` on the persistent volume in 1 MiB chunks. The UI shows
+  hashing + upload progress and hashes the file incrementally (never
+  whole-file in memory).
 - The tarball is pre-validated before anything happens: member allowlist
   (`manifest.json`, `db/…`, `uploads/…`), zip-slip guards, size caps —
   invalid → 422 `invalid_backup`.

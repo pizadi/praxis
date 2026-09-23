@@ -5,6 +5,7 @@ import {
   App as AntApp,
   Button,
   Card,
+  Progress,
   Space,
   Spin,
   Statistic,
@@ -22,6 +23,7 @@ import type { RcFile } from 'antd/es/upload'
 
 import { api, API_BASE, apiError } from '../api/client'
 import { toFaDigits } from '../lib/jalali'
+import { sha256File } from '../lib/sha256'
 
 interface BackupStatus {
   status: 'idle' | 'running' | 'ready' | 'error'
@@ -131,13 +133,22 @@ export default function BackupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ist])
 
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
+  const [hashPct, setHashPct] = useState<number | null>(null)
+
   const doImport = async (f: RcFile, force: boolean, sha256?: string) => {
     const fd = new FormData()
     fd.append('file', f)
     fd.append('force', force ? 'true' : 'false')
     if (sha256) fd.append('expected_sha256', sha256)
+    setUploadPct(0)
     try {
-      await api.post('/admin/backup/import', fd)
+      await api.post('/admin/backup/import', fd, {
+        onUploadProgress: (e) => {
+          const frac = e.progress ?? (e.total ? e.loaded / e.total : 0)
+          setUploadPct(Math.min(100, Math.round(frac * 100)))
+        },
+      })
       message.success('واردسازی آغاز شد')
       await importStatus.refetch()
     } catch (err) {
@@ -163,21 +174,25 @@ export default function BackupPage() {
       } else {
         message.error(e.message)
       }
+    } finally {
+      setUploadPct(null)
     }
   }
 
   const pickImport = async (f: RcFile) => {
     lastPicked.current = f
     setImportFile(f)
-    // client-side artifact checksum — the server verifies it before importing
+    // client-side artifact checksum — the server verifies it before importing.
+    // STREAMED (fixed slices): a multi-GB tarball must never be read into
+    // memory whole (f.arrayBuffer() would OOM the tab).
     let sha256: string | undefined
+    setHashPct(0)
     try {
-      const digest = await crypto.subtle.digest('SHA-256', await f.arrayBuffer())
-      sha256 = Array.from(new Uint8Array(digest))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
+      sha256 = await sha256File(f, (frac) => setHashPct(Math.round(frac * 100)))
     } catch {
-      sha256 = undefined // no WebCrypto (insecure context) — server check is optional
+      sha256 = undefined // hashing unavailable — the server-side check is optional
+    } finally {
+      setHashPct(null)
     }
     void doImport(f, false, sha256)
   }
@@ -281,13 +296,16 @@ export default function BackupPage() {
             accept=".tar.gz,.tgz,.enc,application/gzip,application/octet-stream"
             maxCount={1}
             showUploadList={false}
-            disabled={ist === 'importing'}
+            disabled={ist === 'importing' || uploadPct != null || hashPct != null}
             beforeUpload={(f) => {
               void pickImport(f)
               return false // POST via the axios client, with confirm-flow support
             }}
           >
-            <Button icon={<CloudUploadOutlined />} loading={ist === 'importing'}>
+            <Button
+              icon={<CloudUploadOutlined />}
+              loading={ist === 'importing' || uploadPct != null || hashPct != null}
+            >
               انتخاب فایل پشتیبان…
             </Button>
           </Upload>
@@ -304,6 +322,22 @@ export default function BackupPage() {
             <Typography.Text style={{ fontSize: 12 }}>
               فایل انتخاب‌شده: {importFile.name}
             </Typography.Text>
+          )}
+          {hashPct != null && (
+            <div>
+              <Progress percent={hashPct} size="small" format={(p) => `${toFaDigits((p ?? 0).toFixed(0))}٪`} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                محاسبهٔ کنترل مجموع (SHA-256)…
+              </Typography.Text>
+            </div>
+          )}
+          {uploadPct != null && (
+            <div>
+              <Progress percent={uploadPct} format={(p) => `${toFaDigits((p ?? 0).toFixed(0))}٪`} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                در حال بارگذاری فایل پشتیبان… (فایل مستقیم به سرور جریان می‌یابد — تب را نبندید)
+              </Typography.Text>
+            </div>
           )}
           {ist === 'importing' && (
             <Space>

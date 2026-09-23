@@ -250,6 +250,42 @@ async def test_import_rejects_garbage(client):
     )
     assert r.status_code == 422  # invalid_backup
 
+
+async def test_import_ignores_attachment_upload_cap(client, monkeypatch):
+    """Backup imports are exempt from MAX_UPLOAD_BYTES (the attachment cap):
+    tarballs are admin-initiated and streamed to disk — nginx is the only
+    layer that ever capped them (fixed in nginx.conf)."""
+    from app.core.config import settings as cfg
+
+    monkeypatch.setattr(cfg, "max_upload_bytes", 1024)  # 1 KB — absurdly low
+    token, _ = await login(client)
+
+    manifest = json.dumps({
+        "schema_version": 2, "app_version": "1.0.0",
+        "tables": {}, "table_columns": {},
+    })
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = manifest.encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+        pad = os.urandom(4096)  # incompressible — the stream exceeds the cap
+        info = tarfile.TarInfo(name="uploads/pad.bin")
+        info.size = len(pad)
+        tar.addfile(info, io.BytesIO(pad))
+    assert len(buf.getvalue()) > 1024  # sanity: the upload exceeds the cap
+
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", buf.getvalue(), "application/gzip")},
+        data={"force": "true"},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+
     # zip-slip member → refused
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:

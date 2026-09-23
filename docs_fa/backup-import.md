@@ -106,6 +106,12 @@ uploads/<name>           فایل‌های بارگذاری‌شدهٔ بیما�
 - `POST /admin/backup/import` — آپلود multipart (دسترسی `backup.manage`،
   لاگ‌شده). `GET /admin/backup/import` برای وضعیت؛ کار در نخ پس‌زمینه با
   قفل مشترک با پشتیبان‌گیری (اگر شغلی هست 409 `backup_running`).
+- **بدون سقف حجم**: tarball مشمول `MAX_UPLOAD_BYTES` نیست (آن سقف فقط برای
+  پیوست‌های بیمار است) — nginx برای همین مسیر بدنهٔ بی‌محدودیت می‌پذیرد
+  (`client_max_body_size 0`) با خاموش بودن request buffering؛ یعنی آپلود
+  مستقیم به api جریان می‌یابد و api آن را قطعه‌قطعه (۱ مگابایت) روی volume
+  پایدار در `BACKUP_DIR` می‌نویسد. UI هم پیشرفت هش و پیشرفت آپلود را نشان
+  می‌دهد و فایل را تکه‌تکه هش می‌کند (هرگز کل فایل در حافظه).
 - tarball پیش از هر تغییری اعتبارسنجی می‌شود: allowlist اعضا
   (`manifest.json`، `db/…`، `uploads/…`)، محافظ zip-slip، سقف حجم —
   نامعتبر → 422 `invalid_backup`.
