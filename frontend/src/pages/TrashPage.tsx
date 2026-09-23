@@ -92,6 +92,7 @@ function TrashTable({
       rowKey="id"
       loading={isLoading}
       dataSource={data?.items ?? []}
+      scroll={{ x: 'max-content' }}
       pagination={{
         current: page,
         pageSize: 20,

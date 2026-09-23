@@ -183,6 +183,7 @@ function TaxonomyPanel({
         loading={items.isFetching}
         dataSource={items.data?.items ?? []}
         columns={columns}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: 'خالی است' }}
         pagination={{
           total: items.data?.total ?? 0,
@@ -231,15 +232,15 @@ export default function TaxonomiesPage() {
   return (
     <div>
       <Typography.Title level={3}>برچسب‌ها، تشخیص‌ها و آیتم‌های نسخه</Typography.Title>
-      <Row gutter={16}>
-        <Col span={8}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={8}>
           <TaxonomyPanel kind="tags" title="برچسب‌ها" color="blue" canEdit={hasPerm('taxonomies.write')} />
         </Col>
-        <Col span={8}>
+        <Col xs={24} lg={8}>
           <TaxonomyPanel kind="diagnoses" title="تشخیص‌ها" color="red" canEdit={hasPerm('taxonomies.write')} />
         </Col>
         {hasPerm('prescriptions.read') && (
-          <Col span={8}>
+          <Col xs={24} lg={8}>
             <TaxonomyPanel
               kind="prescription-items"
               title="آیتم‌های نسخه"

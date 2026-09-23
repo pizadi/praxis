@@ -220,7 +220,7 @@ export default function QuestionnaireResponsesPage() {
               showSearch
               optionFilterProp="label"
               placeholder="انتخاب پرسش‌نامه"
-              style={{ width: 320 }}
+              style={{ width: '100%', maxWidth: 320, minWidth: 220 }}
               value={templateId ?? undefined}
               onChange={(v) => {
                 setTemplateId(v)

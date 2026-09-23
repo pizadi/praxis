@@ -96,6 +96,7 @@ export default function UsersPage() {
           loading={users.isLoading}
           dataSource={users.data?.items ?? []}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'نام کاربری', dataIndex: 'username' },
             { title: 'نام کامل', dataIndex: 'full_name' },

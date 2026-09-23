@@ -79,13 +79,13 @@ export default function TodayPaymentsPage() {
           <Typography.Text strong style={{ fontSize: 16 }}>
             {formatJalali(date)}
           </Typography.Text>
-          <Row gutter={16}>
-            <Col span={8}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} md={8}>
               <Card>
                 <Statistic title="جمع پرداخت‌ها" value={formatMoney(total)} />
               </Card>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12} md={8}>
               <Card>
                 <Statistic title="تعداد تراکنش‌ها" value={toFaDigits(data?.total ?? 0)} />
               </Card>
@@ -98,6 +98,7 @@ export default function TodayPaymentsPage() {
             dataSource={summary.data ?? []}
             locale={{ emptyText: 'پرداختی در این روز ثبت نشده است' }}
             pagination={false}
+            scroll={{ x: 'max-content' }}
             columns={[
               { title: 'نوع پرداخت', dataIndex: 'description' },
               { title: 'تعداد', dataIndex: 'count', render: (n: number) => toFaDigits(n) },
@@ -112,6 +113,7 @@ export default function TodayPaymentsPage() {
             loading={isLoading}
             dataSource={items}
             locale={{ emptyText: 'پرداختی در این روز ثبت نشده است' }}
+            scroll={{ x: 'max-content' }}
             pagination={
               (data?.total ?? 0) > 50 ? { pageSize: 50, total: data?.total } : false
             }

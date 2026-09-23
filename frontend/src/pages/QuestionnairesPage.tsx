@@ -206,6 +206,7 @@ export default function QuestionnairesPage() {
           loading={templates.isLoading}
           dataSource={templates.data?.items ?? []}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'نام', dataIndex: 'name' },
             { title: 'توضیح', dataIndex: 'description' },
@@ -240,7 +241,7 @@ export default function QuestionnairesPage() {
         }}
         onOk={() => form.submit()}
         confirmLoading={save.isPending}
-        width={860}
+        width="min(96vw, 860px)"
         destroyOnHidden
       >
         <BuilderForm form={form} onFinish={(v) => save.mutate(v)} />
@@ -457,7 +458,9 @@ function BuilderForm({
                   dir="ltr"
                   placeholder="مثلاً: 0.5 * pain_level + mobility"
                   style={{
-                    width: 420,
+                    width: '100%',
+                    maxWidth: 420,
+                    display: 'block',
                     direction: 'ltr',
                     textAlign: 'left',
                     fontFamily: 'monospace',

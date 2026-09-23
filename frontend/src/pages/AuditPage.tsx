@@ -103,6 +103,7 @@ export default function AuditPage() {
           rowKey="id"
           loading={isLoading}
           dataSource={data?.items ?? []}
+          scroll={{ x: 'max-content' }}
           pagination={{
             current: page,
             pageSize: 50,

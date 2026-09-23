@@ -56,7 +56,14 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
         background: token.colorBgLayout,
       }}
     >
-      <Card style={{ width: 360, textAlign: 'center' }}>
+      <Card
+        style={{
+          width: '100%',
+          maxWidth: 360,
+          marginInline: 12,
+          textAlign: 'center',
+        }}
+      >
         <Typography.Title level={3}>پراکسیس</Typography.Title>
         <Form layout="vertical" onFinish={finish}>
           <Form.Item

@@ -559,9 +559,9 @@ export default function PatientDetailPage() {
   }
 
   return (
-    <Row gutter={16} style={{ minHeight: 'calc(100vh - 112px)' }}>
+    <Row gutter={[16, 16]} style={{ minHeight: 'calc(100vh - 112px)' }}>
       {/* ---------- sidebar: patient info + views ---------- */}
-      <Col span={7}>
+      <Col xs={24} md={7}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Card
             title={`${patient.first_name} ${patient.last_name}`}
@@ -748,6 +748,7 @@ export default function PatientDetailPage() {
                 loading={allFiles.isLoading}
                 dataSource={allFiles.data ?? []}
                 locale={{ emptyText: 'فایلی موجود نیست' }}
+                scroll={{ x: 'max-content' }}
                 rowClassName={(f) => (selectedFileId === f.id ? 'ant-table-row-selected' : '')}
                 onRow={(f) => ({
                   onClick: () => setSelectedFileId(f.id),
@@ -922,7 +923,7 @@ export default function PatientDetailPage() {
       </Col>
 
       {/* ---------- main pane (visually left in RTL) ---------- */}
-      <Col span={17}>
+      <Col xs={24} md={17}>
         {view === 'appointments' &&
           (selectedAppt == null ? (
             <Card>
@@ -980,7 +981,7 @@ export default function PatientDetailPage() {
                     showSearch
                     optionFilterProp="label"
                     placeholder="قالب پرسش‌نامه"
-                    style={{ width: 320 }}
+                    style={{ width: '100%', maxWidth: 320 }}
                     value={qPickTemplate ?? undefined}
                     onChange={setQPickTemplate}
                     options={(qTemplates.data?.items ?? []).map((t) => ({
@@ -1083,7 +1084,7 @@ export default function PatientDetailPage() {
         title="تغییرات ذخیره نشده"
         closable={false}
         maskClosable={false}
-        width={440}
+        width="min(96vw, 440px)"
         footer={
           <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
             <Button onClick={() => setPendingNav(null)}>بازگشت به ویرایش</Button>

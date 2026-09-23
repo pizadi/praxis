@@ -27,8 +27,8 @@ export default function DashboardPage() {
   return (
     <div>
       <Typography.Title level={3}>داشبورد — نوبت‌های امروز</Typography.Title>
-      <Row gutter={16}>
-        <Col span={8}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} md={8}>
           <Card>
             <Statistic title="نوبت‌های امروز" value={toFaDigits(data?.total ?? 0)} />
           </Card>

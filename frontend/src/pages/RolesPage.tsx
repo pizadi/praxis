@@ -90,6 +90,7 @@ export default function RolesPage() {
           loading={roles.isLoading}
           dataSource={roles.data?.items ?? []}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           expandable={{
             expandedRowRender: (r) => (
               <Typography.Paragraph style={{ margin: 0 }}>
@@ -156,7 +157,7 @@ export default function RolesPage() {
         }}
         onOk={() => form.submit()}
         confirmLoading={save.isPending}
-        width={720}
+        width="min(96vw, 720px)"
         destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
