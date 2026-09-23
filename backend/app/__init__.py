@@ -133,6 +133,12 @@ Version history:
           the upload spools onto the persistent volume (BACKUP_DIR, not
           container /tmp); the UI hashes the file incrementally (never
           whole-file in memory) and shows live hashing + upload progress
+  1.3.1.dev7  import summary: the version-skew warning no longer shows
+          when there is NO skew (an empty dict is truthy in JS — the
+          warning rendered with empty parens); the PG import no longer
+          sends a redundant BEGIN (psycopg2 already opens the
+          transaction — silenced the server's 'there is already a
+          transaction in progress' warning)
 """
 
-__version__ = "1.3.1.dev6"
+__version__ = "1.3.1.dev7"

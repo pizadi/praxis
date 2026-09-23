@@ -365,13 +365,14 @@ export default function BackupPage() {
                     بارگذاری شد — {toFaDigits(importStatus.data.summary.uploads_moved)} فایل
                     بازگردانده شد.
                   </span>
-                  {importStatus.data.summary.skew && (
-                    <Typography.Text type="warning" style={{ fontSize: 12 }}>
-                      اختلاف نسخهٔ شِما: ستون‌های جدیدِ این نسخه برای ردیف‌های واردشده خالی/پیش‌فرض
-                      گذاشته شدند و ستون‌های ناشناختهٔ پشتیبان نادیده گرفته شدند (
-                      {Object.keys(importStatus.data.summary.skew).join(', ')}).
-                    </Typography.Text>
-                  )}
+                  {importStatus.data.summary.skew &&
+                    Object.keys(importStatus.data.summary.skew).length > 0 && (
+                      <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                        اختلاف نسخهٔ شِما: ستون‌های جدیدِ این نسخه برای ردیف‌های واردشده خالی/پیش‌فرض
+                        گذاشته شدند و ستون‌های ناشناختهٔ پشتیبان نادیده گرفته شدند (
+                        {Object.keys(importStatus.data.summary.skew).join(', ')}).
+                      </Typography.Text>
+                    )}
                 </Space>
               }
             />

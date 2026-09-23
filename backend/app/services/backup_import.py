@@ -209,8 +209,11 @@ def _import_postgres(tar_path: str) -> dict:
         conn = psycopg2.connect(psycopg2_url())
         try:
             with conn.cursor() as cur:
-                # one transaction around everything destructive
-                cur.execute("BEGIN")
+                # one transaction around everything destructive. psycopg2
+                # auto-sends BEGIN before the first statement — an explicit
+                # BEGIN here would be a SECOND one ("there is already a
+                # transaction in progress" on the server); SET TRANSACTION
+                # as the first statement applies to that same transaction.
                 cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 live_cols: dict[str, list[str]] = {}
                 live_types: dict[str, dict[str, str]] = {}
