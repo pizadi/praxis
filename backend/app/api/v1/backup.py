@@ -403,9 +403,16 @@ async def backup_status(
 
 
 async def _staleness(db) -> dict:
-    """Days since the last SUCCESSFUL backup (persisted as action='backup'
-    audit rows by the job thread), and whether it exceeds the configured
-    threshold. `backup_stale` is None when the warning is disabled."""
+    """Days since the last SUCCESSFUL backup, and whether it exceeds the
+    configured threshold. `backup_stale` is None when the warning is
+    disabled.
+
+    Two evidence sources: the action='backup' audit rows (the job thread's
+    durable completion record) AND the persisted artifact itself — its
+    mtime (surfaced as finished_at by the startup rediscovery) survives an
+    audit-trail wipe (purge_db), and a present, restorable tarball IS a
+    real backup. Whichever is newer wins.
+    """
     if settings.backup_stale_days <= 0:
         return {"last_backup_at": None, "backup_stale": None, "backup_stale_days": 0}
     row = await db.scalar(
@@ -414,18 +421,25 @@ async def _staleness(db) -> dict:
         .order_by(AuditLog.created_at.desc())
         .limit(1)
     )
-    if row is None:
+    st = _backup_state()
+    finished = st.get("finished_at") if st.get("status") == "ready" else None
+    candidates: list[dt.datetime] = []
+    for ts in (row, finished):
+        if ts is None:
+            continue
+        if ts.tzinfo is None:  # SQLite (dev) stores timezone-aware columns naive
+            ts = ts.replace(tzinfo=dt.UTC)
+        candidates.append(ts)
+    if not candidates:
         return {
             "last_backup_at": None,
             "backup_stale": True,
             "backup_stale_days": settings.backup_stale_days,
         }
-    # SQLite (dev) stores timezone-aware columns naive — assume UTC
-    if row.tzinfo is None:
-        row = row.replace(tzinfo=dt.UTC)
-    age_days = (utc_now() - row).total_seconds() / 86400
+    last = max(candidates)
+    age_days = (utc_now() - last).total_seconds() / 86400
     return {
-        "last_backup_at": row.isoformat(),
+        "last_backup_at": last.isoformat(),
         "backup_stale": age_days > settings.backup_stale_days,
         "backup_stale_days": settings.backup_stale_days,
     }

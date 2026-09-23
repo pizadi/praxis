@@ -139,6 +139,11 @@ Version history:
           sends a redundant BEGIN (psycopg2 already opens the
           transaction — silenced the server's 'there is already a
           transaction in progress' warning)
+  1.3.1.dev8  after a purge the staleness check counts the persisted
+          artifact (its mtime) alongside the audit completion rows —
+          the site no longer banners 'never backed up' while the
+          restorable tarball sits right there (the purge wipes the
+          audit trail, not the volume)
 """
 
-__version__ = "1.3.1.dev7"
+__version__ = "1.3.1.dev8"

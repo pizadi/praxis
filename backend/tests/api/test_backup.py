@@ -650,6 +650,35 @@ async def test_backup_staleness_warning(client, monkeypatch):
     await client.delete("/api/v1/admin/backup", headers=auth(token))
 
 
+async def test_backup_staleness_counts_persisted_artifact(client):
+    """After a purge the audit trail is empty but the artifact survives on
+    the persistent volume — the site must NOT flag 'never backed up' while
+    the tarball is right there (ready + downloadable)."""
+    from sqlalchemy import delete
+
+    from app.db.session import SessionLocal
+    from app.models import AuditLog
+
+    _reset_backup_state()
+    token, _ = await login(client)
+    st = await _wait_backup_ready(client, token)
+    assert st["backup_stale"] is False
+
+    # simulate the purge's audit wipe (completion rows are gone, the
+    # artifact file remains)
+    async with SessionLocal() as db:
+        await db.execute(delete(AuditLog).where(AuditLog.entity_type == "backup"))
+        await db.commit()
+
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    body = r.json()
+    assert body["status"] == "ready"  # the tarball is still there
+    assert body["backup_stale"] is False  # …and it COUNTS as a backup
+    assert body["last_backup_at"] is not None  # its mtime (finished_at)
+
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+
 async def test_backup_encryption_round_trip(client, monkeypatch):
     """With BACKUP_ENCRYPTION_KEY set: the artifact is AES-256-GCM encrypted
     (plaintext never left on disk), checksummed, and imports back after
