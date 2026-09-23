@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_THEME, THEMES, algorithmFor, getTheme } from './themes'
+
+// the static CSS side that actually declares the palette custom properties
+// (vitest always runs from frontend/, so cwd-based resolution is stable)
+const cssSource = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8')
 
 describe('vibefarsi palettes', () => {
   it('exposes the six curated themes with a unique id each', () => {
@@ -75,6 +81,14 @@ describe('vibefarsi palettes', () => {
         return pa.reduce((acc, v, i) => acc + Math.abs(v - pb[i]), 0)
       }
       expect(dist(primary, solid), `${t.id} primary/text-on-solid contrast`).toBeGreaterThan(150)
+    }
+  })
+
+  it('keeps cssVars in sync with the static index.css blocks (the CSS side is what actually applies them)', () => {
+    for (const t of THEMES) {
+      for (const [key, value] of Object.entries(t.cssVars)) {
+        expect(cssSource, `${t.id} ${key}: ${value}`).toContain(`${key}: ${value}`)
+      }
     }
   })
 

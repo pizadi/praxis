@@ -27,7 +27,9 @@ export interface Palette {
   id: ThemeId
   label: string
   scheme: Scheme
-  /** oklch CSS custom properties, applied verbatim on <html data-theme="…"> */
+  /** oklch CSS custom properties — the DECLARING side lives in index.css
+   * (html[data-theme=…] blocks, first-paint); this mirror is kept in sync by
+   * themes.test.ts and used nowhere at runtime */
   cssVars: Record<string, string>
   /** antd SEED tokens — set before the algorithm so hovers/disabled/fills derive well */
   seed: Record<string, string | number>
