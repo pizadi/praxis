@@ -15,7 +15,9 @@ import {
 import { api, apiError } from '../api/client'
 import type { Page } from '../api/types'
 import { formatJalali } from '../lib/jalali'
+import { useIsMobile } from '../lib/useIsMobile'
 import { useUser } from '../components/AppLayout'
+import StackCell from '../components/StackCell'
 
 export interface TrashItem {
   id: number
@@ -48,6 +50,7 @@ function TrashTable({
 }) {
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
+  const isMobile = useIsMobile()
   const [page, setPage] = useState(1)
 
   const { data, isLoading } = useQuery({
@@ -92,7 +95,7 @@ function TrashTable({
       rowKey="id"
       loading={isLoading}
       dataSource={data?.items ?? []}
-      scroll={{ x: 'max-content' }}
+      scroll={isMobile ? undefined : { x: 'max-content' }}
       pagination={{
         current: page,
         pageSize: 20,
@@ -100,49 +103,96 @@ function TrashTable({
         onChange: setPage,
       }}
       locale={{ emptyText: 'موردی در سبد بازیافت نیست' }}
-      columns={[
-        { title: 'عنوان', dataIndex: 'title' },
-        { title: 'جزئیات', dataIndex: 'subtitle', render: (v: string) => v || '—' },
-        {
-          title: 'زمان حذف',
-          dataIndex: 'deleted_at',
-          render: (v: string) => formatJalali(v, true),
-        },
-        {
-          title: 'وضعیت',
-          render: (_, item) =>
-            item.parent_deleted ? (
-              <Tag color="orange">والد هم حذف است</Tag>
-            ) : (
-              <Tag color="green">قابل بازیابی</Tag>
-            ),
-        },
-        {
-          title: 'عملیات',
-          render: (_, item) => (
-            <Space>
-              <Button
-                size="small"
-                type="primary"
-                loading={restore.isPending && restore.variables === item.id}
-                onClick={() => restore.mutate(item.id)}
-              >
-                بازیابی
-              </Button>
-              {canPurge && (
-                <Popconfirm
-                  title="برای همیشه حذف شود؟ این عمل قابل بازگشت نیست."
-                  onConfirm={() => purge.mutate(item.id)}
-                >
-                  <Button size="small" danger>
-                    حذف قطعی
-                  </Button>
-                </Popconfirm>
-              )}
-            </Space>
-          ),
-        },
-      ]}
+      columns={
+        isMobile
+          ? [
+              {
+                title: 'عنوان',
+                render: (_, item) => (
+                  <StackCell
+                    main={item.title}
+                    lines={[
+                      item.subtitle || null,
+                      formatJalali(item.deleted_at, true),
+                      item.parent_deleted ? (
+                        <Tag color="orange">والد هم حذف است</Tag>
+                      ) : (
+                        <Tag color="green">قابل بازیابی</Tag>
+                      ),
+                    ]}
+                  />
+                ),
+              },
+              {
+                title: 'عملیات',
+                render: (_, item) => (
+                  <Space direction="vertical">
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={restore.isPending && restore.variables === item.id}
+                      onClick={() => restore.mutate(item.id)}
+                    >
+                      بازیابی
+                    </Button>
+                    {canPurge && (
+                      <Popconfirm
+                        title="برای همیشه حذف شود؟ این عمل قابل بازگشت نیست."
+                        onConfirm={() => purge.mutate(item.id)}
+                      >
+                        <Button size="small" danger>
+                          حذف قطعی
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  </Space>
+                ),
+              },
+            ]
+          : [
+              { title: 'عنوان', dataIndex: 'title' },
+              { title: 'جزئیات', dataIndex: 'subtitle', render: (v: string) => v || '—' },
+              {
+                title: 'زمان حذف',
+                dataIndex: 'deleted_at',
+                render: (v: string) => formatJalali(v, true),
+              },
+              {
+                title: 'وضعیت',
+                render: (_, item) =>
+                  item.parent_deleted ? (
+                    <Tag color="orange">والد هم حذف است</Tag>
+                  ) : (
+                    <Tag color="green">قابل بازیابی</Tag>
+                  ),
+              },
+              {
+                title: 'عملیات',
+                render: (_, item) => (
+                  <Space>
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={restore.isPending && restore.variables === item.id}
+                      onClick={() => restore.mutate(item.id)}
+                    >
+                      بازیابی
+                    </Button>
+                    {canPurge && (
+                      <Popconfirm
+                        title="برای همیشه حذف شود؟ این عمل قابل بازگشت نیست."
+                        onConfirm={() => purge.mutate(item.id)}
+                      >
+                        <Button size="small" danger>
+                          حذف قطعی
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  </Space>
+                ),
+              },
+            ]
+      }
     />
   )
 }

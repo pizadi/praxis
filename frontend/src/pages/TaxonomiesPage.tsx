@@ -4,14 +4,13 @@ import {
   App as AntApp,
   Button,
   Card,
-  Col,
   Form,
   Input,
   Modal,
   Popconfirm,
-  Row,
   Space,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd'
@@ -28,7 +27,6 @@ type TaxonomyKind = 'tags' | 'diagnoses' | 'prescription-items'
 
 function TaxonomyPanel({
   kind,
-  title,
   color,
   canEdit,
   canCreate = true,
@@ -36,7 +34,6 @@ function TaxonomyPanel({
   deleteHint = 'از پرونده همه بیماران حذف می‌شود',
 }: {
   kind: TaxonomyKind
-  title: string
   color: string
   canEdit: boolean
   /** dictionary has no create endpoint (items self-register from prescriptions) */
@@ -146,12 +143,11 @@ function TaxonomyPanel({
 
   return (
     <Card
-      title={title}
       extra={
         <Input.Search
           allowClear
           placeholder="جستجو…"
-          style={{ width: 180 }}
+          style={{ width: 240, maxWidth: '100%' }}
           onSearch={(v) => {
             setSearch(v.trim())
             setPage(1)
@@ -231,28 +227,39 @@ export default function TaxonomiesPage() {
   const { hasPerm } = useUser()
   return (
     <div>
-      <Typography.Title level={3}>برچسب‌ها، تشخیص‌ها و آیتم‌های نسخه</Typography.Title>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <TaxonomyPanel kind="tags" title="برچسب‌ها" color="blue" canEdit={hasPerm('taxonomies.write')} />
-        </Col>
-        <Col xs={24} lg={8}>
-          <TaxonomyPanel kind="diagnoses" title="تشخیص‌ها" color="red" canEdit={hasPerm('taxonomies.write')} />
-        </Col>
-        {hasPerm('prescriptions.read') && (
-          <Col xs={24} lg={8}>
-            <TaxonomyPanel
-              kind="prescription-items"
-              title="آیتم‌های نسخه"
-              color="purple"
-              canEdit={hasPerm('prescriptions.write')}
-              canCreate={false}
-              mergeOnRename={false}
-              deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
-            />
-          </Col>
-        )}
-      </Row>
+      <Typography.Title level={3}>موجودیت‌ها</Typography.Title>
+      <Tabs
+        items={[
+          {
+            key: 'tags',
+            label: 'برچسب‌ها',
+            children: <TaxonomyPanel kind="tags" color="blue" canEdit={hasPerm('taxonomies.write')} />,
+          },
+          {
+            key: 'diagnoses',
+            label: 'تشخیص‌ها',
+            children: <TaxonomyPanel kind="diagnoses" color="red" canEdit={hasPerm('taxonomies.write')} />,
+          },
+          ...(hasPerm('prescriptions.read')
+            ? [
+                {
+                  key: 'prescription-items',
+                  label: 'آیتم‌های نسخه',
+                  children: (
+                    <TaxonomyPanel
+                      kind="prescription-items"
+                      color="purple"
+                      canEdit={hasPerm('prescriptions.write')}
+                      canCreate={false}
+                      mergeOnRename={false}
+                      deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
+                    />
+                  ),
+                },
+              ]
+            : []),
+        ]}
+      />
     </div>
   )
 }

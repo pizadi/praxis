@@ -47,7 +47,7 @@ const GROUPS: { title: string; items: MenuItem[] }[] = [
   {
     title: 'مدیریت',
     items: [
-      { key: '/taxonomies', label: 'برچسب‌ها، تشخیص‌ها و نسخه‌ها' },
+      { key: '/taxonomies', label: 'موجودیت‌ها' },
       { key: '/users', label: 'کاربران', perm: 'users.manage' },
       { key: '/roles', label: 'نقش‌ها و دسترسی‌ها', perm: 'roles.manage' },
       { key: '/trash', label: 'سبد بازیافت', perm: 'trash.view' },

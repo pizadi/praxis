@@ -16,7 +16,9 @@ import {
 
 import { api, apiError } from '../api/client'
 import { roleFa } from '../lib/roles'
+import { useIsMobile } from '../lib/useIsMobile'
 import type { Page, Role, User } from '../api/types'
+import StackCell from '../components/StackCell'
 
 interface UserForm {
   username: string
@@ -29,6 +31,7 @@ interface UserForm {
 export default function UsersPage() {
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
+  const isMobile = useIsMobile()
   const [form] = Form.useForm<UserForm>()
   const [editing, setEditing] = useState<User | null>(null)
   const [open, setOpen] = useState(false)
@@ -96,20 +99,37 @@ export default function UsersPage() {
           loading={users.isLoading}
           dataSource={users.data?.items ?? []}
           pagination={false}
-          scroll={{ x: 'max-content' }}
+          scroll={isMobile ? undefined : { x: 'max-content' }}
           columns={[
-            { title: 'نام کاربری', dataIndex: 'username' },
-            { title: 'نام کامل', dataIndex: 'full_name' },
-            {
-              title: 'نقش',
-              dataIndex: 'role_name',
-              render: (v: string) => roleFa(v),
-            },
-            {
-              title: 'فعال',
-              dataIndex: 'is_active',
-              render: (v: boolean) => (v ? 'بله' : 'خیر'),
-            },
+            isMobile
+              ? {
+                  title: 'کاربر',
+                  render: (_, u) => (
+                    <StackCell
+                      main={u.username}
+                      lines={[
+                        u.full_name || null,
+                        `${roleFa(u.role_name)} · ${u.is_active ? 'فعال' : 'غیرفعال'}`,
+                      ]}
+                    />
+                  ),
+                }
+              : { title: 'نام کاربری', dataIndex: 'username' },
+            ...(isMobile
+              ? []
+              : [
+                  { title: 'نام کامل', dataIndex: 'full_name' },
+                  {
+                    title: 'نقش',
+                    dataIndex: 'role_name',
+                    render: (v: string) => roleFa(v),
+                  },
+                  {
+                    title: 'فعال',
+                    dataIndex: 'is_active',
+                    render: (v: boolean) => (v ? 'بله' : 'خیر'),
+                  },
+                ]),
             {
               title: 'عملیات',
               render: (_, u) => (

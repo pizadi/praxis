@@ -55,6 +55,8 @@ import { fileSize, formatJalali, formatJalaliTime, toFaDigits } from '../lib/jal
 import { LAST_STAGE, stageOf } from '../lib/stages'
 import { useUser } from '../components/AppLayout'
 import { useBeforeUnloadGuard, useNavGuard } from '../components/NavGuard'
+import { useIsMobile } from '../lib/useIsMobile'
+import StackCell from '../components/StackCell'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
 import AppointmentPanel, { type AppointmentPanelHandle } from '../components/AppointmentPanel'
 import FileDetailPane from '../components/FileDetailPane'
@@ -81,6 +83,7 @@ export default function PatientDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { hasPerm } = useUser()
+  const isMobile = useIsMobile()
   const { message } = AntApp.useApp()
   const { token: themeToken } = antdTheme.useToken()
   const qc = useQueryClient()
@@ -748,24 +751,41 @@ export default function PatientDetailPage() {
                 loading={allFiles.isLoading}
                 dataSource={allFiles.data ?? []}
                 locale={{ emptyText: 'فایلی موجود نیست' }}
-                scroll={{ x: 'max-content' }}
+                scroll={isMobile ? undefined : { x: 'max-content' }}
                 rowClassName={(f) => (selectedFileId === f.id ? 'ant-table-row-selected' : '')}
                 onRow={(f) => ({
                   onClick: () => setSelectedFileId(f.id),
                   style: { cursor: 'pointer' },
                 })}
-                columns={[
-                  { title: 'شرح', dataIndex: 'description' },
-                  {
-                    title: 'نام فایل',
-                    dataIndex: 'original_filename',
-                    render: (name: string | null) =>
-                      name ?? (
-                        <Typography.Text type="secondary">بدون فایل</Typography.Text>
-                      ),
-                  },
-                  { title: 'حجم', dataIndex: 'size_bytes', render: fileSize },
-                ]}
+                columns={
+                  isMobile
+                    ? [
+                        {
+                          title: 'فایل',
+                          render: (_, f) => (
+                            <StackCell
+                              main={f.description || f.original_filename || 'یادداشت'}
+                              lines={[
+                                f.description && f.original_filename ? f.original_filename : null,
+                                fileSize(f.size_bytes),
+                              ]}
+                            />
+                          ),
+                        },
+                      ]
+                    : [
+                        { title: 'شرح', dataIndex: 'description' },
+                        {
+                          title: 'نام فایل',
+                          dataIndex: 'original_filename',
+                          render: (name: string | null) =>
+                            name ?? (
+                              <Typography.Text type="secondary">بدون فایل</Typography.Text>
+                            ),
+                        },
+                        { title: 'حجم', dataIndex: 'size_bytes', render: fileSize },
+                      ]
+                }
               />
             </Card>
           )}
