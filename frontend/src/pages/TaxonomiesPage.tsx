@@ -4,14 +4,13 @@ import {
   App as AntApp,
   Button,
   Card,
-  Col,
   Form,
   Input,
   Modal,
   Popconfirm,
-  Row,
   Space,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd'
@@ -28,7 +27,6 @@ type TaxonomyKind = 'tags' | 'diagnoses' | 'prescription-items'
 
 function TaxonomyPanel({
   kind,
-  title,
   color,
   canEdit,
   canCreate = true,
@@ -36,10 +34,10 @@ function TaxonomyPanel({
   deleteHint = 'از پرونده همه بیماران حذف می‌شود',
 }: {
   kind: TaxonomyKind
-  title: string
   color: string
   canEdit: boolean
-  /** panels without a create endpoint can hide the «افزودن» input */
+  /** prescription items default to true (POST /prescription-items); the
+   * auto-registration from prescriptions keeps working alongside */
   canCreate?: boolean
   /** renaming onto an existing name merges links — prescription items just refuse */
   mergeOnRename?: boolean
@@ -69,7 +67,14 @@ function TaxonomyPanel({
       setPage(1)
       await qc.invalidateQueries({ queryKey: [kind] })
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: (err) => {
+      // Persian copy for the common case (the API message is English)
+      if (apiError(err).code === 'name_taken') {
+        message.error('این نام از قبل وجود دارد')
+        return
+      }
+      message.error(apiError(err).message)
+    },
   })
 
   const rename = useMutation({
@@ -146,12 +151,11 @@ function TaxonomyPanel({
 
   return (
     <Card
-      title={title}
       extra={
         <Input.Search
           allowClear
           placeholder="جستجو…"
-          style={{ width: 180 }}
+          style={{ width: 240, maxWidth: '100%' }}
           onSearch={(v) => {
             setSearch(v.trim())
             setPage(1)
@@ -183,6 +187,7 @@ function TaxonomyPanel({
         loading={items.isFetching}
         dataSource={items.data?.items ?? []}
         columns={columns}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: 'خالی است' }}
         pagination={{
           total: items.data?.total ?? 0,
@@ -230,27 +235,38 @@ export default function TaxonomiesPage() {
   const { hasPerm } = useUser()
   return (
     <div>
-      <Typography.Title level={3}>برچسب‌ها، تشخیص‌ها و آیتم‌های نسخه</Typography.Title>
-      <Row gutter={16}>
-        <Col span={8}>
-          <TaxonomyPanel kind="tags" title="برچسب‌ها" color="blue" canEdit={hasPerm('taxonomies.write')} />
-        </Col>
-        <Col span={8}>
-          <TaxonomyPanel kind="diagnoses" title="تشخیص‌ها" color="red" canEdit={hasPerm('taxonomies.write')} />
-        </Col>
-        {hasPerm('prescriptions.read') && (
-          <Col span={8}>
-            <TaxonomyPanel
-              kind="prescription-items"
-              title="آیتم‌های نسخه"
-              color="purple"
-              canEdit={hasPerm('prescriptions.write')}
-              mergeOnRename={false}
-              deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
-            />
-          </Col>
-        )}
-      </Row>
+      <Typography.Title level={3}>موجودیت‌ها</Typography.Title>
+      <Tabs
+        items={[
+          {
+            key: 'tags',
+            label: 'برچسب‌ها',
+            children: <TaxonomyPanel kind="tags" color="blue" canEdit={hasPerm('taxonomies.write')} />,
+          },
+          {
+            key: 'diagnoses',
+            label: 'تشخیص‌ها',
+            children: <TaxonomyPanel kind="diagnoses" color="red" canEdit={hasPerm('taxonomies.write')} />,
+          },
+          ...(hasPerm('prescriptions.read')
+            ? [
+                {
+                  key: 'prescription-items',
+                  label: 'آیتم‌های نسخه',
+                  children: (
+                    <TaxonomyPanel
+                      kind="prescription-items"
+                      color="purple"
+                      canEdit={hasPerm('prescriptions.write')}
+                      mergeOnRename={false}
+                      deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
+                    />
+                  ),
+                },
+              ]
+            : []),
+        ]}
+      />
     </div>
   )
 }

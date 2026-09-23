@@ -5,6 +5,8 @@ import { Card, Select, Table, Tag, Typography } from 'antd'
 import { api } from '../api/client'
 import type { Page } from '../api/types'
 import { formatJalali } from '../lib/jalali'
+import { useIsMobile } from '../lib/useIsMobile'
+import StackCell from '../components/StackCell'
 
 interface AuditEntry {
   id: number
@@ -44,6 +46,7 @@ const ENTITY_LABELS: Record<string, string> = {
 }
 
 export default function AuditPage() {
+  const isMobile = useIsMobile()
   const [page, setPage] = useState(1)
   const [action, setAction] = useState<string | null>(null)
   const [entityType, setEntityType] = useState<string | null>(null)
@@ -103,53 +106,84 @@ export default function AuditPage() {
           rowKey="id"
           loading={isLoading}
           dataSource={data?.items ?? []}
+          scroll={isMobile ? undefined : { x: 'max-content' }}
           pagination={{
             current: page,
             pageSize: 50,
             total: data?.total ?? 0,
             onChange: setPage,
           }}
-          columns={[
-            {
-              title: 'زمان',
-              dataIndex: 'created_at',
-              render: (v: string) => formatJalali(v, true),
-            },
-            { title: 'کاربر', dataIndex: 'username' },
-            {
-              title: 'عملیات',
-              dataIndex: 'action',
-              render: (a: string) => (
-                <Tag color={ACTION_LABELS[a]?.color ?? 'default'}>
-                  {ACTION_LABELS[a]?.label ?? a}
-                </Tag>
-              ),
-            },
-            {
-              title: 'موجودیت',
-              dataIndex: 'entity_type',
-              render: (t: string, row) =>
-                `${ENTITY_LABELS[t] ?? t} #${row.entity_id ?? '—'}`,
-            },
-            { title: 'شرح', dataIndex: 'summary' },
-            {
-              title: 'جزئیات',
-              dataIndex: 'details',
-              render: (d: string | null) =>
-                d ? (
-                  <Typography.Text code style={{ fontSize: 11 }}>
-                    {d.length > 80 ? d.slice(0, 80) + '…' : d}
-                  </Typography.Text>
-                ) : (
-                  '—'
-                ),
-            },
-            {
-              title: 'IP',
-              dataIndex: 'ip_address',
-              render: (v: string) => (v ? <Typography.Text type="secondary">{v}</Typography.Text> : '—'),
-            },
-          ]}
+          columns={
+            isMobile
+              ? [
+                  {
+                    title: 'رخداد',
+                    render: (_, r) => (
+                      <StackCell
+                        main={
+                          <Tag color={ACTION_LABELS[r.action]?.color ?? 'default'}>
+                            {ACTION_LABELS[r.action]?.label ?? r.action}
+                          </Tag>
+                        }
+                        lines={[formatJalali(r.created_at, true), r.username]}
+                      />
+                    ),
+                  },
+                  {
+                    title: 'موجودیت',
+                    render: (_, r) => (
+                      <StackCell
+                        main={`${ENTITY_LABELS[r.entity_type] ?? r.entity_type} #${r.entity_id ?? '—'}`}
+                        lines={[
+                          r.summary || null,
+                          r.ip_address ? <span dir="ltr">{r.ip_address}</span> : null,
+                        ]}
+                      />
+                    ),
+                  },
+                ]
+              : [
+                  {
+                    title: 'زمان',
+                    dataIndex: 'created_at',
+                    render: (v: string) => formatJalali(v, true),
+                  },
+                  { title: 'کاربر', dataIndex: 'username' },
+                  {
+                    title: 'عملیات',
+                    dataIndex: 'action',
+                    render: (a: string) => (
+                      <Tag color={ACTION_LABELS[a]?.color ?? 'default'}>
+                        {ACTION_LABELS[a]?.label ?? a}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: 'موجودیت',
+                    dataIndex: 'entity_type',
+                    render: (t: string, row) =>
+                      `${ENTITY_LABELS[t] ?? t} #${row.entity_id ?? '—'}`,
+                  },
+                  { title: 'شرح', dataIndex: 'summary' },
+                  {
+                    title: 'جزئیات',
+                    dataIndex: 'details',
+                    render: (d: string | null) =>
+                      d ? (
+                        <Typography.Text code style={{ fontSize: 11 }}>
+                          {d.length > 80 ? d.slice(0, 80) + '…' : d}
+                        </Typography.Text>
+                      ) : (
+                        '—'
+                      ),
+                  },
+                  {
+                    title: 'IP',
+                    dataIndex: 'ip_address',
+                    render: (v: string) => (v ? <Typography.Text type="secondary">{v}</Typography.Text> : '—'),
+                  },
+                ]
+          }
         />
       </Card>
     </div>

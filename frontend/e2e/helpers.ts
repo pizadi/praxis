@@ -99,14 +99,15 @@ export async function apiTransaction(appointmentId: number, description: string,
   })
 }
 
-/** Log in through the real UI. Waits for a POST-login marker (the menu) —
- * NEVER the login page title (it also says پراکسیس). */
+/** Log in through the real UI. Waits for a POST-login marker (the app
+ * header — present on desktop AND mobile, where the menu only mounts when
+ * the drawer opens) — NEVER the login page title (it also says پراکسیس). */
 export async function login(page: Page, username = ADMIN.username, password = ADMIN.password) {
   await page.goto('/#/login')
   await page.fill('input#username', username)
   await page.fill('input#password', password)
   await page.click('button[type="submit"]')
-  await page.waitForSelector('.ant-menu', { timeout: 15_000 })
+  await page.waitForSelector('.ant-layout-header', { timeout: 15_000 })
 }
 
 export async function logout(page: Page) {

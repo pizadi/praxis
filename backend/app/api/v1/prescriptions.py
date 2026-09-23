@@ -196,8 +196,9 @@ async def create_item(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_perm("prescriptions.write")),
 ):
-    """Manual dictionary entry (the taxonomies UI's «افزودن») — prescriptions
-    also auto-register unknown names. Same case-insensitive uniqueness."""
+    """Directly register a dictionary item (normally items self-register
+    from prescriptions). Case-insensitive duplicate check first — a live
+    item differing only by case is a 409 name_taken, same as rename."""
     name = body.name.strip()
     if not name:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name required")

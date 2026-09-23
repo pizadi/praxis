@@ -8,6 +8,7 @@ import { HashRouter } from 'react-router-dom'
 import App from './App'
 import { useThemeState, ThemeContext } from './components/ThemeContext'
 import { warnUnsupportedBrowser } from './lib/browserSupport'
+import { algorithmFor } from './lib/themes'
 import './index.css'
 
 warnUnsupportedBrowser()
@@ -19,7 +20,7 @@ const queryClient = new QueryClient({
 })
 
 function Root() {
-  const { ctx, algorithm } = useThemeState()
+  const { ctx, palette } = useThemeState()
   return (
     <ThemeContext.Provider value={ctx}>
       <ConfigProvider
@@ -28,8 +29,11 @@ function Root() {
         theme={{
           token: {
             fontFamily: 'Vazirmatn, system-ui, sans-serif',
+            ...palette.seed,
           },
-          algorithm,
+          // palette seed tokens drive the base light/dark algorithm, then the
+          // palette's exact surface/text/border tokens are applied on top
+          algorithm: algorithmFor(palette),
         }}
       >
         <AntApp>

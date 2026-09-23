@@ -145,6 +145,19 @@ Version history:
           restorable tarball sits right there (the purge wipes the
           audit trail, not the volume)
   1.3.1  release
+  1.4.0  UI overhaul: six VibeFarsi palettes (graphite/turquoise/saffron/
+          pomegranate/lapis/paper) replace the light-dark toggle with a
+          session-scoped switcher (sessionStorage, no-flash bootstrap);
+          responsive layout — mobile drawer navigation, fluid tables/
+          stacked rows on narrow viewports, fluid modals; taxonomies page
+          renamed «موجودیت‌ها» and tabbed; prescription items get a direct
+          creation endpoint; e2e mobile-viewport smoke project
+  1.4.1.dev1  reconciliation merge: the 1.3.1 hardening line (backup
+          download/import, purge_db, production boot guard, patient-page
+          hardening) lands on top of the 1.4.0 UI overhaul; both branches
+          had independently added the same POST /prescription-items
+          endpoint — kept once with the richer 1.4.0 tests; the
+          scroll-both-axes fix re-applies on the new layout
 """
 
-__version__ = "1.3.1"
+__version__ = "1.4.1.dev1"
