@@ -144,6 +144,7 @@ Version history:
           the site no longer banners 'never backed up' while the
           restorable tarball sits right there (the purge wipes the
           audit trail, not the volume)
+  1.3.1  release
 """
 
-__version__ = "1.3.1.dev8"
+__version__ = "1.3.1"
