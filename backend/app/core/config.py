@@ -70,6 +70,14 @@ settings = get_settings()
 def validate_production_secrets() -> None:
     """Abort startup with insecure defaults in production."""
     if os.environ.get("CLINIC_ENV") == "production":
+        if not settings.database_url.startswith("postgres"):
+            # compose always injects the PostgreSQL DSN; SQLite here means
+            # the env var was lost — the app would silently "work" while
+            # writing real patient data into a throwaway file
+            raise RuntimeError(
+                "Refusing to run in production without a PostgreSQL DATABASE_URL "
+                f"(got: {settings.database_url.split('://')[0] or 'unparseable DSN'})."
+            )
         if settings.secret_key.startswith("dev-insecure"):
             raise RuntimeError("Refusing to run in production with the dev SECRET_KEY.")
         if settings.bootstrap_admin_password in {"admin123", "change-me-too", ""}:

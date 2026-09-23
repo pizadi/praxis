@@ -9,6 +9,12 @@ Usage:
   python purge_db.py --yes --uploads                  # also empty UPLOAD_DIR
   python purge_db.py --yes --no-snapshot              # skip the safety snapshot
 
+IMPORTANT: stop the app container first (`docker compose stop api`) — a
+running api keeps transactions open on the target DB, which (a) can block
+the DROP SCHEMA on locks and (b) races the rebuild (in-flight writes are
+lost). The DROP carries a lock timeout and refuses loudly instead of
+hanging when it detects exactly that situation.
+
 The default DSN comes from DATABASE_URL / the .env file — printed LOUDLY
 before anything happens; nothing is touched without --yes.
 
@@ -53,19 +59,35 @@ parser.add_argument(
     default="new-patients-db-1",
     help="docker container hosting PostgreSQL (for the snapshot)",
 )
-args = parser.parse_args()
 
-if args.database_url:
-    # The async engine binds settings.database_url at import time — the
-    # override must land in the environment BEFORE any app.* import.
-    os.environ["DATABASE_URL"] = args.database_url
 
-from app.core.config import settings
-from app.db.migrations import run_migrations, sync_url
+def _urls():
+    """(database_url, sync_url) — app imports must happen AFTER main() has
+    landed the --database-url override in the environment (pydantic-settings
+    caches at first import)."""
+    from app.core.config import settings
+    from app.db.migrations import sync_url
+
+    return settings.database_url, sync_url()
+
+
+def _lock_wait_failure(exc: SQLAlchemyError) -> str | None:
+    """A lock/statement timeout while dropping the schema — map it to the
+    user-facing hint (None = some other error, re-raise as-is)."""
+    pgcode = getattr(getattr(exc, "orig", None), "pgcode", None) or ""
+    if pgcode in ("55P03", "57014"):  # lock_not_available / query_canceled
+        return (
+            "DROP SCHEMA timed out waiting for locks — something is connected to "
+            "the target database and holding/hopping locks (the running api "
+            "container, typically). Stop it first: docker compose stop api — "
+            "then re-run this purge."
+        )
+    return None
 
 
 def current_revision() -> str:
-    engine = create_engine(sync_url())
+    _, sync = _urls()
+    engine = create_engine(sync)
     try:
         if not inspect(engine).has_table("alembic_version"):
             return "none (no alembic_version)"
@@ -78,30 +100,57 @@ def current_revision() -> str:
 
 
 def is_sqlite() -> bool:
-    return sync_url().startswith("sqlite")
+    _, sync = _urls()
+    return sync.startswith("sqlite")
 
 
-def take_snapshot() -> None:
+def report_other_backends() -> None:
+    """Warn loudly when something else is connected to the target database —
+    a purge must run while the app is stopped (lock hangs + write races)."""
     if is_sqlite():
-        import snapshot_db
+        return
+    _, sync = _urls()
+    engine = create_engine(sync)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT pid, state, application_name FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+                )
+            ).fetchall()
+    except SQLAlchemyError:
+        return
+    finally:
+        engine.dispose()
+    if rows:
+        print(f"WARNING: {len(rows)} other connection(s) to the target database:")
+        for pid, state, app_name in rows:
+            print(f"  pid {pid} ({state}, {app_name or 'application unknown'})")
+        print("Stop the app container first: docker compose stop api")
 
-        db_path = Path(sync_url().replace("sqlite://", "", 1))
+
+def take_snapshot(container: str) -> None:
+    import snapshot_db
+
+    if is_sqlite():
+        _, sync = _urls()
+        db_path = Path(sync.replace("sqlite://", "", 1))
         if not db_path.is_absolute():
             db_path = Path.cwd() / db_path
         out = snapshot_db.target_path("pre-purge", ".db")
         snapshot_db.snapshot_sqlite(db_path, out)
         print(f"snapshot: {out} ({out.stat().st_size} bytes)")
     else:
-        import snapshot_db
-
         out = snapshot_db.target_path("pre-purge", ".dump")
-        snapshot_db.snapshot_postgres(args.container, out)
-        snapshot_db.validate_postgres(args.container, out)
+        snapshot_db.snapshot_postgres(container, out)
+        snapshot_db.validate_postgres(container, out)
         print(f"snapshot: {out} ({out.stat().st_size} bytes) — validated")
 
 
 def drop_schema() -> None:
-    engine = create_engine(sync_url())
+    _, sync = _urls()
+    engine = create_engine(sync)
     try:
         with engine.connect() as conn:
             if is_sqlite():
@@ -111,14 +160,26 @@ def drop_schema() -> None:
                     conn.execute(text(f'DROP TABLE IF EXISTS "{name}"'))
                 conn.execute(text("PRAGMA foreign_keys = ON"))
             else:
+                # DDL waits on conflicting locks FOREVER by default (no
+                # lock_timeout in PostgreSQL) — cap the wait so a running
+                # app fails the purge loudly instead of hanging it.
+                conn.execute(text("SET lock_timeout = '10s'"))
+                conn.execute(text("SET statement_timeout = '60s'"))
                 conn.execute(text("DROP SCHEMA public CASCADE"))
                 conn.execute(text("CREATE SCHEMA public"))
             conn.commit()
+    except SQLAlchemyError as exc:
+        hint = _lock_wait_failure(exc)
+        if hint:
+            sys.exit(hint)
+        raise
     finally:
         engine.dispose()
 
 
 def purge_uploads() -> None:
+    from app.core.config import settings
+
     upload_dir = Path(settings.upload_dir)
     if not upload_dir.is_absolute():
         upload_dir = Path.cwd() / upload_dir
@@ -134,11 +195,21 @@ def purge_uploads() -> None:
 
 
 def main() -> int:
+    args = parser.parse_args()
+    if args.database_url:
+        # The async engine binds settings.database_url at import time — the
+        # override must land in the environment BEFORE any app.* import.
+        os.environ["DATABASE_URL"] = args.database_url
+
+    from app.core.config import settings
+    from app.db.migrations import run_migrations
+
     target = settings.database_url
     print(f"target database : {target}")
     print(f"current revision: {current_revision()}")
     print(f"uploads dir     : {settings.upload_dir}{'' if args.uploads else ' (kept)'}")
     print(f"admin to recreate: {settings.bootstrap_admin_username}")
+    report_other_backends()
 
     if not args.yes:
         print("\nDRY RUN — nothing was changed. Re-run with --yes to purge.")
@@ -146,7 +217,7 @@ def main() -> int:
 
     if not args.no_snapshot:
         print("taking snapshot first…")
-        take_snapshot()
+        take_snapshot(args.container)
 
     print("dropping schema…")
     drop_schema()

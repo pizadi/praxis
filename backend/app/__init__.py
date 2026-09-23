@@ -108,6 +108,14 @@ Version history:
           gains a manual create endpoint (POST /prescription-items,
           perm prescriptions.write, case-insensitive uniqueness) so the
           taxonomies page's «افزودن» works on all three lists
+  1.3.1.dev3  production boot guard: CLINIC_ENV=production refuses to
+          start without a PostgreSQL DATABASE_URL (a lost env var used
+          to silently boot SQLite while looking healthy — real patient
+          data written into a throwaway file); purge_db.py no longer
+          hangs forever on DROP SCHEMA (lock_timeout + statement
+          timeout — a running api container's connections were the
+          blocker), warns about other connected backends up front, and
+          fails loudly with a «docker compose stop api» hint
 """
 
-__version__ = "1.3.1.dev2"
+__version__ = "1.3.1.dev3"

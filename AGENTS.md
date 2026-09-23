@@ -31,7 +31,9 @@ docker compose up -d --build api web
 .venv/bin/python scripts/snapshot_db.py --label pre-1.3.0-deploy   # PG (needs the db container up)
 .venv/bin/python scripts/snapshot_db.py --sqlite-path backend/data/clinic-dev.db
 
-# full DB reset incl. users (dry run default; admin re-bootstrapped from BOOTSTRAP_ADMIN_*)
+# full DB reset incl. users — STOP THE API FIRST (`docker compose stop api`:
+# its connections block DROP SCHEMA on locks → the purge hangs), purge, start
+# it again; dry run default; admin re-bootstrapped from BOOTSTRAP_ADMIN_*
 .venv/bin/python scripts/purge_db.py            # prints the plan
 .venv/bin/python scripts/purge_db.py --yes      # snapshot taken automatically first
 ```
