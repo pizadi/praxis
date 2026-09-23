@@ -61,6 +61,21 @@ export default defineConfig({
           args: ['--no-sandbox'],
         },
       },
+      testIgnore: /mobile\.spec\.ts$/,
+    },
+    {
+      // 390×844 phone — runs ONLY the mobile smoke spec
+      // (browserName pinned: device descriptors default to webkit)
+      name: 'chromium-mobile',
+      use: {
+        ...devices['iPhone 13'],
+        browserName: 'chromium',
+        launchOptions: {
+          executablePath: process.env.E2E_CHROMIUM_PATH || '/usr/bin/chromium',
+          args: ['--no-sandbox'],
+        },
+      },
+      testMatch: /mobile\.spec\.ts$/,
     },
   ],
 })
