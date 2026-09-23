@@ -120,6 +120,13 @@ Version history:
           on the target DB before the drop (a DB tool left idle in
           transaction blocks DROP SCHEMA even with the api stopped —
           bit once already); the guard fires only with the flag
+  1.3.1.dev5  purge_db.py: NullPool + explicit connection scoping — the
+          old engine.connect() left abandoned to the garbage collector
+          lingered as an 'idle in transaction' session that our own
+          --disconnect-others killed, and the pool's deferred reset
+          logged 'server closed the connection unexpectedly' (harmless
+          but alarming); verified: stray holder → 1 disconnect, no pool
+          noise, purge completes
 """
 
-__version__ = "1.3.1.dev4"
+__version__ = "1.3.1.dev5"

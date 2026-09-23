@@ -37,8 +37,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -92,13 +93,23 @@ def _lock_wait_failure(exc: SQLAlchemyError) -> str | None:
     return None
 
 
-def current_revision() -> str:
+def _engine() -> Engine:
+    """One-shot CLI — no pooling: every close() is a real close (the backend
+    exits at once). A pooled connection abandoned to the garbage collector
+    lingers as an 'idle in transaction' session that our own
+    --disconnect-others sweep then kills, and the pool's deferred reset
+    logs a scary 'server closed the connection unexpectedly' afterwards."""
     _, sync = _urls()
-    engine = create_engine(sync)
+    return create_engine(sync, poolclass=NullPool)
+
+
+def current_revision() -> str:
+    engine = _engine()
     try:
         if not inspect(engine).has_table("alembic_version"):
             return "none (no alembic_version)"
-        rev = engine.connect().execute(text("SELECT version_num FROM alembic_version")).scalar()
+        with engine.connect() as conn:  # explicit scope — never GC-finalized
+            rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         return str(rev) if rev else "none (empty alembic_version)"
     except (SQLAlchemyError, OSError) as exc:  # unreachable DB — a purge would fail anyway
         sys.exit(f"Cannot reach the target database: {exc}")
@@ -116,8 +127,7 @@ def report_other_backends() -> None:
     a purge must run while the app is stopped (lock hangs + write races)."""
     if is_sqlite():
         return
-    _, sync = _urls()
-    engine = create_engine(sync)
+    engine = _engine()
     try:
         with engine.connect() as conn:
             rows = conn.execute(
@@ -165,8 +175,7 @@ def disconnect_others() -> None:
     """
     if is_sqlite():
         return
-    _, sync = _urls()
-    engine = create_engine(sync)
+    engine = _engine()
     try:
         with engine.connect() as conn:
             n = 0
@@ -184,8 +193,7 @@ def disconnect_others() -> None:
 
 
 def drop_schema() -> None:
-    _, sync = _urls()
-    engine = create_engine(sync)
+    engine = _engine()
     try:
         with engine.connect() as conn:
             if is_sqlite():
