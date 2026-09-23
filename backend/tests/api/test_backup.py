@@ -556,6 +556,14 @@ async def test_uploads_purge_removes_orphans_only(client):
     old_ts = time_mod.time() - 25 * 3600  # older than the 24h grace period
     os.utime(old_orphan, (old_ts, old_ts))
 
+    # the backup artifact lives in a HIDDEN dir on this volume — the purge
+    # never descends into it (even an old, unreferenced-looking name)
+    backup_art = os.path.join(upload_dir, ".backups", "clinic-backup.tar.gz")
+    os.makedirs(os.path.dirname(backup_art), exist_ok=True)
+    with open(backup_art, "wb") as f:
+        f.write(b"tarball")
+    os.utime(backup_art, (old_ts, old_ts))
+
     from app.db.session import SessionLocal
     async with SessionLocal() as session:
         s = await purge_once(session)
@@ -563,6 +571,7 @@ async def test_uploads_purge_removes_orphans_only(client):
     assert not os.path.exists(old_orphan)
     assert os.path.exists(young_orphan)  # within the grace period
     assert os.path.exists(foreign)  # not a storage name — never touched
+    assert os.path.exists(backup_art)  # hidden dir — never swept
     assert os.path.exists(os.path.join(upload_dir, stored_ref))
     assert os.path.exists(os.path.join(upload_dir, stored_del))
 
@@ -848,3 +857,209 @@ async def test_import_uploads_only_backup(client):
     assert done["status"] == "done", done
     assert done["summary"]["uploads_moved"] == 1
     assert done["summary"]["tables"] == {}
+
+
+# --- artifact persistence + native download token (1.3.1) -----------------
+
+
+def _reset_backup_state() -> None:
+    """Simulate a fresh volume: wipe the in-memory job state AND the persisted
+    artifact dir (both survive across tests otherwise — module globals + the
+    shared tmp UPLOAD_DIR)."""
+    import shutil
+
+    from app.api.v1 import backup as mod
+    from app.core.config import settings as cfg
+
+    with mod._status_lock:
+        mod._file_path = None
+        mod._status.update(
+            status="idle",
+            started_at=None,
+            finished_at=None,
+            error=None,
+            sha256=None,
+            encrypted=False,
+        )
+    d = cfg.backup_dir_resolved
+    if d.is_dir():
+        shutil.rmtree(d)
+
+
+def _simulate_restart() -> None:
+    """Wipe ONLY the in-memory state — what a container recreation loses. The
+    persisted artifact dir stays."""
+    from app.api.v1 import backup as mod
+
+    with mod._status_lock:
+        mod._file_path = None
+        mod._status.update(
+            status="idle",
+            started_at=None,
+            finished_at=None,
+            error=None,
+            sha256=None,
+            encrypted=False,
+        )
+
+
+async def _wait_backup_ready(client, token: str) -> dict:
+    r = await client.post("/api/v1/admin/backup", headers=auth(token))
+    assert r.status_code == 202, r.text
+    for _ in range(100):
+        r = await client.get("/api/v1/admin/backup", headers=auth(token))
+        if r.json()["status"] != "running":
+            break
+    assert r.json()["status"] == "ready", r.text
+    return r.json()
+
+
+async def test_backup_download_token_flow(client):
+    """Native browser downloads cannot send an Authorization header — a
+    short-lived signed token in the query string authorizes GET /download
+    (the header path stays as the fallback)."""
+    import hashlib
+    import hmac
+    import time
+
+    from app.core.config import settings as cfg
+
+    _reset_backup_state()
+    admin, _ = await login(client)
+    await make_user(client, admin, "recep2", role="receptionist")
+    recep, _ = await login(client, "recep2", "passw0rd123")
+
+    # issuing a token requires backup.manage
+    r = await client.post("/api/v1/admin/backup/download-token", headers=auth(recep))
+    assert r.status_code == 403
+    r = await client.post("/api/v1/admin/backup/download-token", headers=auth(admin))
+    assert r.status_code == 200
+    dl_token = r.json()["token"]
+
+    # valid token, but no ready backup → 409
+    r = await client.get(f"/api/v1/admin/backup/download?token={dl_token}")
+    assert r.status_code == 409
+
+    st = await _wait_backup_ready(client, admin)
+
+    # the token downloads WITHOUT any auth header; checksum header intact
+    r = await client.get(f"/api/v1/admin/backup/download?token={dl_token}")
+    assert r.status_code == 200
+    assert r.headers["x-checksum-sha256"] == st["sha256"]
+
+    # garbage → 401; expired (correct signature, past expiry) → 401
+    r = await client.get("/api/v1/admin/backup/download?token=junk.not-a-mac")
+    assert r.status_code == 401
+    exp = int(time.time()) - 10
+    mac = hmac.new(
+        cfg.secret_key.encode(), f"backup-download:{exp}".encode(), hashlib.sha256
+    ).hexdigest()
+    r = await client.get(f"/api/v1/admin/backup/download?token={exp}.{mac}")
+    assert r.status_code == 401
+
+    await client.delete("/api/v1/admin/backup", headers=auth(admin))
+
+
+async def test_backup_artifact_persists_across_restart(client):
+    """The tarball lives in BACKUP_DIR (persistent volume) — after a restart
+    the startup rediscovery finds it again: status ready, same checksum,
+    downloadable with the checksum header."""
+    from app.api.v1 import backup as mod
+    from app.core.config import settings as cfg
+
+    _reset_backup_state()
+    token, _ = await login(client)
+    st = await _wait_backup_ready(client, token)
+    sha_before = st["sha256"]
+
+    # the artifact is on the persistent path, exactly one file (no .part debris)
+    art_dir = cfg.backup_dir_resolved
+    assert art_dir.is_dir()
+    assert [p.name for p in art_dir.iterdir()] == ["clinic-backup.tar.gz"]
+
+    # container recreation: in-memory state gone, file remains
+    _simulate_restart()
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["status"] == "idle"
+
+    mod.rediscover_backup_artifact()
+
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["status"] == "ready"
+    assert r.json()["sha256"] == sha_before
+    assert r.json()["encrypted"] is False
+    assert r.json()["size_bytes"] > 0
+    # downloadable again, checksum header matches
+    r = await client.get("/api/v1/admin/backup/download", headers=auth(token))
+    assert r.status_code == 200
+    assert r.headers["x-checksum-sha256"] == sha_before
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+
+async def test_backup_artifact_replaced_not_accumulated(client):
+    """Each backup REPLACES the single artifact — the old per-run mkstemp
+    leak (a full tarball left behind per run) stays fixed."""
+    from app.core.config import settings as cfg
+
+    _reset_backup_state()
+    token, _ = await login(client)
+    await _wait_backup_ready(client, token)
+    await _wait_backup_ready(client, token)
+    art_dir = cfg.backup_dir_resolved
+    assert [p.name for p in art_dir.iterdir()] == ["clinic-backup.tar.gz"]
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+
+async def test_backup_part_file_never_discovered(client):
+    """A killed run's .part file is debris: rediscovery ignores it and sweeps it."""
+    import os
+
+    from app.api.v1 import backup as mod
+    from app.core.config import settings as cfg
+
+    _reset_backup_state()
+    token, _ = await login(client)
+    art_dir = cfg.backup_dir_resolved
+    art_dir.mkdir(parents=True, exist_ok=True)
+    part = art_dir / "clinic-backup-abcd.tar.gz.part"
+    with open(part, "wb") as f:
+        f.write(b"half-written")
+    mod.rediscover_backup_artifact()
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["status"] == "idle"
+    assert not os.path.exists(part)  # swept as debris
+
+    # a real artifact alongside it IS found after a restart
+    st = await _wait_backup_ready(client, token)
+    _simulate_restart()
+    mod.rediscover_backup_artifact()
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["status"] == "ready"
+    assert r.json()["sha256"] == st["sha256"]
+    await client.delete("/api/v1/admin/backup", headers=auth(token))
+
+
+async def test_backup_encrypted_artifact_rediscovered(client, monkeypatch):
+    """Encrypted artifact: rediscovery flips encrypted=True (magic sniff) and
+    the download keeps the .enc name / octet-stream type."""
+    from app.api.v1 import backup as mod
+    from app.core.config import settings as cfg
+
+    _reset_backup_state()
+    monkeypatch.setattr(cfg, "backup_encryption_key", "rediscover-key")
+    token, _ = await login(client)
+    st = await _wait_backup_ready(client, token)
+    assert st["encrypted"] is True
+
+    _simulate_restart()
+    mod.rediscover_backup_artifact()
+
+    r = await client.get("/api/v1/admin/backup", headers=auth(token))
+    assert r.json()["status"] == "ready"
+    assert r.json()["encrypted"] is True
+    assert r.json()["sha256"] == st["sha256"]
+    r = await client.get("/api/v1/admin/backup/download", headers=auth(token))
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert r.headers["content-disposition"].endswith('.tar.gz.enc"')
+    await client.delete("/api/v1/admin/backup", headers=auth(token))

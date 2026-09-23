@@ -27,12 +27,14 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 // user-event clicks need PointerEvent (missing in some jsdom builds)
 if (typeof window.PointerEvent === 'undefined') {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(window as any).PointerEvent = class MouseEvent2 extends MouseEvent {
+  (window as any).PointerEvent = class MouseEvent2 extends MouseEvent {
     constructor(type: string, params: Record<string, unknown> = {}) {
       super(type, params as never)
       Object.assign(this, { pointerId: params.pointerId ?? 1, pointerType: params.pointerType ?? 'mouse' })
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).Element.prototype.setPointerCapture ??= () => {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).Element.prototype.releasePointerCapture ??= () => {}
 }

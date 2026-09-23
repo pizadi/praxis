@@ -158,7 +158,7 @@ export default function AppLayout({ user, onLogout }: Props) {
               style={{ borderInlineEnd: 'none', paddingTop: 12 }}
             />
           </Sider>
-          <Content style={{ padding: 24, overflowY: 'auto', height: 'calc(100vh - 64px)' }}>
+          <Content style={{ padding: 24, overflow: 'auto', height: 'calc(100vh - 64px)' }}>
             <BackupStaleAlert />
             <Outlet />
           </Content>

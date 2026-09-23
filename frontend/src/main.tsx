@@ -7,7 +7,10 @@ import { HashRouter } from 'react-router-dom'
 
 import App from './App'
 import { useThemeState, ThemeContext } from './components/ThemeContext'
+import { warnUnsupportedBrowser } from './lib/browserSupport'
 import './index.css'
+
+warnUnsupportedBrowser()
 
 const queryClient = new QueryClient({
   defaultOptions: {

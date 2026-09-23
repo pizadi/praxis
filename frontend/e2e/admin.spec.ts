@@ -28,6 +28,25 @@ test.describe('admin area (roles/users/backup)', () => {
     expect(shaVisible > 0 || staleBanner === 0).toBeTruthy()
   })
 
+  test('backup download streams via the native download manager (token URL)', async ({ page }) => {
+    await login(page)
+    await page.goto('/#/backup')
+    await page.waitForSelector('text=پشتیبان‌گیری')
+    // build an artifact (scratch backend is disposable), then wait for ready
+    await page.click('button:has-text("ساخت پشتیبان")')
+    const downloadBtn = page.locator('button:has-text("دانلود پشتیبان")')
+    await expect(downloadBtn).toBeVisible({ timeout: 20_000 })
+
+    // the UI fetches a short-lived token, then navigates to the tokenized
+    // URL — the browser's download manager takes over (never an axios blob)
+    const downloadPromise = page.waitForEvent('download', { timeout: 15_000 })
+    await downloadBtn.click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toMatch(/^clinic-backup-.*\.tar\.gz$/)
+    const path = await download.path()
+    expect(path).toBeTruthy()
+  })
+
   test('receptionist never sees the admin menu entries (UI gating follows permissions)', async ({ page }) => {
     // create a receptionist via the API
     const roles = await api<{ items: { id: number; name: string }[] }>('get', '/roles')

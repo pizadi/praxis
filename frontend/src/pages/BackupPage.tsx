@@ -20,7 +20,7 @@ import {
 } from '@ant-design/icons'
 import type { RcFile } from 'antd/es/upload'
 
-import { api, apiError } from '../api/client'
+import { api, API_BASE, apiError } from '../api/client'
 import { toFaDigits } from '../lib/jalali'
 
 interface BackupStatus {
@@ -91,20 +91,25 @@ export default function BackupPage() {
     onError: (err) => message.error(apiError(err).message),
   })
 
+  const [downloading, setDownloading] = useState(false)
+
+  /** Native browser download: fetch a short-lived token, then hand the
+   * tokenized URL to the browser's download manager — progress/pause/resume,
+   * streamed to disk. NEVER fetch the artifact as an axios blob: on a slow
+   * link the whole tarball would buffer in RAM with no visible feedback
+   * (the "download never starts" bug). */
   const download = async () => {
+    setDownloading(true)
     try {
-      const res = await api.get('/admin/backup/download', { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data)
-      const link = document.createElement('a')
-      link.href = url
-      const d = new Date()
-      const p = (n: number) => String(n).padStart(2, '0')
-      const suffix = status.data?.encrypted ? '.tar.gz.enc' : '.tar.gz'
-      link.download = `clinic-backup-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${suffix}`
-      link.click()
-      URL.revokeObjectURL(url)
+      const { token } = (await api.post<{ token: string }>('/admin/backup/download-token'))
+        .data
+      window.location.assign(
+        `${API_BASE}/admin/backup/download?token=${encodeURIComponent(token)}`,
+      )
     } catch (err) {
       message.error(apiError(err).message)
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -246,7 +251,12 @@ export default function BackupPage() {
             )}
             {st === 'ready' && (
               <>
-                <Button type="primary" icon={<DownloadOutlined />} onClick={download}>
+                <Button
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  loading={downloading}
+                  onClick={download}
+                >
                   دانلود پشتیبان
                 </Button>
                 <Button danger icon={<DeleteOutlined />} onClick={() => discard.mutate()}>

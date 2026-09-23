@@ -87,6 +87,21 @@ Version history:
           server's whitespace-only-formula normalization; testdata
           contract keeps the error-message mapping in sync
   1.3.0  release
+  1.3.1.dev1  backup download via the NATIVE browser download manager
+          (POST download-token issues a short-lived HMAC token; GET
+          download?token= accepts it — a plain navigation cannot send
+          the Authorization header); the artifact is no longer fetched
+          as an in-memory axios blob (on slow links nothing showed for
+          the whole transfer). Artifacts persist in BACKUP_DIR (default
+          <upload_dir>/.backups — hidden dir on the uploads volume:
+          purge-safe, never archived into the next tarball) and are
+          re-discovered at startup after a restart; a new backup
+          atomically replaces the single artifact (the old per-run
+          mkstemp leak fixed). Patient page: responsive columns (the
+          sidebar/main split stacks below lg), the layout scroll
+          container scrolls both axes, render errors are contained by
+          an ErrorBoundary, and engines without :where() (Chrome/Edge
+          < 88) get an upgrade banner instead of silently broken pages
 """
 
-__version__ = "1.3.0"
+__version__ = "1.3.1.dev1"

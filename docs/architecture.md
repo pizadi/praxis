@@ -12,6 +12,12 @@ rewritten from a legacy Django/SQLite application.
 | Frontend | Vite + React + TS, antd (RTL), TanStack Query, jalaliday |
 | Deploy | docker-compose (web/api/db), nginx reverse proxy |
 
+**Browser floor: Chrome/Edge ≥ 88** (2021). antd v5 generates component
+styles at runtime as `:where(...)`-wrapped rules; older engines drop every
+such rule and pages silently break. The app feature-detects this at boot
+(`src/lib/browserSupport.ts`) and shows a plain-DOM upgrade banner — it does
+not polyfill. Keep the floor in mind when adopting CSS/JS features.
+
 ## Layout
 
 ```

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { login } from './helpers'
+import { api, apiAppointment, apiPatient, login } from './helpers'
 
 const UNIQUE = Date.now().toString().slice(-8)
 
@@ -45,5 +45,37 @@ test.describe('patients', () => {
     await page.locator('.ant-modal:visible .ant-modal-footer .ant-btn-primary').click()
     await expect(page.locator('.ant-modal:visible')).toBeVisible()
     await expect(page.locator('.ant-message')).toContainText(/National ID|موجود|تکراری/)
+  })
+
+  test('low viewport (1024×640): the four view lists render and are reachable', async ({ page }) => {
+    // regression: on a smaller/older machine only the tab bar showed — the
+    // lists below the fold never appeared (scroll container broke)
+    const pid = (await apiPatient('1000000042')).id
+    await apiAppointment(pid)
+    await page.setViewportSize({ width: 1024, height: 640 })
+    await login(page)
+    await page.goto(`/#/patients/${pid}`)
+    await expect(page.locator('.ant-segmented')).toBeVisible()
+
+    // the SIDEBAR list card of each view: exact head title + contains a
+    // list/table (the main pane card can carry the same title)
+    const sidebarCard = (label: string) =>
+      page
+        .locator('.ant-card')
+        .filter({ has: page.locator(`.ant-card-head-title:text-is("${label}")`) })
+        .filter({ has: page.locator('.ant-list, .ant-table') })
+        .first()
+
+    const views = ['نوبت‌ها', 'همه فایل‌ها', 'پرسش‌نامه‌ها', 'نسخه‌ها']
+    for (let i = 0; i < views.length; i++) {
+      await page.locator('.ant-segmented .ant-segmented-item').nth(i).click()
+      const card = sidebarCard(views[i])
+      await expect(card).toBeVisible({ timeout: 10_000 })
+      await card.scrollIntoViewIfNeeded()
+      const box = await card.boundingBox()
+      expect(box, `view card ${views[i]} must have a real box`).not.toBeNull()
+      expect(box!.width).toBeGreaterThan(120)
+      expect(box!.height).toBeGreaterThan(40)
+    }
   })
 })

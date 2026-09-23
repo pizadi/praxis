@@ -560,8 +560,8 @@ export default function PatientDetailPage() {
 
   return (
     <Row gutter={16} style={{ minHeight: 'calc(100vh - 112px)' }}>
-      {/* ---------- sidebar: patient info + views ---------- */}
-      <Col span={7}>
+      {/* ---------- sidebar: patient info + views (stacks below lg) ---------- */}
+      <Col xs={24} lg={7}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Card
             title={`${patient.first_name} ${patient.last_name}`}
@@ -921,8 +921,8 @@ export default function PatientDetailPage() {
         </Space>
       </Col>
 
-      {/* ---------- main pane (visually left in RTL) ---------- */}
-      <Col span={17}>
+      {/* ---------- main pane (visually left in RTL; stacks below lg) ---------- */}
+      <Col xs={24} lg={17}>
         {view === 'appointments' &&
           (selectedAppt == null ? (
             <Card>

@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,6 +33,11 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
 
     # --- Backup tarballs ---
+    # Where backup artifacts live. Empty = <upload_dir>/.backups — a hidden
+    # dir on the persistent uploads volume: it survives container recreation,
+    # the uploads purge never descends into hidden dirs, and the archive
+    # itself skips dot-dirs (the tarball can never include itself).
+    backup_dir: str = ""
     # AES-256-GCM passphrase for downloaded artifacts (empty = no encryption).
     # The key unlocks IMPORTS of encrypted tarballs too — losing it means
     # losing the backups, so store it in a password manager.
@@ -47,6 +53,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def backup_dir_resolved(self) -> Path:
+        return Path(self.backup_dir) if self.backup_dir else Path(self.upload_dir) / ".backups"
 
 
 @lru_cache

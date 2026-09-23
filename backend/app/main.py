@@ -96,6 +96,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await asyncio.to_thread(run_migrations)
     await bootstrap_admin()
     purge_task = asyncio.create_task(purge_loop())  # automatic orphan sweeper
+    # backup artifacts persist on the volume — re-find the last one after a
+    # restart (background: never blocks boot; status flips to ready when the
+    # checksum is computed)
+    import threading
+
+    from app.api.v1.backup import rediscover_backup_artifact
+
+    threading.Thread(
+        target=rediscover_backup_artifact, name="clinic-backup-rediscover", daemon=True
+    ).start()
     yield
     purge_task.cancel()
 

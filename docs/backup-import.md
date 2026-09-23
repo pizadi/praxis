@@ -14,6 +14,34 @@
   the archive is never fully in memory.
 - SQLite (dev) databases are archived as the raw file.
 
+## Artifact persistence (survives restarts)
+
+- The artifact lives under `BACKUP_DIR` — default `<UPLOAD_DIR>/.backups`,
+  a **hidden dir on the uploads volume**, so it survives `docker compose
+  down && up` with no compose changes. The purge never descends into
+  hidden dirs, and the archiver skips dot-dirs (the tarball can never
+  include itself).
+- Exactly **one artifact** exists: the job writes `<random>.part` in the
+  same dir and atomically `os.replace`s it onto the fixed final name
+  (`clinic-backup.tar.gz` / `.tar.gz.enc`); a stale artifact of the other
+  kind (encryption toggled between runs) is removed.
+- At startup (after migrations/bootstrap) a background thread
+  **re-discovers** the artifact: dead `.part` files are swept, the
+  checksum is recomputed (streamed), and the status flips to `ready`
+  with `finished_at` from the file mtime. A restart therefore never
+  silently loses the last backup.
+- `DELETE` discards the persisted artifact from disk.
+
+## Download (native browser flow)
+
+- A browser navigation cannot send the `Authorization` header, so
+  `POST /admin/backup/download-token` issues a **short-lived HMAC token**
+  (5 min, signed with `SECRET_KEY`); the UI then navigates to
+  `GET /admin/backup/download?token=…` and the browser's **download
+  manager** streams the artifact to disk (visible progress even on slow
+  links). The header path (Bearer + `backup.manage`) keeps working —
+  `?token=` is only additive; invalid/expired tokens are 401.
+
 ## Tarball format
 
 ```

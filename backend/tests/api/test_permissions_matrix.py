@@ -94,6 +94,7 @@ async def test_receptionist_denied_endpoints(client, recep, seeded):
         ("get", "/api/v1/roles/permissions", None),
         ("get", "/api/v1/stats/summary", None),
         ("get", "/api/v1/admin/backup", None),
+        ("post", "/api/v1/admin/backup/download-token", None),
     ]
     for method, path, body in denied:
         r = await _hit(client, recep, method, path, body)
@@ -112,6 +113,7 @@ async def test_doctor_cannot_administer(client, doctor, admin_token, seeded):
         ("get", "/api/v1/users", None),
         ("get", "/api/v1/roles", None),
         ("get", "/api/v1/admin/backup", None),
+        ("post", "/api/v1/admin/backup/download-token", None),
         ("delete", f"/api/v1/admin/trash/patients/{dead['id']}", None),
     ]
     for method, path, body in denied:
@@ -128,6 +130,7 @@ async def test_anonymous_is_401_everywhere(client, seeded):
         ("get", "/api/v1/admin/audit"),
         ("get", "/api/v1/admin/backup"),
         ("post", "/api/v1/patients"),
+        ("post", "/api/v1/admin/backup/download-token"),
     ):
         kwargs = {"json": {}} if method == "post" else {}
         r = await getattr(client, method)(path, **kwargs)
