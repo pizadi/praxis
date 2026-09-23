@@ -33,6 +33,7 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    NamedCreateIn,
     NamedRef,
     NamedRenameIn,
     PrescriptionCreateIn,
@@ -186,6 +187,43 @@ async def list_items(
     limit, offset = clamp_limit_offset(limit, offset, ITEM_MAX_PAGE_SIZE)
     rows, total = await paginate(db, stmt, limit=limit, offset=offset)
     return Page(items=rows, total=total, limit=limit, offset=offset)
+
+
+@router.post("/prescription-items", response_model=NamedRef, status_code=status.HTTP_201_CREATED)
+async def create_item(
+    body: NamedCreateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_perm("prescriptions.write")),
+):
+    """Directly register a dictionary item (normally items self-register
+    from prescriptions). Case-insensitive duplicate check first — a live
+    item differing only by case is a 409 name_taken, same as rename."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name required")
+    dup = await db.scalar(
+        select(PrescriptionItem).where(
+            func.lower(PrescriptionItem.name) == name.casefold(),
+            PrescriptionItem.deleted_at.is_(None),
+        )
+    )
+    if dup:
+        raise ConflictError("Name already taken", code="name_taken")
+    item = PrescriptionItem(name=name[:128])
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    await audit.log_action(
+        db,
+        user=user,
+        request=request,
+        action=audit.CREATE,
+        entity_type="prescription_item",
+        entity_id=item.id,
+        summary=item.name,
+    )
+    return item
 
 
 @router.patch("/prescription-items/{item_id}", response_model=NamedRef)

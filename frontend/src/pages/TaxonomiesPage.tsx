@@ -36,7 +36,8 @@ function TaxonomyPanel({
   kind: TaxonomyKind
   color: string
   canEdit: boolean
-  /** dictionary has no create endpoint (items self-register from prescriptions) */
+  /** prescription items default to true (POST /prescription-items); the
+   * auto-registration from prescriptions keeps working alongside */
   canCreate?: boolean
   /** renaming onto an existing name merges links — prescription items just refuse */
   mergeOnRename?: boolean
@@ -66,7 +67,14 @@ function TaxonomyPanel({
       setPage(1)
       await qc.invalidateQueries({ queryKey: [kind] })
     },
-    onError: (err) => message.error(apiError(err).message),
+    onError: (err) => {
+      // Persian copy for the common case (the API message is English)
+      if (apiError(err).code === 'name_taken') {
+        message.error('این نام از قبل وجود دارد')
+        return
+      }
+      message.error(apiError(err).message)
+    },
   })
 
   const rename = useMutation({
@@ -250,7 +258,6 @@ export default function TaxonomiesPage() {
                       kind="prescription-items"
                       color="purple"
                       canEdit={hasPerm('prescriptions.write')}
-                      canCreate={false}
                       mergeOnRename={false}
                       deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
                     />
