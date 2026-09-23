@@ -102,6 +102,12 @@ Version history:
           container scrolls both axes, render errors are contained by
           an ErrorBoundary, and engines without :where() (Chrome/Edge
           < 88) get an upgrade banner instead of silently broken pages
+  1.3.1.dev2  root /health alias for /api/v1/health (uptime monitors and
+          manual checks hit the bare path on the host port — the 404
+          looked like the API being down); prescription-item dictionary
+          gains a manual create endpoint (POST /prescription-items,
+          perm prescriptions.write, case-insensitive uniqueness) so the
+          taxonomies page's «افزودن» works on all three lists
 """
 
-__version__ = "1.3.1.dev1"
+__version__ = "1.3.1.dev2"

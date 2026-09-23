@@ -39,7 +39,7 @@ function TaxonomyPanel({
   title: string
   color: string
   canEdit: boolean
-  /** dictionary has no create endpoint (items self-register from prescriptions) */
+  /** panels without a create endpoint can hide the «افزودن» input */
   canCreate?: boolean
   /** renaming onto an existing name merges links — prescription items just refuse */
   mergeOnRename?: boolean
@@ -245,7 +245,6 @@ export default function TaxonomiesPage() {
               title="آیتم‌های نسخه"
               color="purple"
               canEdit={hasPerm('prescriptions.write')}
-              canCreate={false}
               mergeOnRename={false}
               deleteHint="فقط از پیشنهادهای خودکار حذف می‌شود؛ نسخه‌های ثبت‌شده دست‌نخورده می‌مانند"
             />

@@ -185,6 +185,39 @@ async def test_prescription_item_autocomplete_and_rename(client):
     assert r.status_code == 200
 
 
+async def test_prescription_item_create(client):
+    """Manual dictionary entry (the taxonomies UI's «افزودن») — same
+    case-insensitive uniqueness as the auto-registration."""
+    token, _ = await login(client)
+
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "Aspirin"}, headers=auth(token)
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "Aspirin"
+
+    # appears in the dictionary list
+    r = await client.get("/api/v1/prescription-items", headers=auth(token))
+    assert "Aspirin" in [i["name"] for i in r.json()["items"]]
+
+    # duplicate (case-insensitive) → 409
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": " aspirin "}, headers=auth(token)
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "name_taken"
+
+    # usable in a prescription right away (by name → the SAME dictionary row)
+    pid = (await mk_patient(client, token))["id"]
+    r = await client.post(
+        f"/api/v1/patients/{pid}/prescriptions",
+        json={"items": [{"name": "ASPIRIN"}]},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["items"][0]["item_name"] == "Aspirin"
+
+
 async def test_prescription_permission_gating(client):
     token, _ = await login(client)
     await make_user(client, token, "recep1", role="receptionist")
@@ -203,6 +236,10 @@ async def test_prescription_permission_gating(client):
     )
     assert r.status_code == 403
     r = await client.get("/api/v1/prescription-items", headers=auth(recep))
+    assert r.status_code == 403
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "x"}, headers=auth(recep)
+    )
     assert r.status_code == 403
 
     # doctor: read + write

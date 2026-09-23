@@ -87,6 +87,7 @@ async def test_receptionist_denied_endpoints(client, recep, seeded):
         ("post", f"/api/v1/patients/{seeded['pid']}/prescriptions", {"items": [{"name": "x"}]}),
         ("get", f"/api/v1/patients/{seeded['pid']}/prescriptions", None),
         ("get", "/api/v1/prescription-items", None),
+        ("post", "/api/v1/prescription-items", {"name": "x"}),
         ("get", "/api/v1/admin/trash/patients", None),
         ("get", "/api/v1/admin/audit", None),
         ("get", "/api/v1/users", None),

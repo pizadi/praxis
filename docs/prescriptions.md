@@ -53,6 +53,10 @@ Changing them would rewrite history differently on different installs.
 - Creating/updating with an unknown item **name** auto-registers it in the
   dictionary (case-insensitive match first) — no separate taxonomy perm;
   prescribing doctors grow the vocabulary.
+- Dictionary rows are also managed by hand on the taxonomies page:
+  `POST /prescription-items` (manual create, 409 `name_taken` on a
+  case-insensitive duplicate), rename and soft delete — all behind
+  `prescriptions.write`.
 - Every write is audited; prescriptions are restorable from the trash
   (parent = patient).
 
