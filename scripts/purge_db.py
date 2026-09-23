@@ -55,6 +55,13 @@ parser.add_argument(
     "--no-snapshot", action="store_true", help="Skip the pre-purge snapshot (dangerous)"
 )
 parser.add_argument(
+    "--disconnect-others",
+    action="store_true",
+    help="Terminate all other sessions on the target DB right before the drop — "
+    "clears leftover lock holders (idle DB-tool sessions block DROP SCHEMA). "
+    "Safe: the purge replaces the whole database anyway.",
+)
+parser.add_argument(
     "--container",
     default="new-patients-db-1",
     help="docker container hosting PostgreSQL (for the snapshot)",
@@ -148,6 +155,34 @@ def take_snapshot(container: str) -> None:
         print(f"snapshot: {out} ({out.stat().st_size} bytes) — validated")
 
 
+def disconnect_others() -> None:
+    """pg_terminate_backend every other session on the target database.
+
+    The purge replaces the whole database, so no other session can survive
+    it meaningfully — this just clears lock holders (a DB tool left idle in
+    transaction, a stray local session) that would block the DROP even with
+    the app container stopped.
+    """
+    if is_sqlite():
+        return
+    _, sync = _urls()
+    engine = create_engine(sync)
+    try:
+        with engine.connect() as conn:
+            n = 0
+            for (killed,) in conn.execute(
+                text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+                )
+            ):
+                n += 1 if killed else 0
+    finally:
+        engine.dispose()
+    if n:
+        print(f"disconnected {n} other session(s) on the target database")
+
+
 def drop_schema() -> None:
     _, sync = _urls()
     engine = create_engine(sync)
@@ -220,6 +255,8 @@ def main() -> int:
         take_snapshot(args.container)
 
     print("dropping schema…")
+    if args.disconnect_others:
+        disconnect_others()
     drop_schema()
 
     print("migrating to head…")

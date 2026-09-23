@@ -116,6 +116,10 @@ Version history:
           timeout — a running api container's connections were the
           blocker), warns about other connected backends up front, and
           fails loudly with a «docker compose stop api» hint
+  1.3.1.dev4  purge_db.py --disconnect-others: terminate stray sessions
+          on the target DB before the drop (a DB tool left idle in
+          transaction blocks DROP SCHEMA even with the api stopped —
+          bit once already); the guard fires only with the flag
 """
 
-__version__ = "1.3.1.dev3"
+__version__ = "1.3.1.dev4"

@@ -33,7 +33,9 @@ docker compose up -d --build api web
 
 # full DB reset incl. users — STOP THE API FIRST (`docker compose stop api`:
 # its connections block DROP SCHEMA on locks → the purge hangs), purge, start
-# it again; dry run default; admin re-bootstrapped from BOOTSTRAP_ADMIN_*
+# it again; stray sessions (DB tools left idle in transaction) block the same
+# way → --disconnect-others clears them; dry run default; admin re-bootstrapped
+# from BOOTSTRAP_ADMIN_*
 .venv/bin/python scripts/purge_db.py            # prints the plan
 .venv/bin/python scripts/purge_db.py --yes      # snapshot taken automatically first
 ```
