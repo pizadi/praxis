@@ -1,18 +1,18 @@
 @import url('https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css');
 
+/*
+ * Colors come from the active VibeFarsi palette (lib/themes.ts), applied as
+ * oklch CSS custom properties on <html data-theme="…"> by ThemeContext (with
+ * a first-paint bootstrap in index.html). No hardcoded hex here.
+ */
+
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
-  background: #f5f5f5;
-}
-
-html.dark,
-html.dark body,
-html.dark #root {
-  background: #141414;
-  color-scheme: dark;
+  background: var(--background);
+  color: var(--foreground);
 }
 
 * {
@@ -21,15 +21,9 @@ html.dark #root {
 
 /* Jalali pickers use inline styles for background/border — override by class */
 .rmdp-container input {
-  background: #fff !important;
-  border: 1px solid #d9d9d9 !important;
-  color: rgba(0, 0, 0, 0.88) !important;
-}
-
-html.dark .rmdp-container input {
-  background: #141414 !important;
-  border-color: #424242 !important;
-  color: rgba(255, 255, 255, 0.85) !important;
+  background: var(--card) !important;
+  border: 1px solid var(--input) !important;
+  color: var(--foreground) !important;
 }
 
 /* Questionnaire builder: hover-revealed «insert question here» button in
