@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Praxis — پراکسیس</title>
+    <script>
+      // apply the session theme before first paint (no flash of the default
+      // palette; mirrors ThemeContext's sessionStorage key)
+      ;(function () {
+        var id = 'graphite'
+        try {
+          var stored = sessionStorage.getItem('clinic-theme-session')
+          if (
+            ['graphite', 'turquoise', 'saffron', 'pomegranate', 'lapis', 'paper'].indexOf(stored) !== -1
+          ) {
+            id = stored
+          }
+        } catch (e) {}
+        var dark = id !== 'paper'
+        document.documentElement.dataset.theme = id
+        document.documentElement.classList.toggle('dark', dark)
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

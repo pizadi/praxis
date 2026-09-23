@@ -24,8 +24,11 @@ import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, MinusCircleOutli
 
 import { api, apiError } from '../api/client'
 import type { Page, QuestionnaireTemplate } from '../api/types'
+import { toFaDigits } from '../lib/jalali'
 import type { FormatDoc } from '../lib/questionnaire'
 import { validateFormulaText } from '../lib/questionnaire'
+import { useIsMobile } from '../lib/useIsMobile'
+import StackCell from '../components/StackCell'
 
 /** Example JSON users can download as a starting point for uploads. */
 const EXAMPLE_FORMAT: FormatDoc = {
@@ -78,6 +81,7 @@ interface BuilderState {
 export default function QuestionnairesPage() {
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
+  const isMobile = useIsMobile()
   const [form] = Form.useForm<BuilderState>()
   const [editing, setEditing] = useState<QuestionnaireTemplate | null>(null)
   const [open, setOpen] = useState(false)
@@ -206,27 +210,58 @@ export default function QuestionnairesPage() {
           loading={templates.isLoading}
           dataSource={templates.data?.items ?? []}
           pagination={false}
-          columns={[
-            { title: 'نام', dataIndex: 'name' },
-            { title: 'توضیح', dataIndex: 'description' },
-            {
-              title: 'تعداد پرسش‌ها',
-              render: (_, t) => (t.format?.questions ?? []).length,
-            },
-            {
-              title: 'عملیات',
-              render: (_, t) => (
-                <Space>
-                  <Button size="small" onClick={() => openEdit(t)}>
-                    ویرایش
-                  </Button>
-                  <Popconfirm title="قالب به سبد بازیافت منتقل شود؟" onConfirm={() => remove.mutate(t.id)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
+          scroll={isMobile ? undefined : { x: 'max-content' }}
+          columns={
+            isMobile
+              ? [
+                  {
+                    title: 'قالب',
+                    render: (_, t) => (
+                      <StackCell
+                        main={t.name}
+                        lines={[
+                          t.description || null,
+                          `${toFaDigits((t.format?.questions ?? []).length)} پرسش`,
+                        ]}
+                      />
+                    ),
+                  },
+                  {
+                    title: 'عملیات',
+                    render: (_, t) => (
+                      <Space>
+                        <Button size="small" onClick={() => openEdit(t)}>
+                          ویرایش
+                        </Button>
+                        <Popconfirm title="قالب به سبد بازیافت منتقل شود؟" onConfirm={() => remove.mutate(t.id)}>
+                          <Button size="small" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                      </Space>
+                    ),
+                  },
+                ]
+              : [
+                  { title: 'نام', dataIndex: 'name' },
+                  { title: 'توضیح', dataIndex: 'description' },
+                  {
+                    title: 'تعداد پرسش‌ها',
+                    render: (_, t) => (t.format?.questions ?? []).length,
+                  },
+                  {
+                    title: 'عملیات',
+                    render: (_, t) => (
+                      <Space>
+                        <Button size="small" onClick={() => openEdit(t)}>
+                          ویرایش
+                        </Button>
+                        <Popconfirm title="قالب به سبد بازیافت منتقل شود؟" onConfirm={() => remove.mutate(t.id)}>
+                          <Button size="small" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                      </Space>
+                    ),
+                  },
+                ]
+          }
         />
       </Card>
 
@@ -240,7 +275,7 @@ export default function QuestionnairesPage() {
         }}
         onOk={() => form.submit()}
         confirmLoading={save.isPending}
-        width={860}
+        width="min(96vw, 860px)"
         destroyOnHidden
       >
         <BuilderForm form={form} onFinish={(v) => save.mutate(v)} />
@@ -457,7 +492,9 @@ function BuilderForm({
                   dir="ltr"
                   placeholder="مثلاً: 0.5 * pain_level + mobility"
                   style={{
-                    width: 420,
+                    width: '100%',
+                    maxWidth: 420,
+                    display: 'block',
                     direction: 'ltr',
                     textAlign: 'left',
                     fontFamily: 'monospace',

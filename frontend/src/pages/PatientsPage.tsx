@@ -19,8 +19,10 @@ import { Link } from 'react-router-dom'
 import { api, apiError } from '../api/client'
 import type { NamedRef, Page, Patient } from '../api/types'
 import { toEnDigits, toFaDigits } from '../lib/jalali'
+import { useIsMobile } from '../lib/useIsMobile'
 import { useUser } from '../components/AppLayout'
 import PatientFormModal from '../components/PatientFormModal'
+import StackCell from '../components/StackCell'
 
 interface PatientFilters {
   first_name: string
@@ -47,6 +49,7 @@ const EMPTY_FILTERS: PatientFilters = {
 }
 
 export default function PatientsPage() {
+  const isMobile = useIsMobile()
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   // advanced filters (all applied SQL-side; digits normalized to ASCII)
@@ -269,6 +272,7 @@ export default function PatientsPage() {
             rowKey="id"
             loading={isLoading}
             dataSource={data?.items ?? []}
+            scroll={isMobile ? undefined : { x: 'max-content' }}
             pagination={{
               current: page,
               pageSize: 20,
@@ -277,30 +281,64 @@ export default function PatientsPage() {
               showTotal: (t) => `${toFaDigits(t)} بیمار`,
             }}
             columns={[
-              {
-                title: 'نام',
-                render: (_, p) => (
-                  <Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>
-                ),
-              },
-              { title: 'کد ملی', dataIndex: 'national_id', render: (v) => toFaDigits(v) },
-              {
-                title: 'برچسب‌ها',
-                render: (_, p) => (
-                  <Space wrap>
-                    {p.tags.map((t) => (
-                      <Tag key={t.id} color="blue">
-                        {t.name}
-                      </Tag>
-                    ))}
-                    {p.diagnoses.map((d) => (
-                      <Tag key={d.id} color="red">
-                        {d.name}
-                      </Tag>
-                    ))}
-                  </Space>
-                ),
-              },
+              isMobile
+                ? {
+                    title: 'بیمار',
+                    render: (_, p: Page<Patient>['items'][number]) => (
+                      <StackCell
+                        main={<Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>}
+                        lines={[
+                          toFaDigits(p.national_id),
+                          p.tags.length + p.diagnoses.length > 0 ? (
+                            <Space wrap size={4}>
+                              {p.tags.map((t: NamedRef) => (
+                                <Tag key={t.id} color="blue">
+                                  {t.name}
+                                </Tag>
+                              ))}
+                              {p.diagnoses.map((d: NamedRef) => (
+                                <Tag key={d.id} color="red">
+                                  {d.name}
+                                </Tag>
+                              ))}
+                            </Space>
+                          ) : null,
+                        ]}
+                      />
+                    ),
+                  }
+                : {
+                    title: 'نام',
+                    render: (_, p) => (
+                      <Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>
+                    ),
+                  },
+              ...(isMobile
+                ? []
+                : [
+                    {
+                      title: 'کد ملی',
+                      dataIndex: 'national_id',
+                      render: (v: string) => toFaDigits(v),
+                    },
+                    {
+                      title: 'برچسب‌ها',
+                      render: (_v: unknown, p: Page<Patient>['items'][number]) => (
+                        <Space wrap>
+                          {p.tags.map((t) => (
+                            <Tag key={t.id} color="blue">
+                              {t.name}
+                            </Tag>
+                          ))}
+                          {p.diagnoses.map((d) => (
+                            <Tag key={d.id} color="red">
+                              {d.name}
+                            </Tag>
+                          ))}
+                        </Space>
+                      ),
+                    },
+                  ]),
               {
                 title: 'عملیات',
                 render: (_, p) => (

@@ -19,6 +19,9 @@ import {
 
 import { api, apiError } from '../api/client'
 import type { Page, PermissionGroup, Role } from '../api/types'
+import { toFaDigits } from '../lib/jalali'
+import { useIsMobile } from '../lib/useIsMobile'
+import StackCell from '../components/StackCell'
 
 interface RoleForm {
   name: string
@@ -28,6 +31,7 @@ interface RoleForm {
 export default function RolesPage() {
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
+  const isMobile = useIsMobile()
   const [form] = Form.useForm<RoleForm>()
   const [editing, setEditing] = useState<Role | null>(null)
   const [open, setOpen] = useState(false)
@@ -90,6 +94,7 @@ export default function RolesPage() {
           loading={roles.isLoading}
           dataSource={roles.data?.items ?? []}
           pagination={false}
+          scroll={isMobile ? undefined : { x: 'max-content' }}
           expandable={{
             expandedRowRender: (r) => (
               <Typography.Paragraph style={{ margin: 0 }}>
@@ -107,39 +112,80 @@ export default function RolesPage() {
               </Typography.Paragraph>
             ),
           }}
-          columns={[
-            { title: 'نام نقش', dataIndex: 'name' },
-            {
-              title: 'تعداد دسترسی‌ها',
-              render: (_, r) => (r.permissions ?? []).length,
-            },
-            { title: 'کاربران', dataIndex: 'user_count' },
-            {
-              title: 'عملیات',
-              render: (_, r) => {
-                const isAdminRole = r.is_system && r.name === 'admin'
-                return (
-                  <Space>
-                    <Button
-                      size="small"
-                      disabled={isAdminRole}
-                      title={isAdminRole ? 'نقش مدیر قابل ویرایش نیست' : undefined}
-                      onClick={() => openEdit(r)}
-                    >
-                      ویرایش
-                    </Button>
-                    {!r.is_system && (
-                      <Popconfirm title="این نقش حذف شود؟" onConfirm={() => remove.mutate(r.id)}>
-                        <Button size="small" danger disabled={(r.user_count ?? 0) > 0}>
-                          حذف
-                        </Button>
-                      </Popconfirm>
-                    )}
-                  </Space>
-                )
-              },
-            },
-          ]}
+          columns={
+            isMobile
+              ? [
+                  {
+                    title: 'نقش',
+                    render: (_, r) => (
+                      <StackCell
+                        main={r.name}
+                        lines={[
+                          `${toFaDigits((r.permissions ?? []).length)} دسترسی · ${toFaDigits(r.user_count ?? 0)} کاربر`,
+                        ]}
+                      />
+                    ),
+                  },
+                  {
+                    title: 'عملیات',
+                    render: (_, r) => {
+                      const isAdminRole = r.is_system && r.name === 'admin'
+                      return (
+                        <Space>
+                          <Button
+                            size="small"
+                            disabled={isAdminRole}
+                            title={isAdminRole ? 'نقش مدیر قابل ویرایش نیست' : undefined}
+                            onClick={() => openEdit(r)}
+                          >
+                            ویرایش
+                          </Button>
+                          {!r.is_system && (
+                            <Popconfirm title="این نقش حذف شود؟" onConfirm={() => remove.mutate(r.id)}>
+                              <Button size="small" danger disabled={(r.user_count ?? 0) > 0}>
+                                حذف
+                              </Button>
+                            </Popconfirm>
+                          )}
+                        </Space>
+                      )
+                    },
+                  },
+                ]
+              : [
+                  { title: 'نام نقش', dataIndex: 'name' },
+                  {
+                    title: 'تعداد دسترسی‌ها',
+                    render: (_, r) => (r.permissions ?? []).length,
+                  },
+                  { title: 'کاربران', dataIndex: 'user_count' },
+                  {
+                    title: 'عملیات',
+                    render: (_, r) => {
+                      const isAdminRole = r.is_system && r.name === 'admin'
+                      return (
+                        <Space>
+                          <Button
+                            size="small"
+                            disabled={isAdminRole}
+                            title={isAdminRole ? 'نقش مدیر قابل ویرایش نیست' : undefined}
+                            onClick={() => openEdit(r)}
+                          >
+                            ویرایش
+                          </Button>
+                          {!r.is_system && (
+                            <Popconfirm title="این نقش حذف شود؟" onConfirm={() => remove.mutate(r.id)}>
+                              <Button size="small" danger disabled={(r.user_count ?? 0) > 0}>
+                                حذف
+                              </Button>
+                            </Popconfirm>
+                          )}
+                        </Space>
+                      )
+                    },
+                  },
+                ]
+          }
         />
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           نقش «مدیر» همیشه به همه دسترسی‌ها دارد و قابل ویرایش نیست.
@@ -156,7 +202,7 @@ export default function RolesPage() {
         }}
         onOk={() => form.submit()}
         confirmLoading={save.isPending}
-        width={720}
+        width="min(96vw, 720px)"
         destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>

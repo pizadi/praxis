@@ -50,7 +50,7 @@ export default function StatsPage() {
     <div>
       <Typography.Title level={3}>آمار</Typography.Title>
       <Card>
-        <Row gutter={16}>
+        <Row gutter={[16, 12]}>
           <Col>
             <JalaliRangePicker value={range} onChange={setRange} />
           </Col>
@@ -59,8 +59,8 @@ export default function StatsPage() {
           </Col>
         </Row>
       </Card>
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={6}>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={12} md={6}>
           <Card loading={isLoading}>
             <Statistic
               title="تعداد نوبت"
@@ -68,17 +68,17 @@ export default function StatsPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={6}>
           <Card loading={isLoading}>
             <Statistic title="جمع درآمد" value={formatMoney(data?.total_amount ?? 0)} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={6}>
           <Card loading={isLoading}>
             <Statistic title="کارت‌خوان" value={formatMoney(data?.pos_amount ?? 0)} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={6}>
           <Card loading={isLoading}>
             <Statistic title="نقدی" value={formatMoney(data?.cash_amount ?? 0)} />
           </Card>
@@ -89,6 +89,7 @@ export default function StatsPage() {
           rowKey="description"
           dataSource={data?.by_description ?? []}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'شرح', dataIndex: 'description' },
             { title: 'تعداد', dataIndex: 'count', render: toFaDigits },

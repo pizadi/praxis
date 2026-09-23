@@ -87,6 +87,13 @@ Version history:
           server's whitespace-only-formula normalization; testdata
           contract keeps the error-message mapping in sync
   1.3.0  release
+  1.4.0  UI overhaul: six VibeFarsi palettes (graphite/turquoise/saffron/
+          pomegranate/lapis/paper) replace the light-dark toggle with a
+          session-scoped switcher (sessionStorage, no-flash bootstrap);
+          responsive layout — mobile drawer navigation, fluid tables/
+          stacked rows on narrow viewports, fluid modals; taxonomies page
+          renamed «موجودیت‌ها» and tabbed; prescription items get a direct
+          creation endpoint; e2e mobile-viewport smoke project
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"

@@ -1,40 +1,60 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { theme as antdTheme } from 'antd'
 
-export type ThemeMode = 'light' | 'dark'
+import { DEFAULT_THEME, getTheme, THEMES, type Palette, type ThemeId } from '../lib/themes'
 
 export interface ThemeCtx {
+  /** the active VibeFarsi palette */
+  theme: Palette
+  setTheme: (id: ThemeId) => void
   isDark: boolean
-  toggle: () => void
 }
 
 export const ThemeContext = createContext<ThemeCtx>({
-  isDark: false,
-  toggle: () => {},
+  theme: THEMES[0],
+  setTheme: () => {},
+  isDark: true,
 })
 
 export function useTheme() {
   return useContext(ThemeContext)
 }
 
-const STORAGE_KEY = 'clinic-theme'
+/** Session-scoped (survives a refresh in this tab, resets on a new session). */
+const STORAGE_KEY = 'clinic-theme-session'
 
-export function readStoredTheme(): ThemeMode {
-  return localStorage.getItem(STORAGE_KEY) === 'dark' ? 'dark' : 'light'
+export function readStoredTheme(): ThemeId {
+  try {
+    return getTheme(sessionStorage.getItem(STORAGE_KEY)).id
+  } catch {
+    return DEFAULT_THEME
+  }
 }
 
-/** Creates the provider value and keeps <html> class + localStorage in sync. */
-export function useThemeState(): { ctx: ThemeCtx; algorithm: typeof antdTheme.defaultAlgorithm } {
-  const [mode, setMode] = useState<ThemeMode>(readStoredTheme)
+/**
+ * Creates the provider value and keeps <html> (data-theme, dark class,
+ * color-scheme) + sessionStorage in sync. `algorithm` feeds ConfigProvider —
+ * see lib/themes.ts for how the palette maps onto antd tokens.
+ */
+export function useThemeState(): { ctx: ThemeCtx; palette: Palette } {
+  const [themeId, setThemeId] = useState<ThemeId>(readStoredTheme)
+  const palette = getTheme(themeId)
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', mode === 'dark')
-    localStorage.setItem(STORAGE_KEY, mode)
-  }, [mode])
+    const html = document.documentElement
+    html.dataset.theme = palette.id
+    html.classList.toggle('dark', palette.scheme === 'dark')
+    html.style.colorScheme = palette.scheme
+    try {
+      sessionStorage.setItem(STORAGE_KEY, palette.id)
+    } catch {
+      // storage unavailable (privacy mode) — the choice just won't persist
+    }
+  }, [palette])
 
   const ctx: ThemeCtx = {
-    isDark: mode === 'dark',
-    toggle: () => setMode((m) => (m === 'dark' ? 'light' : 'dark')),
+    theme: palette,
+    setTheme: setThemeId,
+    isDark: palette.scheme === 'dark',
   }
-  return { ctx, algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm }
+  return { ctx, palette }
 }

@@ -352,18 +352,18 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
               <Form.Item name="notes" label="یادداشت">
                 <Input.TextArea rows={2} />
               </Form.Item>
-              <Row gutter={12}>
-                <Col span={8}>
+              <Row gutter={[12, 12]}>
+                <Col xs={24} md={8}>
                   <Form.Item name="cm" label="CC / شرح حال فعلی">
                     <Input.TextArea rows={3} />
                   </Form.Item>
                 </Col>
-                <Col span={8}>
+                <Col xs={24} md={8}>
                   <Form.Item name="hx" label="Hx — تاریخچه">
                     <Input.TextArea rows={3} />
                   </Form.Item>
                 </Col>
-                <Col span={8}>
+                <Col xs={24} md={8}>
                   <Form.Item name="px" label="Px — معاینه">
                     <Input.TextArea rows={3} />
                   </Form.Item>
@@ -414,6 +414,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
               pagination={false}
               size="small"
               locale={{ emptyText: 'فایلی در این روز ثبت نشده است' }}
+              scroll={{ x: 'max-content' }}
               columns={[
                 {
                   title: 'عنوان / شرح',
@@ -531,8 +532,8 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
           label: 'پرداخت‌ها',
           children: (
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <Row gutter={16}>
-                <Col span={8}>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={12} md={8}>
                   <Card>
                     <Statistic
                       title="جمع کل"
@@ -586,6 +587,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
                 dataSource={txns.data?.items ?? []}
                 pagination={false}
                 size="small"
+                scroll={{ x: 'max-content' }}
                 columns={[
                   { title: 'شرح', dataIndex: 'description' },
                   { title: 'مبلغ', dataIndex: 'amount', render: formatMoney },
@@ -622,7 +624,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
         title="ثبت نسخه"
         closable={false}
         maskClosable={false}
-        width={640}
+        width="min(96vw, 640px)"
         footer={null}
         destroyOnHidden
         onCancel={() => setRxModalOpen(false)}

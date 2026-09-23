@@ -185,6 +185,63 @@ async def test_prescription_item_autocomplete_and_rename(client):
     assert r.status_code == 200
 
 
+async def test_prescription_item_direct_create(client):
+    """POST /prescription-items: the dictionary normally self-registers from
+    prescriptions; the panel can also register items directly."""
+    token, _ = await login(client)
+
+    # create → 201, audited
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "  آسموتول  "}, headers=auth(token)
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "آسموتول"  # stripped
+    item_id = r.json()["id"]
+    r = await client.get("/api/v1/admin/audit", params={"limit": 50}, headers=auth(token))
+    entry = next(
+        e for e in r.json()["items"]
+        if e["entity_type"] == "prescription_item" and e["action"] == "create"
+    )
+    assert entry["summary"] == "آسموتول"
+
+    # case-insensitive duplicate → 409 (same semantics as the auto-registration)
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "آسموتول"}, headers=auth(token)
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "name_taken"
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "  aspirin  "}, headers=auth(token)
+    )
+    assert r.status_code == 201, r.text
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "ASPIRIN"}, headers=auth(token)
+    )
+    assert r.status_code == 409
+
+    # blank name → 422
+    r = await client.post("/api/v1/prescription-items", json={"name": "   "}, headers=auth(token))
+    assert r.status_code == 422
+
+    # a soft-deleted name is reusable (partial unique index: live rows only)
+    r = await client.delete(f"/api/v1/prescription-items/{item_id}", headers=auth(token))
+    assert r.status_code == 204
+    r = await client.post(
+        "/api/v1/prescription-items", json={"name": "آسموتول"}, headers=auth(token)
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["id"] != item_id
+
+    # the created item feeds prescription autocomplete (no auto-registration needed)
+    pid = (await mk_patient(client, token))["id"]
+    r = await client.post(
+        f"/api/v1/patients/{pid}/prescriptions",
+        json={"items": [{"item_id": r.json()["id"]}]},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+
+
 async def test_prescription_permission_gating(client):
     token, _ = await login(client)
     await make_user(client, token, "recep1", role="receptionist")
@@ -203,6 +260,9 @@ async def test_prescription_permission_gating(client):
     )
     assert r.status_code == 403
     r = await client.get("/api/v1/prescription-items", headers=auth(recep))
+    assert r.status_code == 403
+    # direct dictionary creation is prescriptions.write too
+    r = await client.post("/api/v1/prescription-items", json={"name": "x"}, headers=auth(recep))
     assert r.status_code == 403
 
     # doctor: read + write
