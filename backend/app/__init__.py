@@ -169,6 +169,7 @@ Version history:
           permission labels split out, server-authoritative formula checks,
           domain-split schemas, and patient/questionnaire/appointment
           component extraction with regression guards
+   1.4.2  release
 """
 
-__version__ = "1.4.2.dev2"
+__version__ = "1.4.2"
