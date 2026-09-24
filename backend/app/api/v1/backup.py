@@ -17,6 +17,7 @@ endpoints at the bottom of this file. Backup and import share one job lock
 import contextlib
 import datetime as dt
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -27,9 +28,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_perm
+from app.api.deps import bearer_scheme, get_current_user, require_perm
 from app.core.config import settings
 from app.core.errors import BusinessRuleError, ConflictError
 from app.core.tokens import utc_now
@@ -47,6 +50,18 @@ from app.services.backup_import import (
 from app.services.backup_state import DUMP_TABLES, JOB_LOCK, psycopg2_url
 
 router = APIRouter(prefix="/admin/backup", tags=["backup"])
+
+# The artifact lives on the persistent volume (settings.backup_dir_resolved,
+# default <upload_dir>/.backups) under ONE fixed name per kind — a new backup
+# replaces it, so nothing accumulates. The job writes <random>.part and
+# atomically renames, so a crash mid-job never leaves a half-written artifact
+# under a discoverable name.
+ARTIFACT_NAME = "clinic-backup.tar.gz"
+ARTIFACT_NAME_ENC = "clinic-backup.tar.gz.enc"
+
+# Short-lived signed token for native browser downloads (they cannot send an
+# Authorization header — see _require_download_authorized).
+DOWNLOAD_TOKEN_TTL_SECONDS = 300
 
 _status_lock = threading.Lock()
 _status: dict = {
@@ -164,7 +179,13 @@ def _run_backup() -> None:
     }
     path: str | None = None
     try:
-        fd, path = tempfile.mkstemp(prefix="clinic-backup-", suffix=".tar.gz")
+        out_dir = settings.backup_dir_resolved
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # .part in the SAME dir (same filesystem) — the atomic rename below
+        # publishes a complete artifact or nothing at all
+        fd, path = tempfile.mkstemp(
+            prefix="clinic-backup-", suffix=".tar.gz.part", dir=out_dir
+        )
         os.close(fd)
         member_sha: dict[str, str] = manifest["member_sha256"]
         with tarfile.open(path, "w:gz") as tar:
@@ -204,12 +225,23 @@ def _run_backup() -> None:
             encrypted = True
         digest = sha256_file(path)
 
-        _record_backup_completed(os.path.getsize(path), digest, encrypted)
+        # atomic publish: <random>.part → the fixed final name (replaces the
+        # previous artifact — exactly one stays on disk, nothing accumulates);
+        # a stale artifact of the OTHER kind (encryption toggled between runs)
+        # is removed too
+        final = out_dir / (ARTIFACT_NAME_ENC if encrypted else ARTIFACT_NAME)
+        os.replace(path, final)
+        path = None
+        stale = out_dir / (ARTIFACT_NAME if encrypted else ARTIFACT_NAME_ENC)
+        if stale.exists():
+            with contextlib.suppress(OSError):
+                stale.unlink()
+
+        _record_backup_completed(final.stat().st_size, digest, encrypted)
 
         with _status_lock:
             global _file_path
-            _file_path = path
-            path = None
+            _file_path = str(final)
             _status.update(
                 status="ready",
                 started_at=None,
@@ -282,6 +314,49 @@ def _record_backup_completed(size_bytes: int, sha256: str, encrypted: bool) -> N
         logging.getLogger("clinic.backup").exception("backup completion audit failed")
 
 
+def rediscover_backup_artifact() -> None:
+    """Re-find the persisted artifact after a restart: the in-memory job
+    status is gone, the file is on the persistent volume. Recomputes the
+    artifact checksum and flips the status to ready. Runs in a background
+    thread at startup — never blocks boot, never raises.
+
+    Also clears dead .part files: no job can be mid-flight at boot, so any
+    <random>.part in the dir is debris from a killed run.
+    """
+    try:
+        out_dir = settings.backup_dir_resolved
+        if not out_dir.is_dir():
+            return
+        for leftover in out_dir.glob("*.part"):
+            with contextlib.suppress(OSError):
+                leftover.unlink()
+        enc = out_dir / ARTIFACT_NAME_ENC
+        plain = out_dir / ARTIFACT_NAME
+        artifact = enc if enc.is_file() else (plain if plain.is_file() else None)
+        if artifact is None:
+            return
+        with open(artifact, "rb") as f:
+            encrypted = f.read(9) == b"PRAXISBK\x01"  # magic — authoritative
+        encrypted = encrypted or artifact.name == ARTIFACT_NAME_ENC
+        digest = sha256_file(artifact)
+        finished = dt.datetime.fromtimestamp(artifact.stat().st_mtime, tz=dt.UTC)
+        with _status_lock:
+            global _file_path
+            if _status["status"] == "running":
+                return  # a live job owns the state — do not interfere
+            _file_path = str(artifact)
+            _status.update(
+                status="ready",
+                started_at=None,
+                finished_at=finished,
+                error=None,
+                sha256=digest,
+                encrypted=encrypted,
+            )
+    except Exception:  # noqa: BLE001 — discovery must never break startup
+        logging.getLogger("clinic.backup").exception("backup artifact rediscovery failed")
+
+
 def _start_job() -> bool:
     global _file_path
     if not JOB_LOCK.acquire(blocking=False):
@@ -328,9 +403,16 @@ async def backup_status(
 
 
 async def _staleness(db) -> dict:
-    """Days since the last SUCCESSFUL backup (persisted as action='backup'
-    audit rows by the job thread), and whether it exceeds the configured
-    threshold. `backup_stale` is None when the warning is disabled."""
+    """Days since the last SUCCESSFUL backup, and whether it exceeds the
+    configured threshold. `backup_stale` is None when the warning is
+    disabled.
+
+    Two evidence sources: the action='backup' audit rows (the job thread's
+    durable completion record) AND the persisted artifact itself — its
+    mtime (surfaced as finished_at by the startup rediscovery) survives an
+    audit-trail wipe (purge_db), and a present, restorable tarball IS a
+    real backup. Whichever is newer wins.
+    """
     if settings.backup_stale_days <= 0:
         return {"last_backup_at": None, "backup_stale": None, "backup_stale_days": 0}
     row = await db.scalar(
@@ -339,25 +421,97 @@ async def _staleness(db) -> dict:
         .order_by(AuditLog.created_at.desc())
         .limit(1)
     )
-    if row is None:
+    st = _backup_state()
+    finished = st.get("finished_at") if st.get("status") == "ready" else None
+    candidates: list[dt.datetime] = []
+    for ts in (row, finished):
+        if ts is None:
+            continue
+        if ts.tzinfo is None:  # SQLite (dev) stores timezone-aware columns naive
+            ts = ts.replace(tzinfo=dt.UTC)
+        candidates.append(ts)
+    if not candidates:
         return {
             "last_backup_at": None,
             "backup_stale": True,
             "backup_stale_days": settings.backup_stale_days,
         }
-    # SQLite (dev) stores timezone-aware columns naive — assume UTC
-    if row.tzinfo is None:
-        row = row.replace(tzinfo=dt.UTC)
-    age_days = (utc_now() - row).total_seconds() / 86400
+    last = max(candidates)
+    age_days = (utc_now() - last).total_seconds() / 86400
     return {
-        "last_backup_at": row.isoformat(),
+        "last_backup_at": last.isoformat(),
         "backup_stale": age_days > settings.backup_stale_days,
         "backup_stale_days": settings.backup_stale_days,
     }
 
 
+def _issue_download_token() -> str:
+    """Short-lived HMAC token binding 'backup-download' to an expiry — the
+    native browser download flow cannot send an Authorization header."""
+    exp = int(utc_now().timestamp()) + DOWNLOAD_TOKEN_TTL_SECONDS
+    mac = hmac.new(
+        settings.secret_key.encode(),
+        f"backup-download:{exp}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{exp}.{mac}"
+
+
+def _verify_download_token(token: str) -> bool:
+    try:
+        exp_s, mac = token.split(".", 1)
+        exp = int(exp_s)
+    except ValueError:
+        return False
+    if exp < utc_now().timestamp():
+        return False
+    expected = hmac.new(
+        settings.secret_key.encode(),
+        f"backup-download:{exp}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(mac, expected)
+
+
+async def _require_download_authorized(
+    token: str = "",
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """GET /download accepts EITHER a valid short-lived token (query param)
+    OR the backup.manage permission (the old header path — unchanged)."""
+    if token:
+        if not _verify_download_token(token):
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired download token"
+            )
+        return
+    user = await get_current_user(credentials=credentials, db=db)
+    if not user.has_perm("backup.manage"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+
+@router.post("/download-token")
+async def issue_download_token(
+    db=Depends(get_db),
+    user: User = Depends(require_perm("backup.manage")),
+):
+    """Issue the short-lived download token — the UI redirects the browser to
+    /download?token=… so the native download manager handles the transfer
+    (progress/pause/resume, streamed to disk, not an in-memory blob)."""
+    await audit.log_action(
+        db,
+        user=user,
+        request=None,
+        action=audit.CREATE,
+        entity_type="backup",
+        summary="download token issued",
+    )
+    return {"token": _issue_download_token()}
+
+
 @router.get("/download")
-async def download_backup(_: User = Depends(require_perm("backup.manage"))):
+async def download_backup(_: None = Depends(_require_download_authorized)):
     st = _backup_state()
     if st["status"] != "ready" or not _file_path:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="No ready backup file")
@@ -390,6 +544,12 @@ async def discard_backup(
         if _file_path and os.path.exists(_file_path):
             os.unlink(_file_path)
         _file_path = None
+        # the persisted artifact is removed too (whatever name it may carry)
+        for name in (ARTIFACT_NAME, ARTIFACT_NAME_ENC):
+            p = settings.backup_dir_resolved / name
+            if p.exists():
+                with contextlib.suppress(OSError):
+                    p.unlink()
         _status.update(status="idle", started_at=None, finished_at=None, error=None)
     await audit.log_action(
         db,
@@ -437,8 +597,17 @@ async def import_backup(
     started = False
     tar_path: str | None = None
     try:
-        # spool the upload to a temp file the worker thread can re-open
-        fd, tar_path = tempfile.mkstemp(prefix="clinic-import-", suffix=".tar.gz")
+        # spool the upload to a temp file the worker thread can re-open.
+        # BACKUP_DIR (the persistent volume, hidden dir) — tarballs can be
+        # huge; they must not fill the container layer. The dot-dir is
+        # skipped by the archiver and the uploads purge alike. No size cap:
+        # this endpoint does NOT use MAX_UPLOAD_BYTES (attachment cap) —
+        # imports are admin-initiated and streamed to disk.
+        backup_dir = settings.backup_dir_resolved
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        fd, tar_path = tempfile.mkstemp(
+            prefix="clinic-import-", suffix=".tar.gz", dir=backup_dir
+        )
         with os.fdopen(fd, "wb") as out:
             while chunk := await file.read(1024 * 1024):
                 out.write(chunk)

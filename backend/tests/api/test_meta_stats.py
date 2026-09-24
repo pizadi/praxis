@@ -4,6 +4,22 @@ from tests.conftest import auth, login
 from tests.factories import mk_appointment, mk_patient
 
 
+async def test_health_root_alias(client):
+    """The bare /health path works too — uptime monitors and manual curl on
+    the host port hit the root, not /api/v1/health (a 404 there looks like
+    the API being down when it is not)."""
+    r = await client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["db"] is True
+    assert body["version"]
+    # same payload as the canonical endpoint
+    r2 = await client.get("/api/v1/health")
+    assert r2.status_code == 200
+    assert r2.json() == body
+
+
 async def test_stats_summary(client):
     token, _ = await login(client)
     pid = (await mk_patient(client, token))["id"]

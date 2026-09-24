@@ -87,6 +87,64 @@ Version history:
           server's whitespace-only-formula normalization; testdata
           contract keeps the error-message mapping in sync
   1.3.0  release
+  1.3.1.dev1  backup download via the NATIVE browser download manager
+          (POST download-token issues a short-lived HMAC token; GET
+          download?token= accepts it — a plain navigation cannot send
+          the Authorization header); the artifact is no longer fetched
+          as an in-memory axios blob (on slow links nothing showed for
+          the whole transfer). Artifacts persist in BACKUP_DIR (default
+          <upload_dir>/.backups — hidden dir on the uploads volume:
+          purge-safe, never archived into the next tarball) and are
+          re-discovered at startup after a restart; a new backup
+          atomically replaces the single artifact (the old per-run
+          mkstemp leak fixed). Patient page: responsive columns (the
+          sidebar/main split stacks below lg), the layout scroll
+          container scrolls both axes, render errors are contained by
+          an ErrorBoundary, and engines without :where() (Chrome/Edge
+          < 88) get an upgrade banner instead of silently broken pages
+  1.3.1.dev2  root /health alias for /api/v1/health (uptime monitors and
+          manual checks hit the bare path on the host port — the 404
+          looked like the API being down); prescription-item dictionary
+          gains a manual create endpoint (POST /prescription-items,
+          perm prescriptions.write, case-insensitive uniqueness) so the
+          taxonomies page's «افزودن» works on all three lists
+  1.3.1.dev3  production boot guard: CLINIC_ENV=production refuses to
+          start without a PostgreSQL DATABASE_URL (a lost env var used
+          to silently boot SQLite while looking healthy — real patient
+          data written into a throwaway file); purge_db.py no longer
+          hangs forever on DROP SCHEMA (lock_timeout + statement
+          timeout — a running api container's connections were the
+          blocker), warns about other connected backends up front, and
+          fails loudly with a «docker compose stop api» hint
+  1.3.1.dev4  purge_db.py --disconnect-others: terminate stray sessions
+          on the target DB before the drop (a DB tool left idle in
+          transaction blocks DROP SCHEMA even with the api stopped —
+          bit once already); the guard fires only with the flag
+  1.3.1.dev5  purge_db.py: NullPool + explicit connection scoping — the
+          old engine.connect() left abandoned to the garbage collector
+          lingered as an 'idle in transaction' session that our own
+          --disconnect-others killed, and the pool's deferred reset
+          logged 'server closed the connection unexpectedly' (harmless
+          but alarming); verified: stray holder → 1 disconnect, no pool
+          noise, purge completes
+  1.3.1.dev6  backup import accepts huge tarballs: nginx drops the body
+          cap for exactly POST /admin/backup/import (client_max_body_size
+          0 + request buffering off — attachments keep their 50 MB cap);
+          the upload spools onto the persistent volume (BACKUP_DIR, not
+          container /tmp); the UI hashes the file incrementally (never
+          whole-file in memory) and shows live hashing + upload progress
+  1.3.1.dev7  import summary: the version-skew warning no longer shows
+          when there is NO skew (an empty dict is truthy in JS — the
+          warning rendered with empty parens); the PG import no longer
+          sends a redundant BEGIN (psycopg2 already opens the
+          transaction — silenced the server's 'there is already a
+          transaction in progress' warning)
+  1.3.1.dev8  after a purge the staleness check counts the persisted
+          artifact (its mtime) alongside the audit completion rows —
+          the site no longer banners 'never backed up' while the
+          restorable tarball sits right there (the purge wipes the
+          audit trail, not the volume)
+  1.3.1  release
   1.4.0  UI overhaul: six VibeFarsi palettes (graphite/turquoise/saffron/
           pomegranate/lapis/paper) replace the light-dark toggle with a
           session-scoped switcher (sessionStorage, no-flash bootstrap);
@@ -94,6 +152,13 @@ Version history:
           stacked rows on narrow viewports, fluid modals; taxonomies page
           renamed «موجودیت‌ها» and tabbed; prescription items get a direct
           creation endpoint; e2e mobile-viewport smoke project
+  1.4.1.dev1  reconciliation merge: the 1.3.1 hardening line (backup
+          download/import, purge_db, production boot guard, patient-page
+          hardening) lands on top of the 1.4.0 UI overhaul; both branches
+          had independently added the same POST /prescription-items
+          endpoint — kept once with the richer 1.4.0 tests; the
+          scroll-both-axes fix re-applies on the new layout
+  1.4.1  release
 """
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"

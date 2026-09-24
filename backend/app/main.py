@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
@@ -96,6 +96,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await asyncio.to_thread(run_migrations)
     await bootstrap_admin()
     purge_task = asyncio.create_task(purge_loop())  # automatic orphan sweeper
+    # backup artifacts persist on the volume — re-find the last one after a
+    # restart (background: never blocks boot; status flips to ready when the
+    # checksum is computed)
+    import threading
+
+    from app.api.v1.backup import rediscover_backup_artifact
+
+    threading.Thread(
+        target=rediscover_backup_artifact, name="clinic-backup-rediscover", daemon=True
+    ).start()
     yield
     purge_task.cancel()
 
@@ -118,6 +128,14 @@ def create_app() -> FastAPI:
     )
     register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+    # Root alias for /api/v1/health — the documented liveness URL (uptime
+    # monitors / manual curl on the host port hit the bare path; a 404 here
+    # looks like the API being down when it is not).
+    from app.api.v1.meta import health as _health_endpoint
+
+    app.get("/health", status_code=status.HTTP_200_OK, include_in_schema=False)(
+        _health_endpoint
+    )
     return app
 
 

@@ -5,6 +5,7 @@ import {
   App as AntApp,
   Button,
   Card,
+  Progress,
   Space,
   Spin,
   Statistic,
@@ -20,8 +21,9 @@ import {
 } from '@ant-design/icons'
 import type { RcFile } from 'antd/es/upload'
 
-import { api, apiError } from '../api/client'
+import { api, API_BASE, apiError } from '../api/client'
 import { toFaDigits } from '../lib/jalali'
+import { sha256File } from '../lib/sha256'
 
 interface BackupStatus {
   status: 'idle' | 'running' | 'ready' | 'error'
@@ -91,20 +93,25 @@ export default function BackupPage() {
     onError: (err) => message.error(apiError(err).message),
   })
 
+  const [downloading, setDownloading] = useState(false)
+
+  /** Native browser download: fetch a short-lived token, then hand the
+   * tokenized URL to the browser's download manager — progress/pause/resume,
+   * streamed to disk. NEVER fetch the artifact as an axios blob: on a slow
+   * link the whole tarball would buffer in RAM with no visible feedback
+   * (the "download never starts" bug). */
   const download = async () => {
+    setDownloading(true)
     try {
-      const res = await api.get('/admin/backup/download', { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data)
-      const link = document.createElement('a')
-      link.href = url
-      const d = new Date()
-      const p = (n: number) => String(n).padStart(2, '0')
-      const suffix = status.data?.encrypted ? '.tar.gz.enc' : '.tar.gz'
-      link.download = `clinic-backup-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${suffix}`
-      link.click()
-      URL.revokeObjectURL(url)
+      const { token } = (await api.post<{ token: string }>('/admin/backup/download-token'))
+        .data
+      window.location.assign(
+        `${API_BASE}/admin/backup/download?token=${encodeURIComponent(token)}`,
+      )
     } catch (err) {
       message.error(apiError(err).message)
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -126,13 +133,22 @@ export default function BackupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ist])
 
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
+  const [hashPct, setHashPct] = useState<number | null>(null)
+
   const doImport = async (f: RcFile, force: boolean, sha256?: string) => {
     const fd = new FormData()
     fd.append('file', f)
     fd.append('force', force ? 'true' : 'false')
     if (sha256) fd.append('expected_sha256', sha256)
+    setUploadPct(0)
     try {
-      await api.post('/admin/backup/import', fd)
+      await api.post('/admin/backup/import', fd, {
+        onUploadProgress: (e) => {
+          const frac = e.progress ?? (e.total ? e.loaded / e.total : 0)
+          setUploadPct(Math.min(100, Math.round(frac * 100)))
+        },
+      })
       message.success('واردسازی آغاز شد')
       await importStatus.refetch()
     } catch (err) {
@@ -158,21 +174,25 @@ export default function BackupPage() {
       } else {
         message.error(e.message)
       }
+    } finally {
+      setUploadPct(null)
     }
   }
 
   const pickImport = async (f: RcFile) => {
     lastPicked.current = f
     setImportFile(f)
-    // client-side artifact checksum — the server verifies it before importing
+    // client-side artifact checksum — the server verifies it before importing.
+    // STREAMED (fixed slices): a multi-GB tarball must never be read into
+    // memory whole (f.arrayBuffer() would OOM the tab).
     let sha256: string | undefined
+    setHashPct(0)
     try {
-      const digest = await crypto.subtle.digest('SHA-256', await f.arrayBuffer())
-      sha256 = Array.from(new Uint8Array(digest))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
+      sha256 = await sha256File(f, (frac) => setHashPct(Math.round(frac * 100)))
     } catch {
-      sha256 = undefined // no WebCrypto (insecure context) — server check is optional
+      sha256 = undefined // hashing unavailable — the server-side check is optional
+    } finally {
+      setHashPct(null)
     }
     void doImport(f, false, sha256)
   }
@@ -246,7 +266,12 @@ export default function BackupPage() {
             )}
             {st === 'ready' && (
               <>
-                <Button type="primary" icon={<DownloadOutlined />} onClick={download}>
+                <Button
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  loading={downloading}
+                  onClick={download}
+                >
                   دانلود پشتیبان
                 </Button>
                 <Button danger icon={<DeleteOutlined />} onClick={() => discard.mutate()}>
@@ -271,13 +296,16 @@ export default function BackupPage() {
             accept=".tar.gz,.tgz,.enc,application/gzip,application/octet-stream"
             maxCount={1}
             showUploadList={false}
-            disabled={ist === 'importing'}
+            disabled={ist === 'importing' || uploadPct != null || hashPct != null}
             beforeUpload={(f) => {
               void pickImport(f)
               return false // POST via the axios client, with confirm-flow support
             }}
           >
-            <Button icon={<CloudUploadOutlined />} loading={ist === 'importing'}>
+            <Button
+              icon={<CloudUploadOutlined />}
+              loading={ist === 'importing' || uploadPct != null || hashPct != null}
+            >
               انتخاب فایل پشتیبان…
             </Button>
           </Upload>
@@ -294,6 +322,22 @@ export default function BackupPage() {
             <Typography.Text style={{ fontSize: 12 }}>
               فایل انتخاب‌شده: {importFile.name}
             </Typography.Text>
+          )}
+          {hashPct != null && (
+            <div>
+              <Progress percent={hashPct} size="small" format={(p) => `${toFaDigits((p ?? 0).toFixed(0))}٪`} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                محاسبهٔ کنترل مجموع (SHA-256)…
+              </Typography.Text>
+            </div>
+          )}
+          {uploadPct != null && (
+            <div>
+              <Progress percent={uploadPct} format={(p) => `${toFaDigits((p ?? 0).toFixed(0))}٪`} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                در حال بارگذاری فایل پشتیبان… (فایل مستقیم به سرور جریان می‌یابد — تب را نبندید)
+              </Typography.Text>
+            </div>
           )}
           {ist === 'importing' && (
             <Space>
@@ -321,13 +365,14 @@ export default function BackupPage() {
                     بارگذاری شد — {toFaDigits(importStatus.data.summary.uploads_moved)} فایل
                     بازگردانده شد.
                   </span>
-                  {importStatus.data.summary.skew && (
-                    <Typography.Text type="warning" style={{ fontSize: 12 }}>
-                      اختلاف نسخهٔ شِما: ستون‌های جدیدِ این نسخه برای ردیف‌های واردشده خالی/پیش‌فرض
-                      گذاشته شدند و ستون‌های ناشناختهٔ پشتیبان نادیده گرفته شدند (
-                      {Object.keys(importStatus.data.summary.skew).join(', ')}).
-                    </Typography.Text>
-                  )}
+                  {importStatus.data.summary.skew &&
+                    Object.keys(importStatus.data.summary.skew).length > 0 && (
+                      <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                        اختلاف نسخهٔ شِما: ستون‌های جدیدِ این نسخه برای ردیف‌های واردشده خالی/پیش‌فرض
+                        گذاشته شدند و ستون‌های ناشناختهٔ پشتیبان نادیده گرفته شدند (
+                        {Object.keys(importStatus.data.summary.skew).join(', ')}).
+                      </Typography.Text>
+                    )}
                 </Space>
               }
             />

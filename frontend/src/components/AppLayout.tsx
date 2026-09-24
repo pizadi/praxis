@@ -272,7 +272,7 @@ export default function AppLayout({ user, onLogout }: Props) {
         </Header>
         <Layout>
           {nav}
-          <Content style={{ padding: isMobile ? 12 : 24, overflowY: 'auto', height: 'calc(100vh - 64px)' }}>
+          <Content style={{ padding: isMobile ? 12 : 24, overflow: 'auto', height: 'calc(100vh - 64px)' }}>
             <BackupStaleAlert />
             <Outlet />
           </Content>

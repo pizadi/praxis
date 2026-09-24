@@ -4,6 +4,7 @@ import { Spin } from 'antd'
 
 import { getStoredUser, storeUser, api, type StoredUser } from './api/client'
 import AppLayout from './components/AppLayout'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // route-level code splitting: antd-heavy pages load on demand instead of
 // one monolithic bundle
@@ -31,7 +32,9 @@ const CenteredSpin = () => (
 )
 
 const Lazy = ({ children }: { children: ReactNode }) => (
-  <Suspense fallback={<CenteredSpin />}>{children}</Suspense>
+  <Suspense fallback={<CenteredSpin />}>
+    <ErrorBoundary>{children}</ErrorBoundary>
+  </Suspense>
 )
 
 export default function App() {
@@ -80,7 +83,14 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<LoginPage onLogin={() => setUser(getStoredUser())} />} />
+        <Route
+          path="/login"
+          element={
+            <ErrorBoundary>
+              <LoginPage onLogin={() => setUser(getStoredUser())} />
+            </ErrorBoundary>
+          }
+        />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     )
