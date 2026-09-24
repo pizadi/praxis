@@ -116,6 +116,18 @@ async def test_password_change_revokes_refresh_tokens(client):
     _, old_refresh = await login(client, "recep2", "passw0rd123")
     users = (await client.get("/api/v1/users?limit=100", headers=auth(token))).json()
     uid = next(u["id"] for u in users["items"] if u["username"] == "recep2")
+    # The API keeps the documented 8-character minimum; a short edit must be
+    # rejected before the password is changed or refresh tokens are revoked.
+    r = await client.patch(
+        f"/api/v1/users/{uid}", json={"password": "short"}, headers=auth(token)
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["details"][0]["loc"] == ["body", "password"]
+    r = await client.post(
+        "/api/v1/auth/login", json={"username": "recep2", "password": "passw0rd123"}
+    )
+    assert r.status_code == 200
+
     r = await client.patch(
         f"/api/v1/users/{uid}", json={"password": "new-pass-456"}, headers=auth(token)
     )

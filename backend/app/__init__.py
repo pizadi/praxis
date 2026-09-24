@@ -159,6 +159,9 @@ Version history:
           endpoint — kept once with the richer 1.4.0 tests; the
           scroll-both-axes fix re-applies on the new layout
   1.4.1  release
+  1.4.2.dev1  user password editing aligns the form with the API's
+          8–128 character contract; short edits are rejected inline instead
+          of producing a generic validation error
 """
 
-__version__ = "1.4.1"
+__version__ = "1.4.2.dev1"
