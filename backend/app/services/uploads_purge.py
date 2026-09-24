@@ -39,7 +39,9 @@ INTERVAL_SECONDS = 6 * 3600
 async def purge_once(db: AsyncSession, now: dt.datetime | None = None) -> dict:
     """One sweep: unlink unreferenced, pattern-matching, older-than-grace
     files; returns a summary. Never raises (failures are logged)."""
-    now = now or dt.datetime.now()
+    now = now or dt.datetime.now(dt.UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.UTC)
     cutoff = now.timestamp() - GRACE_SECONDS
     removed = 0
     removed_bytes = 0

@@ -2,12 +2,13 @@ import csv
 import datetime as dt
 import io
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
+from app.core.errors import BusinessRuleError
 from app.db.session import APP_TZ, get_db
 from app.models import Appointment, Patient, Transaction, User
 from app.schemas import DescriptionStat, StatsSummary
@@ -17,7 +18,9 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 def _day_bounds(date_from: dt.date, date_to: dt.date) -> tuple[dt.datetime, dt.datetime]:
     if date_from > date_to:
-        raise HTTPException(422, detail="date_from must be <= date_to")
+        raise BusinessRuleError(
+            "date_from must be <= date_to", code="invalid_date_range"
+        )
     lo = dt.datetime.combine(date_from, dt.time.min, APP_TZ)
     hi = dt.datetime.combine(date_to, dt.time.max, APP_TZ)
     return lo, hi

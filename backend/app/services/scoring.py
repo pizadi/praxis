@@ -239,6 +239,18 @@ def validate_refs(formula: Formula, key_types: dict[str, str]) -> None:
             )
 
 
+def validate_formula_for_questions(text: str, questions: dict[str, str]) -> Formula:
+    """Parse and semantically validate a formula against question key types.
+
+    This is the one server-side entry point used by both full format
+    validation and the builder's dedicated live-check endpoint.
+    """
+    formula = parse_formula(text)
+    validate_refs(formula, questions)
+    return formula
+
+
+
 # --- evaluation ---------------------------------------------------------------------
 
 

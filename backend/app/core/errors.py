@@ -8,50 +8,100 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 ERROR_ENVELOPE_EXEMPT_STATUS = {204}
 
 
-def error_response(status_code: int, code: str, message: str, details: Any = None) -> JSONResponse:
+def error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    details: Any = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
     body: dict[str, Any] = {"error": {"code": code, "message": message}}
     if details is not None:
         body["error"]["details"] = details
-    return JSONResponse(status_code=status_code, content=body)
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
-class ConflictError(Exception):
+class ApiError(Exception):
+    """Base class for application errors using the public error envelope."""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    default_code = "api_error"
+
+    def __init__(
+        self,
+        message: str,
+        code: str | None = None,
+        details: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code or self.default_code
+        self.details = details
+        self.headers = headers
+
+
+class ConflictError(ApiError):
     """409 — duplicate name / national ID, etc."""
 
-    def __init__(
-        self, message: str, code: str = "conflict", details: Any = None
-    ) -> None:
-        self.message = message
-        self.code = code
-        self.details = details
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "conflict"
 
 
-class BusinessRuleError(Exception):
+class BusinessRuleError(ApiError):
     """422 — semantically invalid operation (bad date range, etc.)."""
 
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    default_code = "business_rule"
+
+
+class NotFoundError(ApiError):
+    """404 with a machine-readable code."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    default_code = "not_found"
+
+
+class AuthenticationError(ApiError):
+    """401 — missing, expired, or invalid authentication."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    default_code = "unauthorized"
+
     def __init__(
-        self, message: str, code: str = "business_rule", details: Any = None
+        self,
+        message: str,
+        code: str | None = None,
+        details: Any = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
-        self.message = message
-        self.code = code
-        self.details = details
+        super().__init__(
+            message,
+            code,
+            details,
+            headers or {"WWW-Authenticate": "Bearer"},
+        )
 
 
-class NotFoundError(Exception):
-    """404 with machine-readable code."""
+class AuthorizationError(ApiError):
+    """403 — authenticated but lacking the required permission."""
 
-    def __init__(self, message: str = "Resource not found", code: str = "not_found") -> None:
-        self.message = message
-        self.code = code
+    status_code = status.HTTP_403_FORBIDDEN
+    default_code = "forbidden"
 
 
-class RateLimitedError(Exception):
+class PayloadTooLargeError(ApiError):
+    """413 — streamed upload exceeded the configured limit."""
+
+    status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    default_code = "payload_too_large"
+
+
+class RateLimitedError(ApiError):
     """429 — too many attempts (login lockout, etc.)."""
 
-    def __init__(self, message: str, code: str = "rate_limited", details: Any = None) -> None:
-        self.message = message
-        self.code = code
-        self.details = details
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    default_code = "rate_limited"
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -61,6 +111,7 @@ def register_error_handlers(app: FastAPI) -> None:
             exc.status_code,
             code=f"http_{exc.status_code}",
             message=str(exc.detail),
+            headers=dict(exc.headers) if exc.headers is not None else None,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -74,30 +125,12 @@ def register_error_handlers(app: FastAPI) -> None:
             details=exc.errors(),
         )
 
-    @app.exception_handler(ConflictError)
-    async def conflict_handler(_: Request, exc: ConflictError) -> JSONResponse:
+    @app.exception_handler(ApiError)
+    async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
         return error_response(
-            status.HTTP_409_CONFLICT, code=exc.code, message=exc.message, details=exc.details
-        )
-
-    @app.exception_handler(BusinessRuleError)
-    async def business_rule_handler(_: Request, exc: BusinessRuleError) -> JSONResponse:
-        return error_response(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            exc.status_code,
             code=exc.code,
             message=exc.message,
             details=exc.details,
-        )
-
-    @app.exception_handler(NotFoundError)
-    async def not_found_handler(_: Request, exc: NotFoundError) -> JSONResponse:
-        return error_response(
-            status.HTTP_404_NOT_FOUND, code=exc.code, message=exc.message
-        )
-
-    @app.exception_handler(RateLimitedError)
-    async def rate_limited_handler(_: Request, exc: RateLimitedError) -> JSONResponse:
-        return error_response(
-            status.HTTP_429_TOO_MANY_REQUESTS, code=exc.code, message=exc.message,
-            details=exc.details,
+            headers=exc.headers,
         )

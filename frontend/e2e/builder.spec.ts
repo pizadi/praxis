@@ -20,7 +20,7 @@ test.describe('questionnaire builder (admin)', () => {
     await page.locator('.ant-select-item:has-text("عدد")').first().click()
     await page.waitForTimeout(300)
 
-    // unknown key → the LIVE validator (TS mirror of the server rules) errors
+    // unknown key → the SERVER-AUTHORITATIVE live check errors (debounced)
     const formula = modal.locator('#score_formula')
     await formula.fill('nope + 1')
     await expect(modal.locator('.ant-form-item-explain-error')).toContainText(/ناشناس/)

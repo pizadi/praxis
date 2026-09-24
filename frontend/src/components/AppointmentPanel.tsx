@@ -2,7 +2,6 @@ import { forwardRef, useEffect, useMemo, useImperativeHandle, useState } from 'r
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   App as AntApp,
-  AutoComplete,
   Button,
   Card,
   Collapse,
@@ -10,21 +9,15 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Radio,
   Row,
   Col,
   Space,
-  Statistic,
   Table,
   Tabs,
-  Tag,
-  Tooltip,
   Typography,
 } from 'antd'
 import {
   DeleteOutlined,
-  DoubleLeftOutlined,
-  DoubleRightOutlined,
   DownloadOutlined,
   PlusOutlined,
 } from '@ant-design/icons'
@@ -38,13 +31,13 @@ import type {
   Prescription,
   QuestionnaireResponse,
   QuestionnaireTemplate,
-  Transaction,
 } from '../api/types'
-import DigitInput from './DigitInput'
 import { downloadAttachment } from '../lib/files'
-import { formatJalali, formatJalaliTime, fileSize, formatMoney } from '../lib/jalali'
-import { LAST_STAGE, stageOf, tehranDay } from '../lib/stages'
+import { formatJalali, formatJalaliTime, fileSize } from '../lib/jalali'
+import { stageOf, tehranDay } from '../lib/stages'
 import { useUser } from './AppLayout'
+import AppointmentPayments from './appointments/AppointmentPayments'
+import AppointmentStageHeader from './appointments/AppointmentStageHeader'
 import {
   PrescriptionForm,
   PrescriptionView,
@@ -105,14 +98,6 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     queryFn: async () => (await api.get<Appointment>(`/appointments/${appointmentId}`)).data,
   })
 
-  const txns = useQuery({
-    queryKey: ['appointment-txns', appointmentId],
-    queryFn: async () =>
-      (await api.get<Page<Transaction>>(`/appointments/${appointmentId}/transactions`, {
-        params: { limit: 100 },
-      })).data,
-  })
-
   // --- same-day associated items (patient-level rows on the visit's
   // Tehran day); each endpoint enforces its own read permission
   const patientId = appt.data?.patient_id
@@ -164,7 +149,6 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
   }, [qTemplates.data])
 
   const [notesForm] = Form.useForm<Appointment>()
-  const [txnForm] = Form.useForm<{ description: string; amount: number; pos: boolean }>()
 
   // --- unsaved-changes guard (notes form vs server values) ---
   const canMedical = hasPerm('medical_notes.view')
@@ -218,26 +202,6 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     onError: (err) => message.error(apiError(err).message),
   })
 
-  const addTxn = useMutation({
-    mutationFn: async (v: { description: string; amount: number; pos: boolean }) =>
-      api.post(`/appointments/${appointmentId}/transactions`, v),
-    onSuccess: () => {
-      message.success('تراکنش ثبت شد')
-      txnForm.resetFields()
-      qc.invalidateQueries({ queryKey: ['appointment-txns', appointmentId] })
-    },
-    onError: (err) => message.error(apiError(err).message),
-  })
-
-  const delTxn = useMutation({
-    mutationFn: async (txnId: number) => api.delete(`/appointments/transactions/${txnId}`),
-    onSuccess: () => {
-      message.success('به سبد بازیافت منتقل شد')
-      qc.invalidateQueries({ queryKey: ['appointment-txns', appointmentId] })
-    },
-    onError: (err) => message.error(apiError(err).message),
-  })
-
   const deleteAppt = useMutation({
     mutationFn: async () => api.delete(`/appointments/${appointmentId}`),
     onSuccess: async () => {
@@ -284,8 +248,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
   const hasLegacyRx = a.rx.trim().length > 0
   const stage = stageOf(a.stage)
 
-  const regressStageConfirm = () => {
-    Modal.confirm({
+  const regressStageConfirm = () => {    Modal.confirm({
       title: `مرحله از «${stage.label}» به عقب برگردد؟`,
       content: 'این تغییر در گزارش اقدامات ثبت می‌شود.',
       okText: 'برگرداندن مرحله',
@@ -295,36 +258,15 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
     })
   }
 
-  const stageControls = hasPerm('appointments.stage') && (
-    <Space size={4}>
-      <Tooltip title="مرحله قبل">
-        <Button
-          size="small"
-          icon={<DoubleRightOutlined />}
-          disabled={a.stage === 0}
-          onClick={regressStageConfirm}
-        />
-      </Tooltip>
-      <Tooltip title="مرحله بعد">
-        <Button
-          size="small"
-          icon={<DoubleLeftOutlined />}
-          disabled={a.stage === LAST_STAGE}
-          onClick={() => changeStage.mutate('advance')}
-        />
-      </Tooltip>
-    </Space>
-  )
-
   return (
     <>
       {/* stage header: current stage + advance/regress (regress prompted) */}
-      <Space size={8} style={{ marginBottom: 12 }}>
-        <Tag color={stage.color} style={{ marginInlineEnd: 0 }}>
-          {stage.label}
-        </Tag>
-        {stageControls}
-      </Space>
+      <AppointmentStageHeader
+        stage={a.stage}
+        canChange={hasPerm('appointments.stage')}
+        onAdvance={() => changeStage.mutate('advance')}
+        onRegress={regressStageConfirm}
+      />
       <Tabs
         tabBarExtraContent={
           hasPerm('appointments.delete') && (
@@ -530,89 +472,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
         {
           key: 'txns',
           label: 'پرداخت‌ها',
-          children: (
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <Row gutter={[16, 16]}>
-                <Col xs={24} sm={12} md={8}>
-                  <Card>
-                    <Statistic
-                      title="جمع کل"
-                      value={formatMoney(
-                        (txns.data?.items ?? []).reduce((s, t) => s + t.amount, 0),
-                      )}
-                    />
-                  </Card>
-                </Col>
-              </Row>
-              <Form
-                form={txnForm}
-                layout="inline"
-                initialValues={{ pos: true }}
-                onFinish={(v) =>
-                  addTxn.mutate({
-                    description: v.description,
-                    amount: Number(v.amount),
-                    pos: v.pos,
-                  })
-                }
-              >
-                <Form.Item name="description" rules={[{ required: true }]}>
-                  <AutoComplete
-                    options={[{ value: 'ویزیت' }, { value: 'اسپیرو' }]}
-                    placeholder="شرح (مثلاً ویزیت)"
-                    style={{ width: 180 }}
-                  />
-                </Form.Item>
-                <Form.Item
-                  name="amount"
-                  rules={[
-                    { required: true },
-                    { pattern: /^\d+$/, message: 'مبلغ فقط عدد است' },
-                  ]}
-                >
-                  <DigitInput inputMode="numeric" placeholder="مبلغ" />
-                </Form.Item>
-                <Form.Item name="pos" label="روش">
-                  <Radio.Group>
-                    <Radio.Button value={true}>کارت‌خوان</Radio.Button>
-                    <Radio.Button value={false}>نقدی</Radio.Button>
-                  </Radio.Group>
-                </Form.Item>
-                <Button htmlType="submit" loading={addTxn.isPending}>
-                  افزودن
-                </Button>
-              </Form>
-              <Table<Transaction>
-                rowKey="id"
-                dataSource={txns.data?.items ?? []}
-                pagination={false}
-                size="small"
-                scroll={{ x: 'max-content' }}
-                columns={[
-                  { title: 'شرح', dataIndex: 'description' },
-                  { title: 'مبلغ', dataIndex: 'amount', render: formatMoney },
-                  {
-                    title: 'نوع',
-                    dataIndex: 'pos',
-                    render: (pos: boolean) => (pos ? 'کارت‌خوان' : 'نقدی'),
-                  },
-                  {
-                    title: '',
-                    render: (_, t) => (
-                      <Popconfirm
-                        title="تراکنش به سبد بازیافت منتقل شود؟"
-                        onConfirm={() => delTxn.mutate(t.id)}
-                      >
-                        <Button size="small" danger>
-                          حذف
-                        </Button>
-                      </Popconfirm>
-                    ),
-                  },
-                ]}
-              />
-            </Space>
-          ),
+          children: <AppointmentPayments appointmentId={appointmentId} />,
         },
       ]}
       />

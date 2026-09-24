@@ -4,13 +4,22 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 export const api = axios.create({
   baseURL: API_BASE,
+  withCredentials: true,
 })
 
-// --- Token storage -----------------------------------------------------------
+// The access token lives only in this module. The long-lived refresh token is
+// an HttpOnly cookie managed by the API; localStorage keeps only non-secret
+// user/permission display state.
+let accessToken: string | null = null
 
-const ACCESS_KEY = 'clinic.access'
-const REFRESH_KEY = 'clinic.refresh'
 const USER_KEY = 'clinic.user'
+const LEGACY_ACCESS_KEY = 'clinic.access'
+const LEGACY_REFRESH_KEY = 'clinic.refresh'
+const CSRF_COOKIE = 'praxis_csrf'
+
+// Remove credentials written by versions before the HttpOnly-cookie migration.
+localStorage.removeItem(LEGACY_ACCESS_KEY)
+localStorage.removeItem(LEGACY_REFRESH_KEY)
 
 export interface StoredUser {
   id: number
@@ -31,54 +40,84 @@ export function hasPerm(
 }
 
 export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_KEY)
+  return accessToken
 }
-export function getRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_KEY)
-}
+
 export function getStoredUser(): StoredUser | null {
   const raw = localStorage.getItem(USER_KEY)
-  return raw ? (JSON.parse(raw) as StoredUser) : null
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as StoredUser
+  } catch {
+    localStorage.removeItem(USER_KEY)
+    return null
+  }
 }
-export function setTokens(access: string, refresh: string, user: StoredUser) {
-  localStorage.setItem(ACCESS_KEY, access)
-  localStorage.setItem(REFRESH_KEY, refresh)
+
+export function setAuth(access: string, user: StoredUser) {
+  accessToken = access
   localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
+
 /** Refresh only the cached user (permissions change server-side between logins). */
 export function storeUser(user: StoredUser) {
   localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
+
 export function clearAuth() {
-  localStorage.removeItem(ACCESS_KEY)
-  localStorage.removeItem(REFRESH_KEY)
+  accessToken = null
   localStorage.removeItem(USER_KEY)
+}
+
+function csrfToken(): string {
+  const prefix = `${CSRF_COOKIE}=`
+  const part = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith(prefix))
+  return part ? decodeURIComponent(part.slice(prefix.length)) : ''
 }
 
 // --- Request/response interceptors -------------------------------------------
 
 let refreshInFlight: Promise<string | null> | null = null
 
-async function tryRefresh(): Promise<string | null> {
-  const refresh = getRefreshToken()
-  if (!refresh) return null
+/** Coordinated refresh: concurrent callers share one in-flight rotation. */
+export async function ensureAccessToken(): Promise<string | null> {
+  return refreshOnce()
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  const csrf = csrfToken()
+  if (!csrf) return null
   try {
-    const res = await axios.post(`${API_BASE}/auth/refresh`, {
-      refresh_token: refresh,
-    })
-    const { access_token, refresh_token } = res.data
-    localStorage.setItem(ACCESS_KEY, access_token)
-    localStorage.setItem(REFRESH_KEY, refresh_token)
-    return access_token
+    const res = await axios.post(
+      `${API_BASE}/auth/refresh`,
+      undefined,
+      {
+        withCredentials: true,
+        headers: { 'X-CSRF-Token': csrf },
+      },
+    )
+    accessToken = res.data.access_token as string
+    return accessToken
   } catch {
-    clearAuth()
     return null
   }
 }
 
+function refreshOnce(): Promise<string | null> {
+  refreshInFlight ??= refreshAccessToken().finally(() => {
+    refreshInFlight = null
+  })
+  return refreshInFlight
+}
+
 api.interceptors.request.use((config) => {
-  const token = getAccessToken()
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`
+  const csrf = csrfToken()
+  if (csrf && config.url?.includes('/auth/')) {
+    config.headers['X-CSRF-Token'] = csrf
+  }
   return config
 })
 
@@ -86,16 +125,22 @@ api.interceptors.response.use(
   (res) => res,
   async (error: AxiosError) => {
     const original = error.config as (typeof error.config & { _retried?: boolean }) | undefined
-    if (error.response?.status === 401 && original && !original._retried) {
+    const isAuthEndpoint = original?.url?.includes('/auth/login') ||
+      original?.url?.includes('/auth/refresh') ||
+      original?.url?.includes('/auth/logout')
+    if (
+      error.response?.status === 401 &&
+      original &&
+      !original._retried &&
+      !isAuthEndpoint
+    ) {
       original._retried = true
-      refreshInFlight ??= tryRefresh().finally(() => {
-        refreshInFlight = null
-      })
-      const token = await refreshInFlight
+      const token = await refreshOnce()
       if (token) {
         original.headers.set('Authorization', `Bearer ${token}`)
         return api(original)
       }
+      clearAuth()
       window.location.hash = '#/login'
     }
     return Promise.reject(error)

@@ -17,11 +17,11 @@ def _request(
     return Request(scope)
 
 
-def test_forwarded_for_wins_leftmost():
+def test_forwarded_for_uses_rightmost_trusted_hop():
     from app.services.audit import _client_ip
 
     r = _request({"X-Forwarded-For": "203.0.113.7, 10.0.0.1, 10.0.0.2"})
-    assert _client_ip(r) == "203.0.113.7"
+    assert _client_ip(r) == "10.0.0.2"
 
 
 def test_real_ip_fallback():
@@ -33,11 +33,11 @@ def test_real_ip_fallback():
     assert _client_ip(r) == "198.51.100.9"
 
 
-def test_xff_beats_real_ip():
+def test_real_ip_beats_forwarded_for():
     from app.services.audit import _client_ip
 
     r = _request({"X-Forwarded-For": "203.0.113.7", "X-Real-IP": "198.51.100.9"})
-    assert _client_ip(r) == "203.0.113.7"
+    assert _client_ip(r) == "198.51.100.9"
 
 
 def test_peer_address_fallback():

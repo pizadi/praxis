@@ -3,7 +3,8 @@
 ## Model
 
 - A transaction (`transactions`) belongs to an **appointment**; cash-vs-card
-  is the `pos` boolean (نقدی / کارت‌خوان).
+  is the `pos` boolean (نقدی / کارت‌خوان). Descriptions remain free text, but
+  the API trims surrounding whitespace before validation.
 - `Transaction` has **no `created_at`** — the payment timestamp is the
   appointment's `scheduled_at`.
 

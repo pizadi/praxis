@@ -1,21 +1,27 @@
 import datetime as dt
+import secrets
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, issue_refresh_token, rotate_refresh_token
+from app.core.client_ip import client_ip
 from app.core.config import settings
-from app.core.errors import RateLimitedError
+from app.core.errors import AuthenticationError, AuthorizationError, RateLimitedError
 from app.core.security import create_access_token, pwd_context, verify_password
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import LoginAudit, RefreshToken, User
-from app.schemas import LoginIn, RefreshIn, TokenPair, UserOut
+from app.schemas import LoginIn, TokenPair, UserOut
 from app.services import audit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+REFRESH_COOKIE = "praxis_refresh"
+CSRF_COOKIE = "praxis_csrf"
+SESSION_COOKIE_PATH = "/api/v1/auth"
 
 # Verifying a throwaway hash for unknown usernames keeps the response time in
 # the same range as the known-user path (argon2 verify dominates), so login
@@ -23,13 +29,44 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _DUMMY_PASSWORD_HASH = pwd_context.hash("timing-equalizer-dummy")
 
 
-def _tokens_for(user: User, refresh: str) -> TokenPair:
-    access = create_access_token(user.id)
+def _access_for(user: User) -> TokenPair:
     return TokenPair(
-        access_token=access,
-        refresh_token=refresh,
+        access_token=create_access_token(user.id),
         expires_in=settings.access_token_expire_minutes * 60,
     )
+
+
+def _set_session_cookies(response: Response, refresh: str) -> None:
+    max_age = settings.refresh_token_expire_days * 24 * 60 * 60
+    response.set_cookie(
+        REFRESH_COOKIE,
+        refresh,
+        max_age=max_age,
+        path=SESSION_COOKIE_PATH,
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+    response.set_cookie(
+        CSRF_COOKIE,
+        secrets.token_urlsafe(32),
+        max_age=max_age,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=False,
+        samesite="strict",
+    )
+
+
+def _clear_session_cookies(response: Response) -> None:
+    response.delete_cookie(REFRESH_COOKIE, path=SESSION_COOKIE_PATH)
+    response.delete_cookie(CSRF_COOKIE, path="/")
+
+
+def _validate_csrf(request: Request, token: str | None) -> None:
+    cookie_token = request.cookies.get(CSRF_COOKIE, "")
+    if not token or not cookie_token or not secrets.compare_digest(token, cookie_token):
+        raise AuthorizationError("Invalid CSRF token", code="csrf_failed")
 
 
 async def _audit(db: AsyncSession, request: Request, username: str, success: bool) -> None:
@@ -37,7 +74,7 @@ async def _audit(db: AsyncSession, request: Request, username: str, success: boo
         LoginAudit(
             username=username[:64],
             success=success,
-            ip_address=(request.client.host if request.client else "")[:64],
+            ip_address=client_ip(request),
         )
     )
     await db.commit()
@@ -64,7 +101,12 @@ async def _login_locked(db: AsyncSession, username: str) -> bool:
 
 
 @router.post("/login", response_model=TokenPair)
-async def login(body: LoginIn, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: LoginIn,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     if await _login_locked(db, body.username):
         raise RateLimitedError(
             "Too many failed logins; try again later.", code="login_locked"
@@ -79,34 +121,62 @@ async def login(body: LoginIn, request: Request, db: AsyncSession = Depends(get_
     await _audit(db, request, body.username, ok)
     if not ok or user is None:
         # Deliberately identical error for unknown user and wrong password.
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise AuthenticationError("Invalid credentials", code="invalid_credentials")
     refresh = await issue_refresh_token(db, user)
-    return _tokens_for(user, refresh)
+    _set_session_cookies(response, refresh)
+    return _access_for(user)
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(body: RefreshIn, db: AsyncSession = Depends(get_db)):
+async def refresh(
+    request: Request,
+    response: Response,
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+    db: AsyncSession = Depends(get_db),
+):
+    _validate_csrf(request, csrf_token)
+    raw_refresh = request.cookies.get(REFRESH_COOKIE, "")
+    if not raw_refresh:
+        _clear_session_cookies(response)
+        raise AuthenticationError("Invalid refresh token", code="invalid_refresh_token")
     try:
-        user = await rotate_refresh_token(db, body.refresh_token)
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
+        user = await rotate_refresh_token(db, raw_refresh)
+    except (jwt.InvalidTokenError, AuthenticationError):
+        _clear_session_cookies(response)
+        raise AuthenticationError(
+            "Invalid refresh token", code="invalid_refresh_token"
         ) from None
     new_refresh = await issue_refresh_token(db, user)
-    return _tokens_for(user, new_refresh)
+    _set_session_cookies(response, new_refresh)
+    return _access_for(user)
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(body: RefreshIn, request: Request, db: AsyncSession = Depends(get_db)):
-    """Revoke a single refresh token (rotation already revokes previous)."""
+@router.post("/logout", status_code=204)
+async def logout(
+    request: Request,
+    response: Response,
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke the refresh cookie and clear the browser session cookies."""
+    _validate_csrf(request, csrf_token)
+    raw_refresh = request.cookies.get(REFRESH_COOKIE, "")
+    if not raw_refresh:
+        _clear_session_cookies(response)
+        raise AuthenticationError("Invalid refresh token", code="invalid_refresh_token")
     try:
         payload = jwt.decode(
-            body.refresh_token, settings.secret_key, algorithms=[settings.algorithm]
+            raw_refresh, settings.secret_key, algorithms=[settings.algorithm]
         )
     except jwt.InvalidTokenError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from None
+        _clear_session_cookies(response)
+        raise AuthenticationError(
+            "Invalid refresh token", code="invalid_refresh_token"
+        ) from None
     if payload.get("type") != "refresh":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        _clear_session_cookies(response)
+        raise AuthenticationError("Invalid refresh token", code="invalid_refresh_token")
+
     row = await db.scalar(select(RefreshToken).where(RefreshToken.jti == payload.get("jti")))
     await db.execute(
         update(RefreshToken)
@@ -114,7 +184,6 @@ async def logout(body: RefreshIn, request: Request, db: AsyncSession = Depends(g
         .values(revoked_at=utc_now())
     )
     await db.commit()
-    # audit the session end (user attributed via the revoked token's owner)
     actor = await db.get(User, row.user_id) if row is not None else None
     await audit.log_action(
         db,
@@ -124,6 +193,7 @@ async def logout(body: RefreshIn, request: Request, db: AsyncSession = Depends(g
         entity_type="session",
         summary=(actor.username if actor is not None else "unknown refresh token"),
     )
+    _clear_session_cookies(response)
     return None
 
 

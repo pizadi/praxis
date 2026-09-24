@@ -6,10 +6,10 @@ Access control is **permission-based** — there is no role hierarchy in code.
 
 - Every endpoint calls `require_perm("...")` (any-of semantics) from
   `app/api/deps.py`.
-- Each role row holds a permission set (JSON array of catalog keys); the
-  catalog and the three system-role sets live in
-  `backend/app/core/permissions.py` (mirrored in migration
-  `d4e5f6a7b8c9`).
+- Each role row holds a permission set (JSON array of catalog keys); catalog
+  keys and system-role sets live in `backend/app/core/permissions.py`
+  (mirrored in migration `d4e5f6a7b8c9`). Persian labels live separately in
+  `permission_labels_fa.py`, keeping UI copy out of authorization logic.
 - Permissions are read from the DB **per request** (`selectinload(User.role)`
   is mandatory whenever a user is loaded) — permission changes apply
   immediately, without re-login.

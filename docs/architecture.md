@@ -32,7 +32,7 @@ backend/app
   db/session.py  engine, SessionLocal, APP_TZ (Asia/Tehran)
   models/        domain.py (patients/appointments/... + questionnaires),
                  system.py (users/roles/auth/audit)
-  schemas/       Pydantic v2 request/response models
+  schemas/       Pydantic v2 request/response models, split per API domain
   services/      audit trail, questionnaire format validation, score
                  formulas, backup import, uploads purge
   alembic/       migrations (auto-applied at container boot; safe to
@@ -64,7 +64,11 @@ docs/, docs_fa/  feature documentation (English / Persian)
   display/input is Jalali. Day-boundary logic uses `APP_TZ` (Asia/Tehran).
 - **Errors**: uniform envelope `{"error": {"code", "message", "details"}}`
   via `app/core/errors.py` — 409 `ConflictError`, 422 `BusinessRuleError`,
-  404 `NotFoundError`.
+  404 `NotFoundError`, plus typed auth/authorization/upload errors.
+- **Docs gate**: `/docs`, `/redoc`, and `/openapi.json` are disabled when
+  `CLINIC_ENV=production`.
+- **Documentation pairs**: `scripts/check_doc_pairs.py` guards the English /
+  Persian file set and paired changes.
 
 ## Versioning
 

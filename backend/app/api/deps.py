@@ -6,13 +6,20 @@ import uuid
 from pathlib import Path
 
 import jwt
-from fastapi import Depends, HTTPException, UploadFile, status
+from fastapi import Depends, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    BusinessRuleError,
+    NotFoundError,
+    PayloadTooLargeError,
+)
 from app.core.security import decode_token
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -26,34 +33,22 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if credentials is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthenticationError("Not authenticated", code="not_authenticated")
     token = credentials.credentials
     try:
         payload = decode_token(token, "access")
     except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from None
+        raise AuthenticationError("Token expired", code="token_expired") from None
     except jwt.InvalidTokenError:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from None
+        raise AuthenticationError("Invalid token", code="invalid_token") from None
     try:
         user_id = int(payload["sub"])
     except (KeyError, ValueError):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
+        raise AuthenticationError("Invalid token", code="invalid_token") from None
     stmt = select(User).where(User.id == user_id).options(selectinload(User.role))
     user = await db.scalar(stmt)
     if user is None or not user.is_active or user.deleted_at is not None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User inactive or gone")
+        raise AuthenticationError("User inactive or gone", code="user_inactive")
     return user
 
 
@@ -62,10 +57,7 @@ def require_perm(*perms: str):
 
     async def checker(user: User = Depends(get_current_user)) -> User:
         if not user.has_perm(*perms):
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions",
-            )
+            raise AuthorizationError("Insufficient permissions", code="insufficient_permissions")
         return user
 
     return checker
@@ -103,11 +95,11 @@ def resolve_stored_path(stored_filename: str) -> Path:
         ".",
         "..",
     ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="File not found")
+        raise NotFoundError("File not found", code="file_not_found")
     root = upload_dir().resolve()
     candidate = (root / stored_filename).resolve()
     if not candidate.is_relative_to(root):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="File not found")
+        raise NotFoundError("File not found", code="file_not_found")
     return candidate
 
 
@@ -123,16 +115,14 @@ async def save_upload_stream(file: UploadFile, original_name: str) -> dict:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
                 if size > settings.max_upload_bytes:
-                    raise HTTPException(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large"
-                    )
+                    raise PayloadTooLargeError("File too large", code="file_too_large")
                 out.write(chunk)
     except Exception:
         path.unlink(missing_ok=True)  # never leave partial files behind
         raise
     if size == 0:
         path.unlink(missing_ok=True)
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
+        raise BusinessRuleError("Empty file", code="empty_file")
     return {
         "stored_filename": stored,
         "original_filename": original_name[:255],
@@ -175,17 +165,20 @@ async def rotate_refresh_token(db: AsyncSession, raw_token: str) -> User:
     payload = decode_token(raw_token, "refresh")
     jti = payload.get("jti")
     row = await db.scalar(select(RefreshToken).where(RefreshToken.jti == jti))
-    invalid = HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+    def invalid() -> AuthenticationError:
+        return AuthenticationError("Invalid refresh token", code="invalid_refresh_token")
+
     now = utc_now()
     if row is None:
-        raise invalid
+        raise invalid()
     expires_at = _as_utc(row.expires_at)
     if row.revoked_at is not None or expires_at is None or expires_at < now:
-        raise invalid
+        raise invalid()
     row.revoked_at = now
     user = await db.scalar(select(User).where(User.id == row.user_id))
-    if user is None or not user.is_active:
-        raise invalid
+    if user is None or not user.is_active or user.deleted_at is not None:
+        raise invalid()
     await db.commit()
     return user
 

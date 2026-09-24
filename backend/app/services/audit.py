@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.client_ip import client_ip
 from app.models import AuditLog, User
 
 # actions
@@ -22,24 +23,8 @@ LOGOUT = "logout"  # refresh-token revocation at session end
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort real client IP.
-
-    The API sits behind the nginx reverse proxy (and, on LAN deployments,
-    possibly another hop), so request.client.host is the last proxy's
-    address — useless in the audit trail. nginx sets X-Real-IP and
-    X-Forwarded-For ($proxy_add_x_forwarded_for); the leftmost XFF entry is
-    the original client. Direct (non-proxied) access has no such headers
-    and falls back to the peer address.
-    """
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first[:64]
-    real = request.headers.get("x-real-ip")
-    if real and real.strip():
-        return real.strip()[:64]
-    return (request.client.host if request.client else "")[:64]
+    """Compatibility wrapper for the shared trusted-proxy resolver."""
+    return client_ip(request)
 
 
 async def log_action(

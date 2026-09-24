@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
+from app.core.search import LIKE_ESCAPE, like_contains
 from app.db.session import get_db
 from app.models import AuditLog, User
 from app.schemas import AuditEntryOut
@@ -32,7 +33,11 @@ async def list_audit(
     if entity_id is not None:
         stmt = stmt.where(AuditLog.entity_id == entity_id)
     if username:
-        stmt = stmt.where(AuditLog.username.ilike(f"%{username}%"))
+        stmt = stmt.where(
+            AuditLog.username.ilike(
+                like_contains(username), escape=LIKE_ESCAPE
+            )
+        )
     limit, offset = clamp_limit_offset(limit, offset)
     items, total = await paginate(db, stmt, limit=limit, offset=offset)
     return Page(

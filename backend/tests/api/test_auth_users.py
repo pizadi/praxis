@@ -7,6 +7,12 @@ from sqlalchemy import text
 from tests.conftest import auth, login, make_user
 
 
+def csrf_headers(client) -> dict[str, str]:
+    token = client.cookies.get("praxis_csrf")
+    assert token
+    return {"X-CSRF-Token": token}
+
+
 async def test_health(client):
     r = await client.get("/api/v1/health")
     assert r.status_code == 200
@@ -26,26 +32,59 @@ async def test_login_bad_credentials(client):
 
 
 async def test_login_and_me(client):
-    access, _ = await login(client)
-    r = await client.get("/api/v1/auth/me", headers=auth(access))
-    assert r.status_code == 200
-    assert r.json()["username"] == "admin"
-    assert r.json()["role_name"] == "admin"
-    assert "users.manage" in r.json()["permissions"]
+    access, refresh = await login(client)
+    raw_login = await client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    refresh_cookies = [
+        header for header in raw_login.headers.get_list("set-cookie")
+        if header.startswith("praxis_refresh=")
+    ]
+    assert len(refresh_cookies) == 1
+    assert "HttpOnly" in refresh_cookies[0]
+    assert "Path=/api/v1/auth" in refresh_cookies[0]
+    assert "SameSite=strict" in refresh_cookies[0]
+    me = await client.get("/api/v1/auth/me", headers=auth(access))
+    assert refresh not in me.text
+    assert "refresh_token" not in raw_login.json()
+    assert me.status_code == 200
+    assert me.json()["username"] == "admin"
+    assert me.json()["role_name"] == "admin"
+    assert "users.manage" in me.json()["permissions"]
 
 
 async def test_refresh_rotation(client):
-    access, refresh = await login(client)
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh})
-    assert r.status_code == 200
-    new_pair = r.json()
-    assert new_pair["refresh_token"] != refresh
-    # Old refresh token must now be rejected (single use)
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh})
-    assert r.status_code == 401
-    # New one works
+    _, old_refresh = await login(client)
+    old_csrf = client.cookies.get("praxis_csrf")
+    assert old_csrf
+
     r = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": new_pair["refresh_token"]}
+        "/api/v1/auth/refresh", headers={"X-CSRF-Token": old_csrf}
+    )
+    assert r.status_code == 200
+    new_refresh = r.cookies.get("praxis_refresh")
+    new_csrf = r.cookies.get("praxis_csrf")
+    assert new_refresh and new_refresh != old_refresh
+    assert new_csrf and new_csrf != old_csrf
+    assert "refresh_token" not in r.json()
+
+    # The old refresh cookie must now be rejected (single use).
+    client.cookies.clear()
+    client.cookies.set(
+        "praxis_refresh", old_refresh, domain="test.local", path="/api/v1/auth"
+    )
+    client.cookies.set("praxis_csrf", new_csrf or "", domain="test.local", path="/")
+    r = await client.post(
+        "/api/v1/auth/refresh", headers={"X-CSRF-Token": new_csrf or ""}
+    )
+    assert r.status_code == 401
+
+    # The newly rotated cookie works.
+    await login(client)
+    current_csrf = client.cookies.get("praxis_csrf")
+    r = await client.post(
+        "/api/v1/auth/refresh", headers={"X-CSRF-Token": current_csrf or ""}
     )
     assert r.status_code == 200
 
@@ -58,10 +97,24 @@ async def test_access_rejects_refresh_token(client):
 
 async def test_logout_revokes_refresh(client):
     _, refresh = await login(client)
-    r = await client.post("/api/v1/auth/logout", json={"refresh_token": refresh})
+    csrf = csrf_headers(client)
+    r = await client.post("/api/v1/auth/logout", headers=csrf)
     assert r.status_code == 204
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh})
+    assert client.cookies.get("praxis_refresh") is None
+
+    # Replaying the revoked cookie is rejected (restore the cookies deleted
+    # by logout so the request reaches token validation).
+    client.cookies.set("praxis_refresh", refresh)
+    client.cookies.set("praxis_csrf", csrf["X-CSRF-Token"])
+    r = await client.post("/api/v1/auth/refresh", headers=csrf)
     assert r.status_code == 401
+
+
+async def test_cookie_refresh_requires_csrf(client):
+    await login(client)
+    r = await client.post("/api/v1/auth/refresh")
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "csrf_failed"
 
 
 async def test_endpoints_require_auth(client):
@@ -113,15 +166,29 @@ async def test_login_lockout_after_repeated_failures(client):
 async def test_password_change_revokes_refresh_tokens(client):
     token = (await login(client))[0]
     await make_user(client, token, "recep2")
-    _, old_refresh = await login(client, "recep2", "passw0rd123")
+    await login(client, "recep2", "passw0rd123")
     users = (await client.get("/api/v1/users?limit=100", headers=auth(token))).json()
     uid = next(u["id"] for u in users["items"] if u["username"] == "recep2")
+    # The API keeps the documented 8-character minimum; a short edit must be
+    # rejected before the password is changed or refresh tokens are revoked.
+    r = await client.patch(
+        f"/api/v1/users/{uid}", json={"password": "short"}, headers=auth(token)
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["details"][0]["loc"] == ["body", "password"]
+    r = await client.post(
+        "/api/v1/auth/login", json={"username": "recep2", "password": "passw0rd123"}
+    )
+    assert r.status_code == 200
+
     r = await client.patch(
         f"/api/v1/users/{uid}", json={"password": "new-pass-456"}, headers=auth(token)
     )
     assert r.status_code == 200
     # the pre-change refresh token must be dead
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
+    r = await client.post(
+        "/api/v1/auth/refresh", headers=csrf_headers(client)
+    )
     assert r.status_code == 401
     # ...and the old password no longer logs in
     r = await client.post(
@@ -135,8 +202,8 @@ async def test_password_change_revokes_refresh_tokens(client):
 
 
 async def test_logout_writes_audit_row(client):
-    access, refresh = await login(client)
-    r = await client.post("/api/v1/auth/logout", json={"refresh_token": refresh})
+    access, _ = await login(client)
+    r = await client.post("/api/v1/auth/logout", headers=csrf_headers(client))
     assert r.status_code == 204
     r = await client.get(
         "/api/v1/admin/audit", params={"entity_type": "session"}, headers=auth(access)

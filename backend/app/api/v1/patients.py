@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.errors import ConflictError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
+from app.core.search import LIKE_ESCAPE, like_contains
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Diagnosis, Gender, Patient, Tag, User
@@ -24,7 +25,7 @@ async def _get_or_404(db: AsyncSession, patient_id: int) -> Patient:
     )
     patient = await db.scalar(stmt)
     if patient is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        raise NotFoundError("Patient not found", code="patient_not_found")
     return patient
 
 
@@ -39,9 +40,8 @@ async def _resolve_m2m(db: AsyncSession, model, ids: list[int]) -> list:
     if len(rows) != len(set(ids)):
         found = {r.id for r in rows}
         missing = [i for i in dict.fromkeys(ids) if i not in found]
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown or deleted ids: {missing}",
+        raise BusinessRuleError(
+            f"Unknown or deleted ids: {missing}", code="unknown_relationship_ids"
         )
     return list(rows)
 
@@ -73,32 +73,54 @@ async def list_patients(
     """
     stmt = select(Patient).where(Patient.deleted_at.is_(None))
     if q:
-        like = f"%{q}%"
+        like = like_contains(q)
         stmt = stmt.where(
             or_(
-                Patient.first_name.ilike(like),
-                Patient.last_name.ilike(like),
-                Patient.national_id.like(like),
-                Patient.phone_number.like(like),
+                Patient.first_name.ilike(like, escape=LIKE_ESCAPE),
+                Patient.last_name.ilike(like, escape=LIKE_ESCAPE),
+                Patient.national_id.like(like, escape=LIKE_ESCAPE),
+                Patient.phone_number.like(like, escape=LIKE_ESCAPE),
             )
         )
     if national_id:
-        stmt = stmt.where(Patient.national_id.like(f"%{national_id}%"))
+        stmt = stmt.where(
+            Patient.national_id.like(
+                like_contains(national_id), escape=LIKE_ESCAPE
+            )
+        )
     if first_name:
-        stmt = stmt.where(Patient.first_name.ilike(f"%{first_name}%"))
+        stmt = stmt.where(
+            Patient.first_name.ilike(
+                like_contains(first_name), escape=LIKE_ESCAPE
+            )
+        )
     if last_name:
-        stmt = stmt.where(Patient.last_name.ilike(f"%{last_name}%"))
+        stmt = stmt.where(
+            Patient.last_name.ilike(
+                like_contains(last_name), escape=LIKE_ESCAPE
+            )
+        )
     if phone:
-        stmt = stmt.where(Patient.phone_number.like(f"%{phone}%"))
+        stmt = stmt.where(
+            Patient.phone_number.like(
+                like_contains(phone), escape=LIKE_ESCAPE
+            )
+        )
     if insurance:
-        stmt = stmt.where(Patient.insurance.ilike(f"%{insurance}%"))
+        stmt = stmt.where(
+            Patient.insurance.ilike(
+                like_contains(insurance), escape=LIKE_ESCAPE
+            )
+        )
     if year_of_birth:
-        stmt = stmt.where(Patient.year_of_birth.like(f"%{year_of_birth}%"))
+        stmt = stmt.where(
+            Patient.year_of_birth.like(
+                like_contains(year_of_birth), escape=LIKE_ESCAPE
+            )
+        )
     if gender is not None:
         if gender not in (g.value for g in Gender):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, detail="gender must be 0 or 1"
-            )
+            raise BusinessRuleError("gender must be 0 or 1", code="invalid_gender")
         stmt = stmt.where(Patient.gender == gender)
 
     def _ids(param: str | None) -> list[int]:
@@ -107,7 +129,9 @@ async def list_patients(
         try:
             return [int(x) for x in param.split(",") if x.strip()]
         except ValueError:
-            raise HTTPException(422, detail="tag_ids/diagnosis_ids must be comma ints") from None
+            raise BusinessRuleError(
+                "tag_ids/diagnosis_ids must be comma ints", code="invalid_id_list"
+            ) from None
 
     tags = _ids(tag_ids)
     diags = _ids(diagnosis_ids)

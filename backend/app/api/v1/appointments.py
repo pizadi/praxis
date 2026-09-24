@@ -1,14 +1,14 @@
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate, paginate_rows
-from app.core.errors import ConflictError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from app.core.tokens import utc_now
 from app.db.session import day_bounds, get_db
 from app.models import Appointment, Patient, Transaction, User
@@ -43,7 +43,7 @@ async def _get_or_404(db: AsyncSession, appointment_id: int) -> Appointment:
     )
     appt = await db.scalar(stmt)
     if appt is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+        raise NotFoundError("Appointment not found", code="appointment_not_found")
     return appt
 
 
@@ -108,7 +108,9 @@ async def list_appointments(
             else dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
         )
         if date_from and date_to and lo > hi:
-            raise HTTPException(422, detail="date_from must be <= date_to")
+            raise BusinessRuleError(
+                "date_from must be <= date_to", code="invalid_date_range"
+            )
         filters.append(Appointment.scheduled_at >= lo)
         filters.append(Appointment.scheduled_at <= hi)
 
@@ -144,7 +146,7 @@ async def create_appointment(
         )
     )
     if patient is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        raise NotFoundError("Patient not found", code="patient_not_found")
     appt = Appointment(
         patient_id=patient_id,
         scheduled_at=body.scheduled_at,

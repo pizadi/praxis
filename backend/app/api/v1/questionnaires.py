@@ -13,17 +13,18 @@ clear-invalid-fields flow that goes through PATCH (re-validated).
 import datetime as dt
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate, paginate_rows
-from app.core.errors import BusinessRuleError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Patient, QuestionnaireResponse, QuestionnaireTemplate, User
 from app.schemas import (
+    FormulaValidationIn,
     QuestionnaireResponseCreateIn,
     QuestionnaireResponseOut,
     QuestionnaireResponseReportOut,
@@ -34,6 +35,7 @@ from app.schemas import (
 )
 from app.services import audit
 from app.services.questionnaires import parse_format
+from app.services.scoring import validate_formula_for_questions
 
 router = APIRouter(tags=["questionnaires"])
 
@@ -71,7 +73,7 @@ def _response_out(
 async def _get_live_template(db: AsyncSession, template_id: int) -> QuestionnaireTemplate:
     t = await db.get(QuestionnaireTemplate, template_id)
     if t is None or t.deleted_at is not None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Template not found")
+        raise NotFoundError("Template not found", code="template_not_found")
     return t
 
 
@@ -89,7 +91,7 @@ async def _get_live_response(
     )
     r = await db.scalar(stmt)
     if r is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Response not found")
+        raise NotFoundError("Response not found", code="response_not_found")
     return r
 
 
@@ -145,6 +147,26 @@ async def validate_template_format(
     )
 
 
+@router.post("/questionnaires/formulas/validate")
+async def validate_formula(
+    body: FormulaValidationIn,
+    _: User = Depends(require_perm("questionnaires.templates")),
+):
+    """Live formula check for the builder, without validating a whole template."""
+    formula_text = body.score_formula.strip()
+    if not formula_text:
+        return {"valid": True, "refs": []}
+    try:
+        formula = validate_formula_for_questions(
+            formula_text, {q.key: q.type for q in body.questions}
+        )
+    except Exception as exc:
+        raise BusinessRuleError(
+            f"Invalid questionnaire formula: {exc}", code="invalid_formula"
+        ) from None
+    return {"valid": True, "refs": list(formula.refs)}
+
+
 @router.post(
     "/questionnaires/templates",
     response_model=QuestionnaireTemplateOut,
@@ -163,9 +185,7 @@ async def create_template(
         )
     )
     if dup:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, detail="Template name already taken"
-        )
+        raise ConflictError("Template name already taken", code="template_name_taken")
     try:
         fmt = parse_format(body.format)
     except Exception as exc:
@@ -225,8 +245,8 @@ async def update_template(
             )
         )
         if dup:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, detail="Template name already taken"
+            raise ConflictError(
+                "Template name already taken", code="template_name_taken"
             )
         t.name = body.name
     if body.description is not None:
@@ -291,7 +311,7 @@ async def _validate_answers_or_422(
 ) -> QuestionnaireTemplate:
     t = await db.get(QuestionnaireTemplate, template_id)
     if t is None or t.deleted_at is not None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Template not found")
+        raise BusinessRuleError("Template not found", code="template_not_found")
     fmt = parse_format(t.format_json)
     errors = fmt.validate_answers(answers)
     if errors:
@@ -319,7 +339,7 @@ async def list_patient_responses(
     — used by the appointment view's «پرسش‌نامه‌های این روز» tab."""
     patient = await db.get(Patient, patient_id)
     if patient is None or patient.deleted_at is not None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        raise NotFoundError("Patient not found", code="patient_not_found")
     filters = [
         QuestionnaireResponse.patient_id == patient_id,
         QuestionnaireResponse.deleted_at.is_(None),
@@ -392,7 +412,7 @@ async def create_response(
 ):
     patient = await db.get(Patient, patient_id)
     if patient is None or patient.deleted_at is not None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        raise NotFoundError("Patient not found", code="patient_not_found")
     await _validate_answers_or_422(db, body.template_id, body.answers)
     r = QuestionnaireResponse(
         patient_id=patient_id,
@@ -494,8 +514,8 @@ async def update_response(
     r = await _get_live_response(db, response_id)
     t = await db.get(QuestionnaireTemplate, r.template_id)
     if t is None or t.deleted_at is not None:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Template no longer available"
+        raise BusinessRuleError(
+            "Template no longer available", code="template_unavailable"
         )
     await _validate_answers_or_422(db, r.template_id, body.answers)
     before = r.answers_json

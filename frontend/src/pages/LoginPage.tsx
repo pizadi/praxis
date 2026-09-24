@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button, Card, Form, Input, Typography, App as AntApp, theme as antdTheme } from 'antd'
 import { useNavigate } from 'react-router-dom'
 
-import { api, apiError, setTokens, type StoredUser } from '../api/client'
+import { api, apiError, setAuth, type StoredUser } from '../api/client'
 
 export default function LoginPage({ onLogin }: { onLogin: () => void }) {
   const [loading, setLoading] = useState(false)
@@ -14,7 +14,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
     setLoading(true)
     try {
       const res = await api.post('/auth/login', values)
-      setTokens(res.data.access_token, res.data.refresh_token, {
+      setAuth(res.data.access_token, {
         id: 0,
         username: values.username,
         full_name: '',
@@ -31,7 +31,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
         role_name: me.data.role_name,
         permissions: me.data.permissions ?? [],
       }
-      setTokens(res.data.access_token, res.data.refresh_token, user)
+      setAuth(res.data.access_token, user)
       window.dispatchEvent(new Event('clinic-auth-changed'))
       onLogin()
       navigate('/')

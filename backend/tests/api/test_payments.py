@@ -82,3 +82,28 @@ async def test_payments_receptionist_allowed(client):
     r = await client.get("/api/v1/payments", headers=auth(recep_token))
     assert r.status_code == 200
     assert r.json()["total"] == 0
+
+
+async def test_transaction_description_is_trimmed_on_create_and_update(client):
+    token, _ = await login(client)
+    patient = await mk_patient(client, token)
+    appointment = await mk_appointment(client, token, patient["id"])
+    txn = await mk_transaction(
+        client, token, appointment["id"], "  ویزیت  ", 100000, True
+    )
+    assert txn["description"] == "ویزیت"
+
+    r = await client.patch(
+        f"/api/v1/appointments/transactions/{txn['id']}",
+        json={"description": "  اسپیرو  "},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["description"] == "اسپیرو"
+
+    r = await client.patch(
+        f"/api/v1/appointments/transactions/{txn['id']}",
+        json={"description": "   "},
+        headers=auth(token),
+    )
+    assert r.status_code == 422

@@ -329,3 +329,24 @@ async def test_taxonomy_merge_diagnoses(client):
     assert r.json()["id"] == new_dx["id"]
     r = await client.get(f"/api/v1/patients/{p['id']}", headers=auth(token))
     assert [d["name"] for d in r.json()["diagnoses"]] == ["new-dx"]
+
+
+async def test_patient_search_treats_wildcards_literally(client):
+    token, _ = await login(client)
+    literal = await _mk_patient(
+        client, token, national_id="5555555551", first_name="under_score"
+    )
+    await _mk_patient(
+        client, token, national_id="5555555552", first_name="under score"
+    )
+
+    r = await client.get(
+        "/api/v1/patients", params={"q": "_"}, headers=auth(token)
+    )
+    assert r.status_code == 200
+    assert [p["id"] for p in r.json()["items"]] == [literal["id"]]
+
+    r = await client.get(
+        "/api/v1/patients", params={"q": "%"}, headers=auth(token)
+    )
+    assert r.json()["items"] == []

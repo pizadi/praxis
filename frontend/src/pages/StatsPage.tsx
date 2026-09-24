@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Card, Col, Row, Statistic, Table, Typography } from 'antd'
 
-import { API_BASE, api, getAccessToken } from '../api/client'
+import { api } from '../api/client'
 import type { StatsSummary } from '../api/types'
 import { formatMoney, toFaDigits } from '../lib/jalali'
 import { useUser } from '../components/AppLayout'
@@ -34,16 +34,17 @@ export default function StatsPage() {
     )
   }
 
-  const downloadCsv = () => {
-    const url = `${API_BASE}/stats/summary.csv?date_from=${range[0]}&date_to=${range[1]}`
-    fetch(url, { headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` } })
-      .then((r) => r.blob())
-      .then((blob) => {
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = `stats-${range[0]}.csv`
-        a.click()
-      })
+  const downloadCsv = async () => {
+    const blob = (await api.get('/stats/summary.csv', {
+      params: { date_from: range[0], date_to: range[1] },
+      responseType: 'blob',
+    })).data
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `stats-${range[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (

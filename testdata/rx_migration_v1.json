@@ -1,0 +1,85 @@
+{
+  "parser_version": 1,
+  "min_frequency": 3,
+  "split_cases": [
+    {
+      "input": "asthma, rhinitis\r\nP1 20,doxy",
+      "expected": ["asthma", "rhinitis", "P1 20", "doxy"]
+    },
+    {"input": "  ", "expected": []},
+    {"input": "single", "expected": ["single"]},
+    {"input": ",,\n,,\r\r", "expected": []}
+  ],
+  "name_quantity_cases": [
+    {"input": "P1 20", "name": "P1", "quantity": 20},
+    {"input": "sym 160", "name": "sym", "quantity": 160},
+    {"input": "P1 ۲۰", "name": "P1", "quantity": 20},
+    {"input": "alprazolam 1/2", "name": "alprazolam 1/2", "quantity": null},
+    {"input": "alprazolam0.5", "name": "alprazolam0.5", "quantity": null},
+    {"input": "250", "name": "250", "quantity": null},
+    {"input": "Azithromycin 250 12", "name": "Azithromycin 250", "quantity": 12},
+    {"input": "sym 160 PRN", "name": "sym 160 PRN", "quantity": null},
+    {"input": "P1 1000000", "name": "P1", "quantity": 1000000},
+    {"input": "P1 1000001", "name": "P1 1000001", "quantity": null}
+  ],
+  "normalize_cases": [
+    {"input": "  Asthma   2 ", "expected": "asthma 2"},
+    {"input": "COPD.", "expected": "copd"},
+    {"input": "doxy...", "expected": "doxy"},
+    {"input": "---", "expected": ""}
+  ],
+  "plan_rows": [
+    [1, 10, null, "asthma 2, rhinitis"],
+    [2, 11, null, "asthma 2"],
+    [3, 12, null, "ASTHMA,  rhinitis"],
+    [4, 13, null, "i should see ct for bx and repeat pft"],
+    [5, 14, null, "---"],
+    [6, 15, "2025-01-02T10:00:00+00:00", "doxy, P1 20"],
+    [7, 15, null, "asthma, asthma 9"]
+  ],
+  "planned": [
+    {
+      "appointment_id": 1,
+      "patient_id": 10,
+      "prescribed_at": null,
+      "links": [{"name": "asthma", "quantity": 2}],
+      "notes_overflow": "rhinitis"
+    },
+    {
+      "appointment_id": 2,
+      "patient_id": 11,
+      "prescribed_at": null,
+      "links": [{"name": "asthma", "quantity": 2}],
+      "notes_overflow": ""
+    },
+    {
+      "appointment_id": 3,
+      "patient_id": 12,
+      "prescribed_at": null,
+      "links": [{"name": "asthma", "quantity": null}],
+      "notes_overflow": "rhinitis"
+    },
+    {
+      "appointment_id": 4,
+      "patient_id": 13,
+      "prescribed_at": null,
+      "links": [],
+      "notes_overflow": "i should see ct for bx and repeat pft"
+    },
+    {
+      "appointment_id": 6,
+      "patient_id": 15,
+      "prescribed_at": "2025-01-02T10:00:00+00:00",
+      "links": [],
+      "notes_overflow": "doxy\nP1 20"
+    },
+    {
+      "appointment_id": 7,
+      "patient_id": 15,
+      "prescribed_at": null,
+      "links": [{"name": "asthma", "quantity": null}],
+      "notes_overflow": ""
+    }
+  ],
+  "dictionary": {"asthma": "asthma"}
+}

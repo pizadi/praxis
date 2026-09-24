@@ -185,6 +185,38 @@ async def test_template_validate_endpoint(client):
     assert r.status_code == 422
 
 
+async def test_builder_formula_validate_endpoint(client):
+    admin = (await login(client))[0]
+    questions = [
+        {"key": "pain", "type": "number"},
+        {"key": "text", "type": "string"},
+    ]
+    r = await client.post(
+        "/api/v1/questionnaires/formulas/validate",
+        json={"score_formula": "pain * 2", "questions": questions},
+        headers=auth(admin),
+    )
+    assert r.status_code == 200
+    assert r.json()["valid"] is True
+    assert r.json()["refs"] == ["pain"]
+
+    r = await client.post(
+        "/api/v1/questionnaires/formulas/validate",
+        json={"score_formula": "nope + text", "questions": questions},
+        headers=auth(admin),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "invalid_formula"
+
+    # blank remains a valid "no formula" value
+    r = await client.post(
+        "/api/v1/questionnaires/formulas/validate",
+        json={"score_formula": "   ", "questions": questions},
+        headers=auth(admin),
+    )
+    assert r.status_code == 200
+
+
 # --- responses ------------------------------------------------------------------
 
 

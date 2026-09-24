@@ -21,13 +21,19 @@ test.describe('auth', () => {
     await expect(page.locator('input#username')).toBeVisible()
   })
 
-  test('login → dashboard → session survives reload → logout', async ({ page }) => {
+  test('login → dashboard → session survives reload → logout', async ({ page, context }) => {
     await login(page)
     await expect(page.locator('header')).toContainText('مدیر')
-    // session persists across reload (tokens in storage + /auth/me refetch)
+    const storedKeys = await page.evaluate(() => Object.keys(localStorage))
+    expect(storedKeys).not.toContain('clinic.access')
+    expect(storedKeys).not.toContain('clinic.refresh')
+
+    // The HttpOnly refresh cookie restores a fresh in-memory access token.
     await page.reload()
     await expect(page.locator('.ant-menu')).toBeVisible()
     await logout(page)
+    const cookies = await context.cookies()
+    expect(cookies.find((cookie) => cookie.name === 'praxis_refresh')).toBeUndefined()
   })
 
   test('login is throttled after repeated failures (429 → login_locked toast)', async ({ page }) => {

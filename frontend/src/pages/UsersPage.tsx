@@ -16,6 +16,7 @@ import {
 
 import { api, apiError } from '../api/client'
 import { roleFa } from '../lib/roles'
+import { passwordRules } from '../lib/userForm'
 import { useIsMobile } from '../lib/useIsMobile'
 import type { Page, Role, User } from '../api/types'
 import StackCell from '../components/StackCell'
@@ -49,10 +50,11 @@ export default function UsersPage() {
   const save = useMutation({
     mutationFn: async (values: UserForm) => {
       if (editing) {
-        const { password, ...rest } = values
         return api.patch(`/users/${editing.id}`, {
-          ...rest,
-          ...(password ? { password } : {}),
+          full_name: values.full_name,
+          role_id: values.role_id,
+          is_active: values.is_active,
+          ...(values.password ? { password: values.password } : {}),
         })
       }
       return api.post('/users', values)
@@ -190,7 +192,7 @@ export default function UsersPage() {
           <Form.Item
             name="password"
             label="گذرواژه"
-            rules={editing ? [] : [{ required: true }, { min: 8, message: 'حداقل ۸ نویسه' }]}
+            rules={passwordRules(!editing)}
           >
             <Input.Password placeholder={editing ? 'برای تغییر وارد کنید' : ''} />
           </Form.Item>

@@ -144,11 +144,11 @@ async def test_patient_level_files_and_payments(client):
 
 
 async def test_audit_ip_uses_forwarded_headers(client):
-    """Behind the nginx proxy request.client.host is the proxy's address;
-    X-Forwarded-For (leftmost = original client) / X-Real-IP win."""
+    """Behind nginx, X-Real-IP is overwritten by the proxy; otherwise use the
+    rightmost XFF hop (the hop nginx itself appended), never a spoofable prefix."""
     token, _ = await login(client)
 
-    # XFF: multi-hop chain → leftmost entry recorded
+    # XFF: multi-hop chain → rightmost proxy-appended entry recorded
     r = await client.post(
         "/api/v1/patients",
         json={
@@ -170,7 +170,7 @@ async def test_audit_ip_uses_forwarded_headers(client):
         params={"entity_type": "patient", "entity_id": pid1},
         headers=auth(token),
     )
-    assert r.json()["items"][0]["ip_address"] == "203.0.113.7"
+    assert r.json()["items"][0]["ip_address"] == "10.0.0.1"
 
     # X-Real-IP only (nginx's other header) → used as fallback
     r = await client.post(

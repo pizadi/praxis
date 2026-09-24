@@ -1,11 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
+from app.core.errors import NotFoundError
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Appointment, Patient, Transaction, User
@@ -27,7 +28,7 @@ async def _get_appt_or_404(db: AsyncSession, appointment_id: int) -> Appointment
     )
     appt = await db.scalar(stmt)
     if appt is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+        raise NotFoundError("Appointment not found", code="appointment_not_found")
     return appt
 
 
@@ -45,7 +46,7 @@ async def _get_txn_or_404(db: AsyncSession, txn_id: int) -> Transaction:
     )
     txn = await db.scalar(stmt)
     if txn is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+        raise NotFoundError("Transaction not found", code="transaction_not_found")
     return txn
 
 

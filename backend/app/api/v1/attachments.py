@@ -1,6 +1,6 @@
 import datetime as dt
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from app.api.deps import (
     resolve_stored_path,
     save_upload_stream,
 )
+from app.core.errors import NotFoundError
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Attachment, Patient, User
@@ -36,7 +37,7 @@ async def _get_attachment_or_404(db: AsyncSession, attachment_id: int) -> Attach
     )
     att = await db.scalar(stmt)
     if att is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+        raise NotFoundError("Attachment not found", code="attachment_not_found")
     return att
 
 
@@ -260,24 +261,20 @@ async def download_file(
     att = await _get_attachment_or_404(db, attachment_id)
     if not att.stored_filename or att.missing_file:
         # Row is note-only, or the file was already absent at migration time.
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Attachment record has no file (note-only or missing since migration)"
-            ),
+        raise NotFoundError(
+            "Attachment record has no file (note-only or missing since migration)",
+            code="attachment_content_missing",
         )
     path = resolve_stored_path(att.stored_filename)
     if not path.is_file():
         # DB says a file exists but it is not in UPLOAD_DIR — almost always
         # an upload-volume/path mismatch after a migration, not a bad request.
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"File metadata exists but the physical file is absent from"
-                f" UPLOAD_DIR (expected: {att.stored_filename}). If this happens"
-                " for all downloads, the files were migrated to a different"
-                " directory than the one mounted in the api container."
-            ),
+        raise NotFoundError(
+            f"File metadata exists but the physical file is absent from"
+            f" UPLOAD_DIR (expected: {att.stored_filename}). If this happens"
+            " for all downloads, the files were migrated to a different"
+            " directory than the one mounted in the api container.",
+            code="attachment_file_absent",
         )
     return FileResponse(
         path,

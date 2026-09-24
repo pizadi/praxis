@@ -33,7 +33,7 @@ backend/app
   db/session.py  موتور، SessionLocal، APP_TZ (Asia/Tehran)
   models/        domain.py (بیمار/نوبت/... + پرسش‌نامه‌ها)،
                  system.py (کاربر/نقش/احراز هویت/لاگ)
-  schemas/       مدل‌های Pydantic v2 ورودی/خروجی
+  schemas/       مدل‌های Pydantic v2 ورودی/خروجی، تفکیک‌شده به ازای هر دامنهٔ API
   services/      لاگ اقدامات، اعتبارسنجی قالب پرسش‌نامه، فرمول نمره،
                  واردسازی پشتیبان، پاک‌سازی فایل‌های بی‌صاحب
   alembic/       مهاجرت‌ها (هنگام بوت کانتینر اعمال می‌شوند؛ برای اجرای
@@ -63,7 +63,11 @@ docs/، docs_fa/  مستندات ویژگی‌ها (انگلیسی / فارسی)
   جلالی. مرز روز با `APP_TZ` (Asia/Tehran) محاسبه می‌شود.
 - **خطاها**: پاکت یکسان `{"error": {"code", "message", "details"}}` در
   `app/core/errors.py` — 409 `ConflictError`، 422 `BusinessRuleError`،
-  404 `NotFoundError`.
+  404 `NotFoundError`، به‌علاوه خطاهای نوع‌دار احراز/اجازه/حجم فایل.
+- **دروازهٔ مستندات API**: `/docs`، `/redoc` و `/openapi.json` وقتی
+  `CLINIC_ENV=production` است غیرفعال‌اند.
+- **جفت‌مستندات**: `scripts/check_doc_pairs.py` مجموعهٔ فایل‌های انگلیسی/فارسی
+  و تغییر جفتی آن‌ها را محافظت می‌کند.
 
 ## نسخه‌گذاری
 

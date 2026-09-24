@@ -1,13 +1,13 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_admin, revoke_user_tokens
 from app.api.pagination import Page, paginate
-from app.core.errors import ConflictError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.core.tokens import utc_now
 from app.db.session import get_db
@@ -26,7 +26,7 @@ async def _get_or_404(db: AsyncSession, user_id: int) -> User:
     )
     user = await db.scalar(stmt)
     if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise NotFoundError("User not found", code="user_not_found")
     return user
 
 
@@ -68,7 +68,7 @@ async def create_user(
         raise ConflictError("Username already taken", code="username_taken")
     role = await db.get(Role, body.role_id)
     if role is None or role.deleted_at is not None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Role not found")
+        raise BusinessRuleError("Role not found", code="role_not_found")
     user = User(
         username=body.username,
         full_name=body.full_name,
@@ -120,7 +120,7 @@ async def update_user(
     if body.role_id is not None and body.role_id != user.role_id:
         role = await db.get(Role, body.role_id)
         if role is None or role.deleted_at is not None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Role not found")
+            raise BusinessRuleError("Role not found", code="role_not_found")
         user.role_id = body.role_id
     if body.is_active is not None:
         user.is_active = body.is_active
@@ -162,7 +162,7 @@ async def delete_user(
     deleted user cannot log in while in the trash."""
     user = await _get_or_404(db, user_id)
     if user.id == current.id:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot delete yourself")
+        raise BusinessRuleError("Cannot delete yourself", code="cannot_delete_self")
     # refuse deleting the last live admin (the system 'admin' role)
     if user.role.is_system and user.role.name == "admin":
         admins = (
@@ -175,8 +175,8 @@ async def delete_user(
             )
         ).all()
         if len(admins) <= 1:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cannot delete the last admin"
+            raise BusinessRuleError(
+                "Cannot delete the last admin", code="cannot_delete_last_admin"
             )
     user.deleted_at = utc_now()
     user.is_active = False
