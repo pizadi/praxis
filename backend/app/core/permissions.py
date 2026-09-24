@@ -1,105 +1,50 @@
-"""Canonical permission catalog.
+"""Canonical authorization keys and system-role permission sets.
 
-Permissions are grouped for the roles UI; the API validates requested
-permission keys against ALL_PERMISSIONS. System roles map 1:1 onto the
-pre-permission behavior (admin > doctor > receptionist).
+Persian UI labels live in ``permission_labels_fa`` and are not imported by
+authorization logic. The catalog stores stable group identifiers so API
+presentation can attach translated labels without coupling them to security.
 """
 
-# group label (Persian) -> [(permission key, Persian label)]
-PERMISSION_CATALOG: list[tuple[str, list[tuple[str, str]]]] = [
+PERMISSION_CATALOG: list[tuple[str, tuple[str, ...]]] = [
     (
-        "بیماران",
-        [
-            ("patients.read", "مشاهده بیماران"),
-            ("patients.create", "ثبت بیمار"),
-            ("patients.update", "ویرایش بیمار"),
-            ("patients.delete", "حذف بیمار"),
-        ],
+        "patients",
+        ("patients.read", "patients.create", "patients.update", "patients.delete"),
     ),
     (
-        "نوبت‌ها",
-        [
-            ("appointments.read", "مشاهده نوبت‌ها"),
-            ("appointments.create", "ثبت نوبت"),
-            ("appointments.update", "ویرایش نوبت"),
-            ("appointments.stage", "تغییر مرحله نوبت"),
-            ("appointments.delete", "حذف نوبت"),
-        ],
+        "appointments",
+        (
+            "appointments.read",
+            "appointments.create",
+            "appointments.update",
+            "appointments.stage",
+            "appointments.delete",
+        ),
     ),
+    ("files", ("files.read", "files.write", "files.delete")),
     (
-        "فایل‌ها",
-        [
-            ("files.read", "مشاهده و دانلود فایل‌ها"),
-            ("files.write", "افزودن و ویرایش فایل‌ها"),
-            ("files.delete", "حذف فایل‌ها"),
-        ],
+        "transactions",
+        ("transactions.read", "transactions.write", "transactions.delete", "payments.view"),
     ),
+    ("medical", ("medical_notes.view",)),
+    ("prescriptions", ("prescriptions.read", "prescriptions.write")),
     (
-        "پرداخت‌ها",
-        [
-            ("transactions.read", "مشاهده تراکنش‌ها"),
-            ("transactions.write", "ثبت و ویرایش تراکنش"),
-            ("transactions.delete", "حذف تراکنش"),
-            ("payments.view", "گزارش پرداخت‌های روز"),
-        ],
+        "questionnaires",
+        ("questionnaires.read", "questionnaires.fill", "questionnaires.templates"),
     ),
+    ("stats", ("stats.view", "taxonomies.write")),
+    ("trash", ("trash.view", "trash.restore", "trash.purge")),
     (
-        "اطلاعات پزشکی",
-        [
-            ("medical_notes.view", "مشاهده یادداشت‌های پزشکی"),
-        ],
-    ),
-    (
-        "نسخ‌ها",
-        [
-            ("prescriptions.read", "مشاهده نسخ‌ها"),
-            ("prescriptions.write", "ثبت و ویرایش نسخ‌ها"),
-        ],
-    ),
-    (
-        "پرسش‌نامه‌ها",
-        [
-            ("questionnaires.read", "مشاهده پاسخ‌های پرسش‌نامه"),
-            ("questionnaires.fill", "ثبت و ویرایش پاسخ‌ها"),
-            ("questionnaires.templates", "مدیریت قالب‌های پرسش‌نامه"),
-        ],
-    ),
-    (
-        "آمار و دسته‌بندی‌ها",
-        [
-            ("stats.view", "مشاهده آمار"),
-            ("taxonomies.write", "مدیریت برچسب‌ها و تشخیص‌ها"),
-        ],
-    ),
-    (
-        "سبد بازیافت",
-        [
-            ("trash.view", "مشاهده سبد بازیافت"),
-            ("trash.restore", "بازیابی موارد"),
-            ("trash.purge", "حذف قطعی"),
-        ],
-    ),
-    (
-        "مدیریت سامانه",
-        [
-            ("users.manage", "مدیریت کاربران"),
-            ("roles.manage", "مدیریت نقش‌ها و دسترسی‌ها"),
-            ("audit.view", "مشاهده گزارش اقدامات"),
-            ("backup.manage", "پشتیبان‌گیری"),
-        ],
+        "admin",
+        ("users.manage", "roles.manage", "audit.view", "backup.manage"),
     ),
 ]
 
 ALL_PERMISSIONS: frozenset[str] = frozenset(
-    perm for _, perms in PERMISSION_CATALOG for perm, _ in perms
+    permission for _, permissions in PERMISSION_CATALOG for permission in permissions
 )
 
-PERMISSION_LABELS: dict[str, str] = {
-    perm: label for _, perms in PERMISSION_CATALOG for perm, label in perms
-}
-
-# System roles: permission sets reproduce the legacy hierarchy exactly
-# (admin > doctor > receptionist) so existing users keep their access.
+# System roles reproduce the legacy hierarchy exactly so existing users keep
+# their access. Admin remains the full catalog and is healed by bootstrap.
 _ADMIN_PERMS = sorted(ALL_PERMISSIONS)
 
 _DOCTOR_PERMS = [

@@ -872,6 +872,126 @@
       ],
       "formula": "min(1)",
       "valid": true
+    },
+    {
+      "name": "abs zero args",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "abs()",
+      "valid": false
+    },
+    {
+      "name": "trailing comma in call",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "min(1,)",
+      "valid": false
+    },
+    {
+      "name": "multiline call valid",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "max(\n  a,\n  1\n)",
+      "valid": true
+    },
+    {
+      "name": "unary after binary valid",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + -1",
+      "valid": true
+    },
+    {
+      "name": "leading dot number rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + .5",
+      "valid": false
+    },
+    {
+      "name": "two decimal points rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + 1.2.3",
+      "valid": false
+    },
+    {
+      "name": "scientific notation rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + 1e3",
+      "valid": false
+    },
+    {
+      "name": "backslash rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + \\1",
+      "valid": false
+    },
+    {
+      "name": "persian digits rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "a + ۱۲",
+      "valid": false
+    },
+    {
+      "name": "100 unary factors rejected",
+      "questions": [
+        {
+          "key": "a",
+          "label": "A",
+          "type": "number"
+        }
+      ],
+      "formula": "----------------------------------------------------------------------------------------------------a",
+      "valid": false
     }
   ],
   "answer_validation": [

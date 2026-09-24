@@ -162,6 +162,13 @@ Version history:
   1.4.2.dev1  user password editing aligns the form with the API's
           8–128 character contract; short edits are rejected inline instead
           of producing a generic validation error
+  1.4.2.dev2  polish/hardening pass: production docs gate, spoof-resistant
+          audit IP, HttpOnly refresh cookies + CSRF with in-memory access
+          tokens and stricter CSP, typed API error envelope across routes,
+          escaped searches, grouped role counts, UTC upload purge,
+          permission labels split out, server-authoritative formula checks,
+          domain-split schemas, and patient/questionnaire/appointment
+          component extraction with regression guards
 """
 
-__version__ = "1.4.2.dev1"
+__version__ = "1.4.2.dev2"

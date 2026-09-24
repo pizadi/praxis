@@ -16,14 +16,21 @@ cd backend && DATABASE_URL="sqlite+aiosqlite:///data/clinic-dev.db" ../.venv/bin
 
 # فرانت‌اند (از frontend/)
 npm run lint        # eslint، بدون هیچ هشدار
-npm run build       # tsc -b && vite build
+npm test            # vitest: واحد + parity
+npm run test:e2e    # playwright: بک‌اند موقت + preview
+
+# ولیدیتور پرسش‌نامه (اعتبارسنجی سرور + کورپوس ارزیابی مشترک)
+../.venv/bin/python -m pytest backend/tests/parity -q
+npx vitest run src/parity
+
+# محافظ جفت‌مستندات
+python scripts/check_doc_pairs.py --base-ref origin/dev
 
 # استقرار روی compose
 docker compose up -d --build api web
 ```
 
-ترتیب راستی‌آزمایی: ruff → mypy → pytest → (اگر فرانت‌اند تغییر کرد)
-tsc/eslint/build.
+ترتیب راستی‌آزمایی: ruff → mypy → pytest → npm lint/test/build → e2e.
 
 ## نکته‌های تست
 
@@ -35,8 +42,9 @@ tsc/eslint/build.
 - فیکسچر `client` هر تست همهٔ جدول‌ها را drop/create و `bootstrap_admin()`
   را دستی صدا می‌زند.
 - `pytest-asyncio` در حالت `asyncio_mode = "auto"`.
-- `login()` زوج `(access_token, refresh_token)` برمی‌گرداند —
-  `recep, _ = await login(...)`، **نه** `recep[0]`.
+- `login()` زوج `(access_token, مقدار کوکی refresh)` برمی‌گرداند —
+  `recep, _ = await login(...)`، **نه** `recep[0]`. کوکی مرورگر `HttpOnly`
+  است؛ تست‌های API مقدار خام را از jar دریافت می‌کنند.
 - مقادیر ذخیره‌شده را روی **پاسخِ create** ادعا کنید (نه فقط پس از PATCH).
 - تست‌ها «امروز» را از `APP_TZ` بگیرند (payments.md را ببینید).
 - ستون‌های `Enum` در SQLAlchemy **نامِ** عضو را ذخیره می‌کنند — مهاجرت/اسکریپت‌هایی

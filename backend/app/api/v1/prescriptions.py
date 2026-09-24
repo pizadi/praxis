@@ -15,14 +15,15 @@ text also stays in the deprecated rx column.
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.errors import ConflictError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
+from app.core.search import LIKE_ESCAPE, like_contains
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import (
@@ -68,7 +69,7 @@ async def _get_prescription_or_404(db: AsyncSession, prescription_id: int) -> Pr
     )
     rx = await db.scalar(stmt)
     if rx is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Prescription not found")
+        raise NotFoundError("Prescription not found", code="prescription_not_found")
     return rx
 
 
@@ -123,9 +124,9 @@ async def _resolve_items(
         if spec.item_id is not None:
             existing = await db.get(PrescriptionItem, spec.item_id)
             if existing is None or existing.deleted_at is not None:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Prescription item {spec.item_id} not found",
+                raise BusinessRuleError(
+                    f"Prescription item {spec.item_id} not found",
+                    code="prescription_item_not_found",
                 )
             by_id[spec.item_id] = existing.id
             by_name.setdefault(existing.name.casefold(), existing.id)
@@ -150,9 +151,8 @@ async def _resolve_items(
 
     for spec in specs:
         if spec.item_id is None and (spec.name is None or not spec.name.strip()):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Each item needs item_id or name",
+            raise BusinessRuleError(
+                "Each item needs item_id or name", code="prescription_item_required"
             )
         item_id = await item_id_for(spec)
         if item_id in {i for i, _ in resolved}:
@@ -182,7 +182,11 @@ async def list_items(
 ):
     stmt = select(PrescriptionItem).where(PrescriptionItem.deleted_at.is_(None))
     if q:
-        stmt = stmt.where(PrescriptionItem.name.ilike(f"%{q.strip()}%"))
+        stmt = stmt.where(
+            PrescriptionItem.name.ilike(
+                like_contains(q), escape=LIKE_ESCAPE
+            )
+        )
     stmt = stmt.order_by(PrescriptionItem.name)
     limit, offset = clamp_limit_offset(limit, offset, ITEM_MAX_PAGE_SIZE)
     rows, total = await paginate(db, stmt, limit=limit, offset=offset)
@@ -201,7 +205,7 @@ async def create_item(
     item differing only by case is a 409 name_taken, same as rename."""
     name = body.name.strip()
     if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name required")
+        raise BusinessRuleError("Name required", code="name_required")
     dup = await db.scalar(
         select(PrescriptionItem).where(
             func.lower(PrescriptionItem.name) == name.casefold(),
@@ -241,10 +245,10 @@ async def rename_item(
         )
     )
     if item is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+        raise NotFoundError("Prescription item not found", code="prescription_item_not_found")
     name = body.name.strip()
     if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name required")
+        raise BusinessRuleError("Name required", code="name_required")
     dup = await db.scalar(
         select(PrescriptionItem).where(
             func.lower(PrescriptionItem.name) == name.casefold(),
@@ -284,7 +288,7 @@ async def delete_item(
         )
     )
     if item is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+        raise NotFoundError("Prescription item not found", code="prescription_item_not_found")
     item.deleted_at = utc_now()
     await db.commit()
     await audit.log_action(

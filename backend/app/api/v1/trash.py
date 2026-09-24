@@ -11,13 +11,13 @@ whose parent is still deleted is refused with 409 (restore the parent first).
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import delete_stored_file, require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.errors import ConflictError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from app.db.session import get_db
 from app.models import (
     Appointment,
@@ -61,9 +61,8 @@ def _get_model(type_name: str):
         "prescription_items": PrescriptionItem,
     }
     if type_name not in mapping:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"type must be one of {TYPES}",
+        raise BusinessRuleError(
+            f"type must be one of {TYPES}", code="invalid_trash_type"
         )
     return mapping[type_name]
 
@@ -217,7 +216,7 @@ async def restore_item(
     model = _get_model(type)
     row = await db.get(model, obj_id)
     if row is None or row.deleted_at is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found in trash")
+        raise NotFoundError("Not found in trash", code="trash_item_not_found")
 
     # subtree rule: a child can only be restored if its parent is alive
     if isinstance(row, Appointment):
@@ -262,7 +261,7 @@ async def restore_item(
 
     row = await db.get(model, obj_id)
     if row is None:  # pragma: no cover — just restored, cannot vanish
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found in trash")
+        raise NotFoundError("Not found in trash", code="trash_item_not_found")
     title = ""
     subtitle = ""
     if isinstance(row, Patient):
@@ -319,7 +318,7 @@ async def purge_item(
     model = _get_model(type)
     row = await db.get(model, obj_id)
     if row is None or row.deleted_at is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found in trash")
+        raise NotFoundError("Not found in trash", code="trash_item_not_found")
 
     # collect physical file names before hard-deleting the subtree
     stored_names: list[str | None] = []

@@ -53,7 +53,9 @@ async def login(
     )
     assert r.status_code == 200, r.text
     data = r.json()
-    return data["access_token"], data["refresh_token"]
+    refresh = r.cookies.get("praxis_refresh")
+    assert refresh, "login did not set the HttpOnly refresh cookie"
+    return data["access_token"], refresh
 
 
 def auth(token: str) -> dict[str, str]:

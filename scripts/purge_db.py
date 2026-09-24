@@ -278,7 +278,10 @@ def main() -> int:
     if args.uploads:
         purge_uploads()
 
-    print(f"done — revision {current_revision()}, admin '{settings.bootstrap_admin_username}' recreated")
+    print(
+        f"done — revision {current_revision()}, "
+        f"admin '{settings.bootstrap_admin_username}' recreated"
+    )
     return 0
 
 

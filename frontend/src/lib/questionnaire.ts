@@ -98,6 +98,19 @@ export function faAnswerError(msg: string): string {
   return msg
 }
 
+/** Persian message for a backend formula-validation error (the server owns
+ * validation; this only translates its message for the builder). */
+export function faFormulaError(msg: string): string {
+  const unknown = msg.match(/unknown question key: (.+)$/)
+  if (unknown) return `کلید ناشناس در فرمول: ${unknown[1]}`
+  const nonNumeric = msg.match(/question (.+) is not numeric/)
+  if (nonNumeric) return `پرسش متنی در فرمول قابل استفاده نیست: ${nonNumeric[1]}`
+  if (msg.includes('formula is empty')) return 'فرمول خالی است'
+  if (msg.includes('formula is too deeply nested')) return 'فرمول بیش از حد تودرتو است'
+  if (msg.includes('longer than')) return 'فرمول بیش از حد طولانی است'
+  return msg
+}
+
 function invalidReason(q: Question, v: AnswerValue): string {
   if (q.type === 'number') {
     if (typeof v !== 'number' || Number.isNaN(v)) return 'مقدار عددی نیست'
@@ -140,7 +153,8 @@ export function rangeHint(q: NumberQuestion): string {
   return ''
 }
 
-// --- score formula (mirror backend app/services/scoring.py) ---------------------
+// --- score formula evaluator (the server owns validation; this mirror only
+// renders the score for templates the server has accepted) -----------------------
 
 type FNode =
   | { k: 'num'; v: number }
@@ -151,8 +165,8 @@ type FNode =
 
 type FToken = { kind: 'num' | 'ident' | 'op'; value: number | string }
 
-// keep in sync with backend app/services/scoring.py — the builder's live
-// check must reject exactly what the server will refuse (422)
+// Keep the accepted grammar in sync with backend app/services/scoring.py —
+// the server's live-check endpoint is authoritative.
 export const MAX_FORMULA_LENGTH = 1000
 export const MAX_DEPTH = 100
 
@@ -298,42 +312,6 @@ class FormulaParser {
 
 function parseFormula(text: string): FNode {
   return new FormulaParser(tokenizeFormula(text)).parse()
-}
-
-function collectRefs(node: FNode, out: string[]): void {
-  if (node.k === 'ref') out.push(node.key)
-  else if (node.k === 'un') collectRefs(node.operand, out)
-  else if (node.k === 'bin') {
-    collectRefs(node.left, out)
-    collectRefs(node.right, out)
-  } else if (node.k === 'call') node.args.forEach((a) => collectRefs(a, out))
-}
-
-/** Client-side mirror of the backend formula validation (server is
- * authoritative): returns null when valid, else a Persian error message.
- * Accepts the loose builder question shape too (only key+type matter). */
-export function validateFormulaText(
-  text: string,
-  questions: { key: string; type: 'number' | 'choice' | 'string' }[],
-): string | null {
-  const trimmed = (text ?? '').trim()
-  if (!trimmed) return null
-  // raw length: the server's max_length fires before its strip-normalization
-  if ((text ?? '').length > MAX_FORMULA_LENGTH) return 'فرمول بیش از حد طولانی است'
-  let ast: FNode
-  try {
-    ast = parseFormula(trimmed)
-  } catch (e) {
-    return e instanceof Error ? e.message : 'فرمول نامعتبر است'
-  }
-  const refs: string[] = []
-  collectRefs(ast, refs)
-  for (const key of refs) {
-    const q = questions.find((x) => x.key === key)
-    if (!q) return `کلید ناشناس در فرمول: ${key}`
-    if (q.type === 'string') return `پرسش متنی در فرمول قابل استفاده نیست: ${key}`
-  }
-  return null
 }
 
 function operandValue(format: FormatDoc, key: string, answers: Answers): number | null {

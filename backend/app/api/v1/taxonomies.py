@@ -1,12 +1,13 @@
 """Generic CRUD for tag-like and diagnosis-like entities (name + id)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_perm
 from app.api.pagination import Page, clamp_limit_offset, paginate
-from app.core.errors import ConflictError
+from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
+from app.core.search import LIKE_ESCAPE, like_contains
 from app.core.tokens import utc_now
 from app.db.session import get_db
 from app.models import Diagnosis, Tag, User, patient_diagnoses, patient_tags
@@ -52,7 +53,9 @@ def _make_router(prefix: str, model, link_table, link_fk) -> APIRouter:
     ):
         stmt = select(model).where(model.deleted_at.is_(None))
         if q:
-            stmt = stmt.where(model.name.ilike(f"%{q.strip()}%"))
+            stmt = stmt.where(
+                model.name.ilike(like_contains(q), escape=LIKE_ESCAPE)
+            )
         stmt = stmt.order_by(model.name)
         limit, offset = clamp_limit_offset(limit, offset, TAXONOMY_MAX_PAGE_SIZE)
         rows, total = await paginate(
@@ -71,7 +74,7 @@ def _make_router(prefix: str, model, link_table, link_fk) -> APIRouter:
     ):
         name = body.name.strip()
         if not name:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name required")
+            raise BusinessRuleError("Name required", code="name_required")
         exists = await db.scalar(
             select(model).where(model.name == name, model.deleted_at.is_(None))
         )
@@ -112,10 +115,12 @@ def _make_router(prefix: str, model, link_table, link_fk) -> APIRouter:
             select(model).where(model.id == obj_id, model.deleted_at.is_(None))
         )
         if obj is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+            raise NotFoundError(
+                f"{entity_kind.capitalize()} not found", code=f"{entity_kind}_not_found"
+            )
         name = body.name.strip()
         if not name:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name required")
+            raise BusinessRuleError("Name required", code="name_required")
         dup = await db.scalar(
             select(model).where(
                 model.name == name,
@@ -171,7 +176,9 @@ def _make_router(prefix: str, model, link_table, link_fk) -> APIRouter:
             select(model).where(model.id == obj_id, model.deleted_at.is_(None))
         )
         if obj is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+            raise NotFoundError(
+                f"{entity_kind.capitalize()} not found", code=f"{entity_kind}_not_found"
+            )
         obj.deleted_at = utc_now()
         await db.commit()
         await audit.log_action(

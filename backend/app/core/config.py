@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     # --- CORS ---
     cors_origins: str = "http://localhost:5173"
+    # Refresh-token cookies are Secure when the deployment is served over
+    # HTTPS. The bundled LAN compose deployment is HTTP, so this defaults off
+    # and must be enabled explicitly when TLS terminates in front of nginx.
+    session_cookie_secure: bool = False
 
     # --- Uploads ---
     upload_dir: str = "data/uploads"

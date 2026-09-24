@@ -1,11 +1,12 @@
-// Parity runner (vitest side) — mirrors backend/tests/parity/test_questionnaire_parity.py
-// over the SAME shared corpus file. Both languages must agree on every case.
+// Parity runner (vitest side) — mirrors the evaluation and answer-validation
+// parts of backend/tests/parity/test_questionnaire_parity.py. Formula syntax
+// validation is server-authoritative and runs in the Python parity suite.
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { evaluateFormula, faAnswerError, validateFormulaText } from '../lib/questionnaire'
+import { evaluateFormula, faAnswerError } from '../lib/questionnaire'
 import type { FormatDoc } from '../lib/questionnaire'
 
 const corpus = JSON.parse(
@@ -21,12 +22,6 @@ const corpus = JSON.parse(
     formula: string
     answers: Record<string, number | string | null>
     expected: number | null
-  }[]
-  formula_validation: {
-    name: string
-    questions: { key: string; type: 'number' | 'choice' | 'string' }[]
-    formula: string
-    valid: boolean
   }[]
   answer_validation: {
     name: string
@@ -46,14 +41,6 @@ describe('formula evaluation parity', () => {
   it.each(corpus.formula_evaluation.map((c) => [c.name, c] as const))('%s', (_name, c) => {
     const format = { ...tpl(c.template), score_formula: c.formula } as FormatDoc
     expect(evaluateFormula(format, c.answers)).toBe(c.expected)
-  })
-})
-
-describe('formula validation parity', () => {
-  it.each(corpus.formula_validation.map((c) => [c.name, c] as const))('%s', (_name, c) => {
-    const err = validateFormulaText(c.formula, c.questions)
-    if (c.valid) expect(err).toBeNull()
-    else expect(err).not.toBeNull()
   })
 })
 

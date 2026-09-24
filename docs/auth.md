@@ -24,15 +24,18 @@
 ## Tokens
 
 - JWT HS256. Access token 30 min, refresh token 7 days (`ACCESS_TOKEN_*` /
-  `REFRESH_TOKEN_*`). Access-token claims: `sub`, `type`, `iat`, `exp`,
-  `jti`, `role` (the role claim is informational — authorization always
-  re-reads the DB role).
-- Refresh tokens are single-use: every `/auth/refresh` rotates (old jti
-  revoked, new one issued). Reusing a rotated token → 401; the newest token
+  `REFRESH_TOKEN_*`). Access-token claims: `sub`, `type`, `iat`, `exp`, `jti`
+  (authorization always re-reads the DB role).
+- The browser keeps the access token only in memory. The refresh token is an
+  `HttpOnly`, `SameSite=Strict` cookie scoped to `/api/v1/auth`; refresh and
+  logout also require a readable CSRF cookie sent as `X-CSRF-Token`. Set
+  `SESSION_COOKIE_SECURE=true` when deployment is HTTPS.
+- `/auth/login` and `/auth/refresh` return only the access token; refresh
+  tokens rotate in cookies. Reusing a rotated token → 401; the newest token
   stays valid (no token-family revocation — accepted at this scale).
-- `POST /auth/logout` revokes exactly the presented refresh token
-  (token-possession based, unauthenticated) and writes an `audit_log` row
-  (action `logout`, entity `session`).
+- `POST /auth/logout` requires the CSRF header, revokes the cookie's refresh
+  token, clears both session cookies, and writes an `audit_log` row (action
+  `logout`, entity `session`).
 
 ## Revocation semantics
 
@@ -43,8 +46,9 @@
   outstanding refresh tokens; access tokens already issued stay valid up to
   their **30-minute TTL** — an accepted trade-off (same window applies after
   logout).
-- UI logout calls `POST /auth/logout` best-effort, then clears localStorage
-  (`clinic.access` / `clinic.refresh` / `clinic.user`).
+- UI logout calls `POST /auth/logout` best-effort (which clears the server
+  cookies), then clears its in-memory token and local user cache
+  (`clinic.user`).
 
 ## Rate-limit configuration
 

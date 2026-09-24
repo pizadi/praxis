@@ -26,7 +26,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
@@ -34,7 +34,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import bearer_scheme, get_current_user, require_perm
 from app.core.config import settings
-from app.core.errors import BusinessRuleError, ConflictError
+from app.core.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    BusinessRuleError,
+    ConflictError,
+)
 from app.core.tokens import utc_now
 from app.db.session import APP_TZ, get_db
 from app.models import AuditLog, User
@@ -482,13 +487,15 @@ async def _require_download_authorized(
     OR the backup.manage permission (the old header path — unchanged)."""
     if token:
         if not _verify_download_token(token):
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired download token"
+            raise AuthenticationError(
+                "Invalid or expired download token", code="invalid_download_token"
             )
         return
     user = await get_current_user(credentials=credentials, db=db)
     if not user.has_perm("backup.manage"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        raise AuthorizationError(
+            "Insufficient permissions", code="insufficient_permissions"
+        )
 
 
 @router.post("/download-token")
@@ -514,7 +521,7 @@ async def issue_download_token(
 async def download_backup(_: None = Depends(_require_download_authorized)):
     st = _backup_state()
     if st["status"] != "ready" or not _file_path:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="No ready backup file")
+        raise ConflictError("No ready backup file", code="backup_not_ready")
     name = "clinic-backup-" + dt.datetime.now(APP_TZ).strftime("%Y%m%d-%H%M")
     if st["encrypted"]:
         # encrypted artifact: opaque bytes — never let a browser unzip it

@@ -1,15 +1,25 @@
 import asyncio
+import json
+import logging
+import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
 from app.api.v1 import api_router
+from app.api.v1.backup import rediscover_backup_artifact
+from app.api.v1.meta import health as _health_endpoint
 from app.core.config import settings
 from app.core.errors import register_error_handlers
+from app.core.permissions import ALL_PERMISSIONS, SYSTEM_ROLES
+from app.core.security import hash_password
 from app.db.migrations import run_migrations
 from app.db.session import SessionLocal
 from app.models import Role, User
@@ -25,12 +35,6 @@ async def ensure_system_roles(session) -> None:
     before a permission existed (e.g. create_all-built DBs stamped at head —
     data migrations never ran there).
     """
-    import json
-
-    from sqlalchemy import select
-
-    from app.core.permissions import ALL_PERMISSIONS, SYSTEM_ROLES
-
     for name, perms in SYSTEM_ROLES.items():
         role = await session.scalar(
             select(Role).where(Role.name == name, Role.deleted_at.is_(None))
@@ -56,11 +60,6 @@ async def bootstrap_admin() -> None:
     Tolerates an unmigrated database (fresh start before `alembic upgrade head`)
     so the API can still boot and /health reports degradation.
     """
-    from sqlalchemy import func, select
-    from sqlalchemy.exc import SQLAlchemyError
-
-    from app.core.security import hash_password
-
     try:
         async with SessionLocal() as session:
             await ensure_system_roles(session)
@@ -82,8 +81,6 @@ async def bootstrap_admin() -> None:
             )
             await session.commit()
     except SQLAlchemyError:
-        import logging
-
         logging.getLogger("clinic.bootstrap").warning(
             "Database not ready for admin bootstrap; run migrations first.",
         )
@@ -99,10 +96,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # backup artifacts persist on the volume — re-find the last one after a
     # restart (background: never blocks boot; status flips to ready when the
     # checksum is computed)
-    import threading
-
-    from app.api.v1.backup import rediscover_backup_artifact
-
     threading.Thread(
         target=rediscover_backup_artifact, name="clinic-backup-rediscover", daemon=True
     ).start()
@@ -111,28 +104,28 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    production = os.environ.get("CLINIC_ENV") == "production"
     app = FastAPI(
         title="Clinic API",
         version=__version__,
-        docs_url="/docs",
-        openapi_url="/openapi.json",
+        docs_url=None if production else "/docs",
+        redoc_url=None if production else "/redoc",
+        openapi_url=None if production else "/openapi.json",
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
     )
     register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     # Root alias for /api/v1/health — the documented liveness URL (uptime
     # monitors / manual curl on the host port hit the bare path; a 404 here
     # looks like the API being down when it is not).
-    from app.api.v1.meta import health as _health_endpoint
-
     app.get("/health", status_code=status.HTTP_200_OK, include_in_schema=False)(
         _health_endpoint
     )

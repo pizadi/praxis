@@ -6,43 +6,24 @@ import {
   Button,
   Card,
   Col,
-  Descriptions,
   Empty,
   Form,
   Input,
-  List,
   Modal,
-  Popconfirm,
   Row,
-  Segmented,
   Select,
   Space,
-  Table,
-  Tag,
-  Tooltip,
   Typography,
   Upload,
 } from 'antd'
 import type { UploadFile } from 'antd'
-import {
-  CalendarOutlined,
-  DeleteOutlined,
-  DoubleLeftOutlined,
-  EditOutlined,
-  FileOutlined,
-  FileDoneOutlined,
-  InboxOutlined,
-  MedicineBoxOutlined,
-  PlusOutlined,
-} from '@ant-design/icons'
-import { theme as antdTheme } from 'antd'
+import { InboxOutlined } from '@ant-design/icons'
 
 import { api, apiFieldErrors, apiError } from '../api/client'
 import type {
   Appointment,
   AppointmentBrief,
   Attachment,
-  NamedRef,
   Page,
   Patient,
   Prescription,
@@ -51,24 +32,27 @@ import type {
 } from '../api/types'
 import type { Answers, FormatDoc } from '../lib/questionnaire'
 import { faAnswerError, mergeResponse } from '../lib/questionnaire'
-import { fileSize, formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
-import { LAST_STAGE, stageOf } from '../lib/stages'
 import { useUser } from '../components/AppLayout'
 import { useBeforeUnloadGuard, useNavGuard } from '../components/NavGuard'
 import { useIsMobile } from '../lib/useIsMobile'
-import StackCell from '../components/StackCell'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
 import AppointmentPanel, { type AppointmentPanelHandle } from '../components/AppointmentPanel'
 import FileDetailPane from '../components/FileDetailPane'
 import PatientFormModal from '../components/PatientFormModal'
+import AppointmentSidebarCard from '../components/patient/AppointmentSidebarCard'
+import FileSidebarCard from '../components/patient/FileSidebarCard'
+import PatientInfoCard from '../components/patient/PatientInfoCard'
+import PatientViewSwitcher, {
+  type ViewMode,
+} from '../components/patient/PatientViewSwitcher'
+import PrescriptionSidebarCard from '../components/patient/PrescriptionSidebarCard'
+import QuestionnaireSidebarCard from '../components/patient/QuestionnaireSidebarCard'
 import { QuestionnaireForm, QuestionnaireView } from '../components/QuestionnaireRender'
 import {
   PrescriptionForm,
   PrescriptionView,
   type PrescriptionFormValues,
 } from '../components/PrescriptionRender'
-
-type ViewMode = 'appointments' | 'files' | 'questionnaires' | 'prescriptions'
 
 /** A navigation the user requested while forms had unsaved changes. */
 type PendingNav =
@@ -85,7 +69,6 @@ export default function PatientDetailPage() {
   const { hasPerm } = useUser()
   const isMobile = useIsMobile()
   const { message } = AntApp.useApp()
-  const { token: themeToken } = antdTheme.useToken()
   const qc = useQueryClient()
 
   const isAdmin = hasPerm('patients.delete')
@@ -566,378 +549,82 @@ export default function PatientDetailPage() {
       {/* ---------- sidebar: patient info + views ---------- */}
       <Col xs={24} md={7}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Card
-            title={`${patient.first_name} ${patient.last_name}`}
-            extra={
-              <Space>
-                <Button
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => setEditOpen(true)}
-                >
-                  ویرایش
-                </Button>
-                {isAdmin && (
-                  <Popconfirm
-                    title="بیمار به سبد بازیافت منتقل شود؟ (نوبت‌ها و فایل‌ها پنهان می‌شوند)"
-                    onConfirm={() => deletePatient.mutate()}
-                  >
-                    <Button size="small" danger icon={<DeleteOutlined />}>
-                      حذف
-                    </Button>
-                  </Popconfirm>
-                )}
-              </Space>
-            }
-          >
-            <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="کد ملی">
-                {toFaDigits(patient.national_id)}
-              </Descriptions.Item>
-              <Descriptions.Item label="تلفن">
-                {toFaDigits(patient.phone_number) || '—'}
-              </Descriptions.Item>
-              <Descriptions.Item label="بیمه">{patient.insurance || '—'}</Descriptions.Item>
-              <Descriptions.Item label="سال تولد">
-                {toFaDigits(patient.year_of_birth)}
-              </Descriptions.Item>
-              <Descriptions.Item label="جنسیت">
-                {patient.gender === 0 ? 'مرد' : 'زن'}
-              </Descriptions.Item>
-              <Descriptions.Item label="برچسب‌ها">
-                <Space wrap>
-                  {patient.tags.length === 0 && patient.diagnoses.length === 0 && '—'}
-                  {patient.tags.map((t: NamedRef) => (
-                    <Tag key={t.id} color="blue">
-                      {t.name}
-                    </Tag>
-                  ))}
-                  {patient.diagnoses.map((d: NamedRef) => (
-                    <Tag key={d.id} color="red">
-                      {d.name}
-                    </Tag>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-            </Descriptions>
-          </Card>
+          <PatientInfoCard
+            patient={patient}
+            canDelete={isAdmin}
+            onEdit={() => setEditOpen(true)}
+            onDelete={() => deletePatient.mutate()}
+          />
 
-          {/* view switcher: appointments / all files / questionnaires
-              (routed through the unsaved-changes confirmation) */}
-          <Segmented<ViewMode>
-            block
+          <PatientViewSwitcher
             value={view}
-            onChange={(v) => requestNav({ kind: 'view', view: v })}
-            options={[
-              { value: 'appointments', label: 'نوبت‌ها', icon: <CalendarOutlined /> },
-              { value: 'files', label: 'همه فایل‌ها', icon: <FileOutlined /> },
-              {
-                value: 'questionnaires',
-                label: 'پرسش‌نامه‌ها',
-                icon: <FileDoneOutlined />,
-              },
-              { value: 'prescriptions', label: 'نسخه‌ها', icon: <MedicineBoxOutlined /> },
-            ]}
+            onChange={(next) => requestNav({ kind: 'view', view: next })}
           />
 
           {view === 'appointments' && (
-            <Card
-              title="نوبت‌ها"
-              extra={
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<PlusOutlined />}
-                  onClick={openNewAppt}
-                >
-                  نوبت جدید
-                </Button>
-              }
-              styles={{ body: { padding: 0, maxHeight: '48vh', overflowY: 'auto' } }}
-            >
-              <List
-                loading={appts.isLoading}
-                dataSource={items}
-                locale={{ emptyText: <Empty description="نوبتی ثبت نشده است" /> }}
-                renderItem={(a) => {
-                  const stage = stageOf(a.stage)
-                  return (
-                    <List.Item
-                      style={{
-                        cursor: 'pointer',
-                        paddingInline: 16,
-                        background: selectedAppt === a.id ? themeToken.colorPrimaryBg : undefined,
-                      }}
-                      onClick={() => selectAppt(a.id)}
-                    >
-                      <Space
-                        style={{ width: '100%', justifyContent: 'space-between' }}
-                      >
-                        <Space direction="vertical" size={0}>
-                          <Space size={6} wrap>
-                            <Typography.Text strong>
-                              {formatJalali(a.scheduled_at)}
-                            </Typography.Text>
-                            <Tag color={stage.color} style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '16px' }}>
-                              {stage.label}
-                            </Tag>
-                          </Space>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            ساعت {formatJalaliTime(a.scheduled_at)}
-                          </Typography.Text>
-                        </Space>
-                        <Space>
-                          {hasPerm('appointments.stage') && a.stage < LAST_STAGE && (
-                            <Tooltip title={`به مرحله «${stageOf(a.stage + 1).label}»`}>
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<DoubleLeftOutlined />}
-                                loading={advanceStage.isPending && advanceStage.variables === a.id}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  advanceStage.mutate(a.id)
-                                }}
-                              />
-                            </Tooltip>
-                          )}
-                          {isDoctor && (
-                            <Popconfirm
-                              title="نوبت به سبد بازیافت منتقل شود؟"
-                              onConfirm={(e) => {
-                                e?.stopPropagation()
-                                deleteAppt.mutate(a.id)
-                              }}
-                              onCancel={(e) => e?.stopPropagation()}
-                            >
-                              <Button
-                                size="small"
-                                type="text"
-                                danger
-                                icon={<DeleteOutlined />}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </Popconfirm>
-                          )}
-                        </Space>
-                      </Space>
-                    </List.Item>
-                  )
-                }}
-              />
-            </Card>
+            <AppointmentSidebarCard
+              appointments={items}
+              loading={appts.isLoading}
+              selectedId={selectedAppt}
+              canStage={hasPerm('appointments.stage')}
+              canDelete={isDoctor}
+              advancingId={advanceStage.variables}
+              onSelect={selectAppt}
+              onAdvance={(appointmentId) => advanceStage.mutate(appointmentId)}
+              onDelete={(appointmentId) => deleteAppt.mutate(appointmentId)}
+              onNew={openNewAppt}
+            />
           )}
 
           {view === 'files' && (
-            <Card
-              title="همه فایل‌ها"
-              extra={
-                hasPerm('files.write') && (
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    onClick={() => setUploadOpen(true)}
-                  >
-                    افزودن فایل
-                  </Button>
-                )
-              }
-              styles={{ body: { padding: 0 } }}
-            >
-              <Table<Attachment>
-                rowKey="id"
-                size="small"
-                loading={allFiles.isLoading}
-                dataSource={allFiles.data ?? []}
-                locale={{ emptyText: 'فایلی موجود نیست' }}
-                scroll={isMobile ? undefined : { x: 'max-content' }}
-                rowClassName={(f) => (selectedFileId === f.id ? 'ant-table-row-selected' : '')}
-                onRow={(f) => ({
-                  onClick: () => setSelectedFileId(f.id),
-                  style: { cursor: 'pointer' },
-                })}
-                columns={
-                  isMobile
-                    ? [
-                        {
-                          title: 'فایل',
-                          render: (_, f) => (
-                            <StackCell
-                              main={f.description || f.original_filename || 'یادداشت'}
-                              lines={[
-                                f.description && f.original_filename ? f.original_filename : null,
-                                fileSize(f.size_bytes),
-                              ]}
-                            />
-                          ),
-                        },
-                      ]
-                    : [
-                        { title: 'شرح', dataIndex: 'description' },
-                        {
-                          title: 'نام فایل',
-                          dataIndex: 'original_filename',
-                          render: (name: string | null) =>
-                            name ?? (
-                              <Typography.Text type="secondary">بدون فایل</Typography.Text>
-                            ),
-                        },
-                        { title: 'حجم', dataIndex: 'size_bytes', render: fileSize },
-                      ]
-                }
-              />
-            </Card>
+            <FileSidebarCard
+              files={allFiles.data ?? []}
+              loading={allFiles.isLoading}
+              selectedId={selectedFileId}
+              canWrite={hasPerm('files.write')}
+              isMobile={isMobile}
+              onSelect={setSelectedFileId}
+              onNew={() => setUploadOpen(true)}
+            />
           )}
 
           {view === 'prescriptions' && (
-            <Card
-              title="نسخه‌ها"
-              extra={
-                rxCanWrite && (
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    onClick={() => {
-                      setRxMode('create')
-                      setRxSelectedId(null)
-                    }}
-                  >
-                    نسخه جدید
-                  </Button>
-                )
-              }
-              styles={{ body: { padding: 0, maxHeight: '48vh', overflowY: 'auto' } }}
-            >
-              <List
-                loading={rxList.isLoading}
-                dataSource={rxList.data?.items ?? []}
-                locale={{ emptyText: <Empty description="نسخه‌ای ثبت نشده است" /> }}
-                renderItem={(r) => (
-                  <List.Item
-                    style={{
-                      cursor: 'pointer',
-                      paddingInline: 16,
-                      background: rxSelectedId === r.id ? themeToken.colorPrimaryBg : undefined,
-                    }}
-                    onClick={() => {
-                      setRxSelectedId(r.id)
-                      setRxMode('view')
-                    }}
-                  >
-                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                      <Space direction="vertical" size={0}>
-                        <Typography.Text strong>
-                          {r.items.length > 0
-                            ? r.items.map((it) => it.item_name).join('، ')
-                            : '(بدون قلم)'}
-                        </Typography.Text>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {formatJalali(r.prescribed_at)}
-                          {r.created_by_username ? ` — ${r.created_by_username}` : ''}
-                        </Typography.Text>
-                      </Space>
-                      {rxCanWrite && (
-                        <Popconfirm
-                          title="نسخه به سبد بازیافت منتقل شود؟"
-                          onConfirm={(e) => {
-                            e?.stopPropagation()
-                            deleteRx.mutate(r.id)
-                          }}
-                          onCancel={(e) => e?.stopPropagation()}
-                        >
-                          <Button
-                            size="small"
-                            type="text"
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </Popconfirm>
-                      )}
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Card>
+            <PrescriptionSidebarCard
+              prescriptions={rxList.data?.items ?? []}
+              loading={rxList.isLoading}
+              selectedId={rxSelectedId}
+              canWrite={rxCanWrite}
+              onSelect={(prescriptionId) => {
+                setRxSelectedId(prescriptionId)
+                setRxMode('view')
+              }}
+              onDelete={(prescriptionId) => deleteRx.mutate(prescriptionId)}
+              onNew={() => {
+                setRxMode('create')
+                setRxSelectedId(null)
+              }}
+            />
           )}
 
           {view === 'questionnaires' && (
-            <Card
-              title="پرسش‌نامه‌ها"
-              extra={
-                qCanFill && (
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    disabled={(qTemplates.data?.total ?? 0) === 0}
-                    title={
-                      (qTemplates.data?.total ?? 0) === 0
-                        ? 'هیچ قالبی تعریف نشده است'
-                        : undefined
-                    }
-                    onClick={() => {
-                      setQMode('create')
-                      setQSelectedId(null)
-                      setQPickTemplate(null)
-                    }}
-                  >
-                    پرسش‌نامه جدید
-                  </Button>
-                )
-              }
-              styles={{ body: { padding: 0, maxHeight: '48vh', overflowY: 'auto' } }}
-            >
-              <List
-                loading={qResponses.isLoading}
-                dataSource={qResponses.data?.items ?? []}
-                locale={{ emptyText: <Empty description="پاسخی ثبت نشده است" /> }}
-                renderItem={(r) => (
-                  <List.Item
-                    style={{
-                      cursor: 'pointer',
-                      paddingInline: 16,
-                      background: qSelectedId === r.id ? themeToken.colorPrimaryBg : undefined,
-                    }}
-                    onClick={() => {
-                      setQSelectedId(r.id)
-                      setQMode('view')
-                      setQPickTemplate(null)
-                    }}
-                  >
-                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                      <Space direction="vertical" size={0}>
-                        <Typography.Text strong>{r.template_name}</Typography.Text>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {formatJalali(r.created_at)}
-                          {r.created_by_username ? ` — ${r.created_by_username}` : ''}
-                        </Typography.Text>
-                      </Space>
-                      {qCanFill && (
-                        <Popconfirm
-                          title="پاسخ به سبد بازیافت منتقل شود؟"
-                          onConfirm={(e) => {
-                            e?.stopPropagation()
-                            deleteQ.mutate(r.id)
-                          }}
-                          onCancel={(e) => e?.stopPropagation()}
-                        >
-                          <Button
-                            size="small"
-                            type="text"
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </Popconfirm>
-                      )}
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Card>
+            <QuestionnaireSidebarCard
+              responses={qResponses.data?.items ?? []}
+              loading={qResponses.isLoading}
+              selectedId={qSelectedId}
+              canFill={qCanFill}
+              templatesTotal={qTemplates.data?.total ?? 0}
+              onSelect={(responseId) => {
+                setQSelectedId(responseId)
+                setQMode('view')
+                setQPickTemplate(null)
+              }}
+              onDelete={(responseId) => deleteQ.mutate(responseId)}
+              onNew={() => {
+                setQMode('create')
+                setQSelectedId(null)
+                setQPickTemplate(null)
+              }}
+            />
           )}
         </Space>
       </Col>

@@ -7,7 +7,7 @@ import {
   MenuOutlined,
 } from '@ant-design/icons'
 
-import { clearAuth, api, getRefreshToken, hasPerm, type StoredUser } from '../api/client'
+import { api, clearAuth, hasPerm, type StoredUser } from '../api/client'
 import BackupStaleAlert from './BackupStaleAlert'
 import { roleFa } from '../lib/roles'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -165,11 +165,14 @@ export default function AppLayout({ user, onLogout }: Props) {
       .map(({ key, label }) => ({ key, label })),
   })).filter((g) => g.children.length > 0)
 
-  const doLogout = () => {
-    // revoke the refresh token server-side (best effort — the local session
-    // is cleared regardless; without this the token would stay valid 7 days)
-    const refresh = getRefreshToken()
-    if (refresh) api.post('/auth/logout', { refresh_token: refresh }).catch(() => {})
+  const doLogout = async () => {
+    // Revoke and clear the HttpOnly refresh cookie. Local state is cleared
+    // even when the network is unavailable.
+    try {
+      await api.post('/auth/logout')
+    } catch {
+      // best effort — the in-memory access token is still discarded below
+    }
     clearAuth()
     window.dispatchEvent(new Event('clinic-auth-changed'))
     onLogout()

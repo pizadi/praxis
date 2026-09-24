@@ -2,7 +2,14 @@ import { Suspense, lazy, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { Spin } from 'antd'
 
-import { getStoredUser, storeUser, api, type StoredUser } from './api/client'
+import {
+  api,
+  clearAuth,
+  ensureAccessToken,
+  getStoredUser,
+  storeUser,
+  type StoredUser,
+} from './api/client'
 import AppLayout from './components/AppLayout'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -43,24 +50,16 @@ export default function App() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    setUser(getStoredUser())
-    setChecked(true)
-  }, [])
-
-  // keep user state in sync on login/logout navigation
-  useEffect(() => {
-    const handler = () => setUser(getStoredUser())
-    window.addEventListener('clinic-auth-changed', handler)
-    return () => window.removeEventListener('clinic-auth-changed', handler)
-  }, [])
-
-  // refresh the cached user on every load: it was written at login, so
-  // permissions granted by an upgrade (new menus, changed role sets) must
-  // not wait for a re-login to appear. Silent on failure (offline tab).
-  useEffect(() => {
-    if (!getStoredUser()) return
-    api
-      .get('/auth/me')
+    const cached = getStoredUser()
+    if (!cached) {
+      setChecked(true)
+      return
+    }
+    ensureAccessToken()
+      .then((token) => {
+        if (!token) throw new Error('session refresh failed')
+        return api.get('/auth/me')
+      })
       .then((me) => {
         const fresh: StoredUser = {
           id: me.data.id,
@@ -73,7 +72,18 @@ export default function App() {
         storeUser(fresh)
         setUser(fresh)
       })
-      .catch(() => {})
+      .catch(() => {
+        clearAuth()
+        setUser(null)
+      })
+      .finally(() => setChecked(true))
+  }, [])
+
+  // keep user state in sync on login/logout navigation
+  useEffect(() => {
+    const handler = () => setUser(getStoredUser())
+    window.addEventListener('clinic-auth-changed', handler)
+    return () => window.removeEventListener('clinic-auth-changed', handler)
   }, [])
 
   if (!checked) {

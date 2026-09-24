@@ -25,7 +25,9 @@ docker compose up -d --build
   running the backend from the repo root vs `backend/` differs; in tests
   conftest's env vars mask this.
 - Production startup refuses default `SECRET_KEY`/admin password
-  (`CLINIC_ENV=production`).
+  (`CLINIC_ENV=production`) and disables Swagger/OpenAPI routes.
+- Session cookies: set `SESSION_COOKIE_SECURE=true` only when the site is
+  HTTPS; the default bundled LAN stack is HTTP.
 
 ## External cron (on the box)
 

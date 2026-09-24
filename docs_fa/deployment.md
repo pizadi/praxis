@@ -25,7 +25,9 @@ docker compose up -d --build
   اجرای بک‌اند از ریشهٔ مخزن یا از `backend/` تفاوت دارد؛ در تست‌ها متغیرهای
   محیطی conftest این را می‌پوشاند.
 - راه‌اندازی تولیدی با `SECRET_KEY`/گذرواژهٔ مدیرِ پیش‌فرض می‌ایستد
-  (`CLINIC_ENV=production`).
+  (`CLINIC_ENV=production`) و مسیرهای Swagger/OpenAPI را غیرفعال می‌کند.
+- کوکی‌های نشست: `SESSION_COOKIE_SECURE=true` را فقط وقتی سایت HTTPS است
+  بگذارید؛ استقرار پیش‌فرض LAN روی HTTP است.
 
 ## کرون خارجی (روی دستگاه)
 

@@ -34,6 +34,7 @@ from collections import Counter
 from collections.abc import Iterable
 
 RX_MIN_FREQUENCY = 3
+PARSER_VERSION = 1
 QUANTITY_MAX = 10**6  # sanity cap for a parsed trailing quantity
 
 # Persian and Arabic-Indic digits → ASCII
@@ -119,6 +120,7 @@ def plan_rx_migration(
     nor overflow (e.g. rx was only "---") are skipped entirely.
     """
     # --- pass 1: corpus-wide frequency of normalized names -------------------
+    rows = list(rows)  # accept generators as well as sequences
     freq: Counter[str] = Counter()
     spellings: dict[str, Counter[str]] = {}
     for _aid, _pid, _at, rx in rows:
