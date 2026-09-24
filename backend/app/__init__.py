@@ -158,6 +158,7 @@ Version history:
           had independently added the same POST /prescription-items
           endpoint — kept once with the richer 1.4.0 tests; the
           scroll-both-axes fix re-applies on the new layout
+  1.4.1  release
 """
 
-__version__ = "1.4.1.dev1"
+__version__ = "1.4.1"
