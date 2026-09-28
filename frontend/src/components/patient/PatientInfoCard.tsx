@@ -2,6 +2,7 @@ import { Button, Card, Descriptions, Popconfirm, Space, Tag } from 'antd'
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 
 import type { NamedRef, Patient } from '../../api/types'
+import CopyNumber from '../CopyNumber'
 import FaNumber from '../FaNumber'
 
 interface Props {
@@ -36,10 +37,10 @@ export default function PatientInfoCard({ patient, canDelete, onEdit, onDelete }
     >
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="کد ملی">
-          <FaNumber value={patient.national_id} />
+          <CopyNumber value={patient.national_id} />
         </Descriptions.Item>
         <Descriptions.Item label="تلفن">
-          {patient.phone_number ? <FaNumber value={patient.phone_number} /> : '—'}
+          {patient.phone_number ? <CopyNumber value={patient.phone_number} /> : '—'}
         </Descriptions.Item>
         <Descriptions.Item label="بیمه">{patient.insurance || '—'}</Descriptions.Item>
         <Descriptions.Item label="سال تولد">

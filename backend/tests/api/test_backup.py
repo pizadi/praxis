@@ -854,10 +854,9 @@ async def test_import_unencrypted_tarball_while_a_key_is_configured(client, monk
     Pinned here because a regression in the sniff would turn a legitimate
     upload into a 422 (or, worse, a mis-parse).
     """
+    from app import __version__ as app_version
     from app.core.config import settings as cfg
     from app.services.backup_dump import build_backup_tarball
-
-    from app import __version__ as app_version
 
     token, _ = await login(client)
     r = await client.post(

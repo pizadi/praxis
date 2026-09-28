@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import FaNumber from './FaNumber'
 import DirectedTextArea from './DirectedTextArea'
@@ -7,24 +7,41 @@ import DirectedTextArea from './DirectedTextArea'
 afterEach(cleanup) // vitest globals are off — no auto-cleanup
 
 describe('FaNumber', () => {
-  it('shows Persian digits but exposes ASCII in the DOM (what a copy yields)', () => {
+  it('shows Persian digits as real, selectable text', () => {
     render(<FaNumber value="09121234567" />)
-    // the copyable layer is the ASCII text
-    expect(screen.getByText('09121234567')).toBeInTheDocument()
-    // the visible overlay is Persian
-    expect(document.querySelector('.fa-num-fa')?.textContent).toBe('۰۹۱۲۱۲۳۴۵۶۷')
+    expect(screen.getByText('۰۹۱۲۱۲۳۴۵۶۷')).toBeInTheDocument()
   })
 
   it('normalizes digits that are already Persian (formatJalali/formatMoney output)', () => {
     render(<FaNumber value="۱۴۰۳/۰۵/۱۲" />)
-    expect(screen.getByText('1403/05/12')).toBeInTheDocument()
-    expect(document.querySelector('.fa-num-fa')?.textContent).toBe('۱۴۰۳/۰۵/۱۲')
+    expect(screen.getByText('۱۴۰۳/۰۵/۱۲')).toBeInTheDocument()
   })
 
   it('keeps the non-digit parts of a mixed value (money, file sizes)', () => {
     render(<FaNumber value="۵۰۰,۰۰۰ تومان" />)
-    expect(screen.getByText(/500,000/)).toBeInTheDocument()
-    expect(document.querySelector('.fa-num-fa')?.textContent).toBe('۵۰۰,۰۰۰ تومان')
+    expect(screen.getByText('۵۰۰,۰۰۰ تومان')).toBeInTheDocument()
+  })
+
+  it('rewrites the clipboard to ASCII when the selection is copied', () => {
+    const setData = vi.fn()
+    const { container } = render(<FaNumber value="09121234567" />)
+    fireEvent.copy(container.querySelector('.fa-num') as Element, {
+      clipboardData: {
+        getData: () => 'متن ۰۹۱۲۱۲۳۴۵۶۷',
+        setData,
+      },
+    })
+    // Persian digit characters swap to ASCII; everything else is untouched
+    expect(setData).toHaveBeenCalledWith('text/plain', 'متن 09121234567')
+  })
+
+  it('leaves the clipboard alone when nothing was copied', () => {
+    const setData = vi.fn()
+    const { container } = render(<FaNumber value="1234" />)
+    fireEvent.copy(container.querySelector('.fa-num') as Element, {
+      clipboardData: { getData: () => '', setData },
+    })
+    expect(setData).not.toHaveBeenCalled()
   })
 
   it('reads left-to-right even inside RTL text', () => {

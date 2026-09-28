@@ -194,6 +194,11 @@ Version history:
           text now rides on Button.primaryColor per palette); scored
           questionnaires show their total in the patient list; the default
           theme is لاجورد
+  1.4.3.dev3  numbers are real selectable Persian text again (the transparent
+          ASCII underlayer made the visible digits unselectable); the clipboard
+          still receives ASCII via a copy hook, and the national ID / phone
+          number — in the patients list and on the patient card — carry a
+          one-click copy button
 """
 
-__version__ = "1.4.3.dev2"
+__version__ = "1.4.3.dev3"

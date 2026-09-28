@@ -21,6 +21,7 @@ import type { NamedRef, Page, Patient } from '../api/types'
 import { toEnDigits } from '../lib/jalali'
 import { useIsMobile } from '../lib/useIsMobile'
 import { useUser } from '../components/AppLayout'
+import CopyNumber from '../components/CopyNumber'
 import FaNumber from '../components/FaNumber'
 import PatientFormModal from '../components/PatientFormModal'
 import StackCell from '../components/StackCell'
@@ -294,8 +295,10 @@ export default function PatientsPage() {
                       <StackCell
                         main={<Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>}
                         lines={[
-                          <FaNumber key="nid" value={p.national_id} />,
-                          p.phone_number ? <FaNumber key="phone" value={p.phone_number} /> : null,
+                          <CopyNumber key="nid" value={p.national_id} />,
+                          p.phone_number ? (
+                            <CopyNumber key="phone" value={p.phone_number} />
+                          ) : null,
                           p.insurance || null,
                           p.tags.length + p.diagnoses.length > 0 ? (
                             <Space wrap size={4}>
@@ -327,12 +330,12 @@ export default function PatientsPage() {
                     {
                       title: 'کد ملی',
                       dataIndex: 'national_id',
-                      render: (v: string) => <FaNumber value={v} />,
+                      render: (v: string) => <CopyNumber value={v} />,
                     },
                     {
                       title: 'تلفن',
                       dataIndex: 'phone_number',
-                      render: (v: string | null) => (v ? <FaNumber value={v} /> : '—'),
+                      render: (v: string | null) => (v ? <CopyNumber value={v} /> : '—'),
                     },
                     {
                       title: 'بیمه',
