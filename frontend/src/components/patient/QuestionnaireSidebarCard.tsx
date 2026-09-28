@@ -4,6 +4,7 @@ import { theme as antdTheme } from 'antd'
 
 import type { QuestionnaireResponse } from '../../api/types'
 import { formatJalali } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 
 interface Props {
   responses: QuestionnaireResponse[]
@@ -64,7 +65,7 @@ export default function QuestionnaireSidebarCard({
               <Space direction="vertical" size={0}>
                 <Typography.Text strong>{response.template_name}</Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {formatJalali(response.created_at)}
+                  <FaNumber value={formatJalali(response.created_at)} />
                   {response.created_by_username
                     ? ` — ${response.created_by_username}`
                     : ''}

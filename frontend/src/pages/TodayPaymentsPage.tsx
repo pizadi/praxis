@@ -6,7 +6,8 @@ import { Link } from 'react-router-dom'
 
 import { api } from '../api/client'
 import type { Page } from '../api/types'
-import { formatJalali, formatJalaliTime, formatMoney, toFaDigits } from '../lib/jalali'
+import { formatJalali, formatJalaliTime, formatMoney } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { localToday, serverToday } from '../lib/today'
 import { JalaliDatePicker } from '../components/JalaliDates'
 
@@ -77,17 +78,25 @@ export default function TodayPaymentsPage() {
             </Button>
           </Space>
           <Typography.Text strong style={{ fontSize: 16 }}>
-            {formatJalali(date)}
+            <FaNumber value={formatJalali(date)} />
           </Typography.Text>
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} md={8}>
               <Card>
-                <Statistic title="جمع پرداخت‌ها" value={formatMoney(total)} />
+                <Statistic
+                  title="جمع پرداخت‌ها"
+                  value={total}
+                  valueRender={() => <FaNumber value={formatMoney(total)} />}
+                />
               </Card>
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Card>
-                <Statistic title="تعداد تراکنش‌ها" value={toFaDigits(data?.total ?? 0)} />
+                <Statistic
+                  title="تعداد تراکنش‌ها"
+                  value={data?.total ?? 0}
+                  valueRender={() => <FaNumber value={data?.total ?? 0} />}
+                />
               </Card>
             </Col>
           </Row>
@@ -101,10 +110,22 @@ export default function TodayPaymentsPage() {
             scroll={{ x: 'max-content' }}
             columns={[
               { title: 'نوع پرداخت', dataIndex: 'description' },
-              { title: 'تعداد', dataIndex: 'count', render: (n: number) => toFaDigits(n) },
-              { title: 'جمع کل', dataIndex: 'total_amount', render: formatMoney },
-              { title: 'کارت‌خوان', dataIndex: 'pos_amount', render: formatMoney },
-              { title: 'نقدی', dataIndex: 'cash_amount', render: formatMoney },
+              { title: 'تعداد', dataIndex: 'count', render: (n: number) => <FaNumber value={n} /> },
+              {
+                title: 'جمع کل',
+                dataIndex: 'total_amount',
+                render: (v: number) => <FaNumber value={formatMoney(v)} />,
+              },
+              {
+                title: 'کارت‌خوان',
+                dataIndex: 'pos_amount',
+                render: (v: number) => <FaNumber value={formatMoney(v)} />,
+              },
+              {
+                title: 'نقدی',
+                dataIndex: 'cash_amount',
+                render: (v: number) => <FaNumber value={formatMoney(v)} />,
+              },
             ]}
           />
           <Table<PatientPayment>
@@ -121,7 +142,7 @@ export default function TodayPaymentsPage() {
               {
                 title: 'ساعت',
                 dataIndex: 'appointment_scheduled_at',
-                render: (v: string) => formatJalaliTime(v),
+                render: (v: string) => <FaNumber value={formatJalaliTime(v)} />,
                 width: 90,
               },
               {
@@ -133,7 +154,11 @@ export default function TodayPaymentsPage() {
                 ),
               },
               { title: 'شرح', dataIndex: 'description' },
-              { title: 'مبلغ', dataIndex: 'amount', render: formatMoney },
+              {
+                title: 'مبلغ',
+                dataIndex: 'amount',
+                render: (v: number) => <FaNumber value={formatMoney(v)} />,
+              },
               {
                 title: 'روش پرداخت',
                 dataIndex: 'pos',

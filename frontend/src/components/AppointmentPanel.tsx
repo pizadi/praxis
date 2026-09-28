@@ -6,7 +6,6 @@ import {
   Card,
   Collapse,
   Form,
-  Input,
   Modal,
   Popconfirm,
   Row,
@@ -34,10 +33,13 @@ import type {
 } from '../api/types'
 import { downloadAttachment } from '../lib/files'
 import { formatJalali, formatJalaliTime, fileSize } from '../lib/jalali'
+import { textAlign, textDirection } from '../lib/textDir'
 import { stageOf, tehranDay } from '../lib/stages'
 import { useUser } from './AppLayout'
 import AppointmentPayments from './appointments/AppointmentPayments'
 import AppointmentStageHeader from './appointments/AppointmentStageHeader'
+import DirectedTextArea from './DirectedTextArea'
+import FaNumber from './FaNumber'
 import {
   PrescriptionForm,
   PrescriptionView,
@@ -292,22 +294,22 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
               onFinish={(v) => saveNotes.mutate(v)}
             >
               <Form.Item name="notes" label="یادداشت">
-                <Input.TextArea rows={2} />
+                <DirectedTextArea rows={2} />
               </Form.Item>
               <Row gutter={[12, 12]}>
                 <Col xs={24} md={8}>
                   <Form.Item name="cm" label="CC / شرح حال فعلی">
-                    <Input.TextArea rows={3} />
+                    <DirectedTextArea rows={3} />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={8}>
                   <Form.Item name="hx" label="Hx — تاریخچه">
-                    <Input.TextArea rows={3} />
+                    <DirectedTextArea rows={3} />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={8}>
                   <Form.Item name="px" label="Px — معاینه">
-                    <Input.TextArea rows={3} />
+                    <DirectedTextArea rows={3} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -324,7 +326,14 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
                       label: 'نسخه قدیمی (متن آزاد — از سیستم قبلی)',
                       children: (
                         <Typography.Paragraph
-                          style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}
+                          style={{
+                            whiteSpace: 'pre-wrap',
+                            marginBottom: 0,
+                            // the legacy rx is whatever the old system stored —
+                            // Persian, English drug names, or both
+                            direction: textDirection(a.rx),
+                            textAlign: textAlign(textDirection(a.rx)),
+                          }}
                         >
                           {a.rx}
                         </Typography.Paragraph>
@@ -363,16 +372,21 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
                   dataIndex: 'description',
                   render: (v: string, rec) => v || rec.original_filename || 'یادداشت',
                 },
-                { title: 'تاریخ', dataIndex: 'created_at', render: (v: string) => formatJalali(v) },
+                {
+                  title: 'تاریخ',
+                  dataIndex: 'created_at',
+                  render: (v: string) => <FaNumber value={formatJalali(v)} />,
+                },
                 {
                   title: 'ساعت',
                   dataIndex: 'created_at',
-                  render: (v: string) => formatJalaliTime(v),
+                  render: (v: string) => <FaNumber value={formatJalaliTime(v)} />,
                 },
                 {
                   title: 'حجم',
                   dataIndex: 'size_bytes',
-                  render: (v: number | null) => (v == null ? '—' : fileSize(v)),
+                  render: (v: number | null) =>
+                    v == null ? '—' : <FaNumber value={fileSize(v)} />,
                 },
                 {
                   title: '',
@@ -451,7 +465,7 @@ const AppointmentPanel = forwardRef<AppointmentPanelHandle, Props>(function Appo
                       <Space size={8} wrap>
                         <Typography.Text strong>{resp.template_name}</Typography.Text>
                         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {formatJalaliTime(resp.created_at)}
+                          <FaNumber value={formatJalaliTime(resp.created_at)} />
                           {resp.created_by_username ? ` — ${resp.created_by_username}` : ''}
                         </Typography.Text>
                       </Space>

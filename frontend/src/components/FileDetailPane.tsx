@@ -26,7 +26,8 @@ import type { RcFile } from 'antd/es/upload'
 import type { Attachment } from '../api/types'
 import { api, apiError } from '../api/client'
 import { downloadAttachment } from '../lib/files'
-import { fileSize, formatJalali, toFaDigits } from '../lib/jalali'
+import { fileSize, formatJalali } from '../lib/jalali'
+import FaNumber from './FaNumber'
 import { useUser } from './AppLayout'
 import FileNotesExpanded from './FileNotesExpanded'
 
@@ -203,9 +204,11 @@ export default function FileDetailPane({ file }: { file: Attachment }) {
           </Descriptions.Item>
           <Descriptions.Item label="شرح">{file.description || '—'}</Descriptions.Item>
           <Descriptions.Item label="تاریخ بارگذاری">
-            {formatJalali(file.created_at, true)}
+            <FaNumber value={formatJalali(file.created_at, true)} />
           </Descriptions.Item>
-          <Descriptions.Item label="حجم">{fileSize(file.size_bytes)}</Descriptions.Item>
+          <Descriptions.Item label="حجم">
+            <FaNumber value={fileSize(file.size_bytes)} />
+          </Descriptions.Item>
         </Descriptions>
 
         <FileNotesExpanded file={file} />
@@ -224,7 +227,7 @@ export default function FileDetailPane({ file }: { file: Attachment }) {
                   />
                 </Tooltip>
                 <Typography.Text style={{ minWidth: 48, textAlign: 'center' }}>
-                  {toFaDigits(Math.round(scale * 100))}٪
+                  <FaNumber value={Math.round(scale * 100)} />٪
                 </Typography.Text>
                 <Tooltip title="بزرگ‌تر">
                   <Button

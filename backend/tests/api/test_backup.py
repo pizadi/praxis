@@ -844,9 +844,59 @@ async def test_import_encrypted_backup_requires_key(client, monkeypatch):
     assert done["status"] == "done", done
 
 
+async def test_import_unencrypted_tarball_while_a_key_is_configured(client, monkeypatch):
+    """The site never PRODUCES an unencrypted artifact, but it must accept one:
+    `scripts/pack_backup.py` writes plaintext tarballs by default (an operator
+    packing a database that is not the running site), and whether the artifact
+    is encrypted is decided from its PRAXISBK magic — not from the file name,
+    not from whether a key happens to be configured.
+
+    Pinned here because a regression in the sniff would turn a legitimate
+    upload into a 422 (or, worse, a mis-parse).
+    """
+    from app.core.config import settings as cfg
+    from app.services.backup_dump import build_backup_tarball
+
+    token, _ = await login(client)
+    r = await client.post(
+        "/api/v1/patients",
+        json={"national_id": "1234567890", "first_name": "Parham", "last_name": "Testi",
+              "year_of_birth": "1370", "gender": 0},
+        headers=auth(token),
+    )
+    pid = r.json()["id"]
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "packed.tar.gz"
+        result = build_backup_tarball(
+            database_url=cfg.database_url, upload_dir=cfg.upload_dir, out_path=out,
+            app_version="1.4.3",  # unencrypted: no key
+        )
+        assert result["encrypted"] is False
+        blob = out.read_bytes()
+        assert blob[:2] == b"\x1f\x8b"  # gzip magic, not PRAXISBK
+
+    # a key IS configured on the receiving side — the plaintext still imports
+    monkeypatch.setattr(cfg, "backup_encryption_key", "site-key-999")
+    r = await client.delete(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 204
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("packed.tar.gz", io.BytesIO(blob), "application/gzip")},
+        headers=auth(token),
+    )
+    assert r.status_code == 202, r.text
+    done = await _wait_import_done(client, token)
+    assert done["status"] == "done", done
+    r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["national_id"] == "1234567890"
+
+
 def test_verify_member_hashes_rejects_tampering(tmp_path):
-    """schema_version ≥ 4 member checksums: a corrupted or missing member
-    fails the pre-import verification loudly (before any DB work)."""
     import hashlib as hl
 
     from app.services.backup_import import _verify_member_hashes

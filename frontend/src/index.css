@@ -258,3 +258,28 @@ body,
 .q-gap:hover .ant-btn {
   opacity: 1;
 }
+
+/* --- FaNumber ---------------------------------------------------------------
+   Persian digits on screen, ASCII digits in the clipboard: the ASCII layer is
+   transparent but real (it is what a selection copies), the Persian layer is
+   a non-selectable overlay drawn on top. See components/FaNumber.tsx. */
+.fa-num {
+  position: relative;
+  display: inline-block;
+  /* numbers read left-to-right even inside RTL text: 1,250,000 not 000,052,1 */
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+}
+
+.fa-num-src {
+  color: transparent;
+}
+
+.fa-num-fa {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}

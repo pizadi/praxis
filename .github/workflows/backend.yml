@@ -1,0 +1,39 @@
+name: backend
+
+on: [push, pull_request]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: ruff
+        run: ruff check app tests
+      - name: mypy
+        run: mypy app
+      - name: pytest (SQLite)
+        run: pytest tests -q
+      - name: pytest (PostgreSQL)
+        services:
+          postgres:
+            image: postgres:16-alpine
+            env:
+              POSTGRES_USER: t
+              POSTGRES_PASSWORD: t
+              POSTGRES_DB: t
+            ports: ['5432:5432']
+            options: >-
+              --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+        env:
+          DATABASE_URL: postgresql+asyncpg://t:t@localhost:5432/t
+        run: |
+          alembic -c alembic.ini upgrade head
+          pytest tests -q

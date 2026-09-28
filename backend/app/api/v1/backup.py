@@ -1,17 +1,20 @@
 """Admin backup: tarball the database + uploaded files for download.
 
-The API container has no pg_dump binary, so the database is dumped via
-psycopg2 `COPY ... TO STDOUT` (fast, server-side). Each table is copied
-into a SpooledTemporaryFile (spills to disk, never RAM-bound) and then
-added to a streaming tar.gz together with the uploads volume — a large
-uploads directory is never held in memory. Restore: create an empty DB,
-run `alembic upgrade head`, then load each db/<table>.copy with
-`psql -c "COPY <table> FROM STDIN"` (FK order), and unpack uploads/ into
-UPLOAD_DIR. SQLite (dev) databases are archived as the raw file.
+The archive itself is written by ``services/backup_dump.py`` (manifest v4,
+streaming, atomically published) — shared with ``scripts/pack_backup.py`` so
+there is exactly one tarball format in the project. This module owns the job
+orchestration: the status dict, the single-job lock, the fixed artifact name
+on the persistent volume, the download endpoint and the import endpoints.
 
-Import (upload a tarball back) lives in services/backup_import.py and its
-endpoints at the bottom of this file. Backup and import share one job lock
-(only one runs at a time).
+The API container has no pg_dump binary, so a PostgreSQL database is dumped
+via psycopg2 `COPY ... TO STDOUT` (fast, server-side); a SQLite (dev) database
+is archived as the raw file. Restore: create an empty DB, run
+`alembic upgrade head`, then POST the tarball to /admin/backup/import (which
+does it transactionally), or unpack it by hand per the manifest's `restore`
+instructions.
+
+Import (upload a tarball back) lives in services/backup_import.py. Backup and
+import share one job lock (only one runs at a time).
 """
 
 import contextlib
@@ -21,10 +24,8 @@ import hmac
 import json
 import logging
 import os
-import tarfile
 import tempfile
 import threading
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -44,7 +45,7 @@ from app.core.tokens import utc_now
 from app.db.session import APP_TZ, get_db
 from app.models import AuditLog, User
 from app.services import audit
-from app.services.backup_crypto import encrypt_file, sha256_file, sniff_and_decrypt
+from app.services.backup_crypto import sha256_file, sniff_and_decrypt
 from app.services.backup_import import (
     SUPPORTED_SCHEMA_VERSION,
     import_status,
@@ -52,7 +53,7 @@ from app.services.backup_import import (
     read_manifest,
     run_import,
 )
-from app.services.backup_state import DUMP_TABLES, JOB_LOCK, psycopg2_url
+from app.services.backup_state import JOB_LOCK, psycopg2_url
 
 router = APIRouter(prefix="/admin/backup", tags=["backup"])
 
@@ -88,171 +89,56 @@ def _backup_state() -> dict:
         else:
             st["size_bytes"] = None
             if _status["status"] == "ready":
-                _status.update(status="idle", finished_at=None, sha256=None, encrypted=False)
-        return st
-
-
-def _dump_postgres(tar: tarfile.TarFile, manifest: dict) -> None:
-    import psycopg2
-
-    conn = psycopg2.connect(psycopg2_url())
-    try:
-        with conn.cursor() as cur:
-            # REPEATABLE READ snapshot so all tables are consistent mid-job
-            cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-            for table in DUMP_TABLES:
-                cur.execute(
-                    "SELECT COUNT(*) FROM information_schema.tables "
-                    "WHERE table_schema = 'public' AND table_name = %s",
-                    (table,),
-                )
-                if cur.fetchone()[0] == 0:
-                    continue
-                cur.execute(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position",
-                    (table,),
-                )
-                manifest["table_columns"][table] = [r[0] for r in cur.fetchall()]
-                cur.execute(f'SELECT COUNT(*) FROM "{table}"')  # noqa: S608 — fixed names
-                manifest["tables"][table] = cur.fetchone()[0]
-
-                with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as buf:
-                    cur.copy_expert(f'COPY "{table}" TO STDOUT', buf)  # noqa: S608 — fixed names
-                    info = tarfile.TarInfo(name=f"db/{table}.copy")
-                    info.size = buf.tell()
-                    buf.seek(0)
-                    h = hashlib.sha256()
-                    while chunk := buf.read(1024 * 1024):
-                        h.update(chunk)
-                    manifest["member_sha256"][f"db/{table}.copy"] = h.hexdigest()
-                    buf.seek(0)
-                    tar.addfile(info, buf)
-        conn.rollback()
-    finally:
-        conn.close()
-
-
-def _dump_sqlite(tar: tarfile.TarFile, manifest: dict) -> None:
-    import sqlite3
-
-    db_file = settings.database_url.split("///", 1)[-1]
-    if not os.path.exists(db_file):
-        manifest["tables"]["__sqlite_file__"] = None
-        return
-    manifest["tables"]["__sqlite_file__"] = db_file
-    con = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
-    try:
-        tables = [
-            r[0]
-            for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            if not r[0].startswith("sqlite_")
-        ]
-        for t in tables:
-            manifest["table_columns"][t] = [
-                r[1] for r in con.execute(f"PRAGMA table_info(\"{t}\")").fetchall()  # noqa: S608
-            ]
-            manifest["tables"][t] = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]  # noqa: S608
-    finally:
-        con.close()
-    manifest["member_sha256"]["db/clinic.sqlite3"] = sha256_file(db_file)
-    tar.add(db_file, arcname="db/clinic.sqlite3")
+                # the artifact vanished (volume reset) — say so instead of
+                # advertising a download that 409s
+                _status.update(status="idle", started_at=None, finished_at=None, error=None)
+                st["status"] = "idle"
+    return st
 
 
 def _run_backup() -> None:
-    from app import __version__
+    """Job body: write the artifact, publish it under the fixed name, audit.
 
-    manifest: dict = {
-        "created_at": utc_now().isoformat(),
-        "schema_version": 4,
-        "app_version": __version__,
-        "app_timezone": settings.app_timezone,
-        "tables": {},
-        "table_columns": {},
-        # sha256 of every member except manifest.json itself (can't contain
-        # its own hash) — verified member-by-member on import
-        "member_sha256": {},
-        "restore": (
-            "1) create an empty DB and run `alembic upgrade head` "
-            "2) for each db/<table>.copy (FK order): "
-            'psql -c "COPY <table> (cols...) FROM STDIN" < db/<table>.copy '
-            "3) unpack uploads/ into UPLOAD_DIR — or use the in-app import "
-            "(POST /admin/backup/import), which is transactional. "
-            "An encrypted artifact (PRAXISBK magic, .enc) is decrypted with "
-            "BACKUP_ENCRYPTION_KEY during import."
-        ),
-    }
-    path: str | None = None
+    ``build_backup_tarball`` does the archive and the atomic publish, so a
+    crash can never publish a partial file; what is left here is the site's
+    bookkeeping (the stale artifact of the other kind, the completion audit
+    row, the in-memory status).
+    """
+    from app import __version__
+    from app.services.backup_dump import build_backup_tarball
+
     try:
         out_dir = settings.backup_dir_resolved
         out_dir.mkdir(parents=True, exist_ok=True)
-        # .part in the SAME dir (same filesystem) — the atomic rename below
-        # publishes a complete artifact or nothing at all
-        fd, path = tempfile.mkstemp(
-            prefix="clinic-backup-", suffix=".tar.gz.part", dir=out_dir
+        result = build_backup_tarball(
+            database_url=settings.database_url,
+            upload_dir=settings.upload_dir,
+            out_path=out_dir
+            / (ARTIFACT_NAME_ENC if settings.backup_encryption_key else ARTIFACT_NAME),
+            encryption_key=settings.backup_encryption_key,
+            app_version=__version__,
         )
-        os.close(fd)
-        member_sha: dict[str, str] = manifest["member_sha256"]
-        with tarfile.open(path, "w:gz") as tar:
-            if settings.database_url.startswith("postgres"):
-                _dump_postgres(tar, manifest)
-            else:
-                _dump_sqlite(tar, manifest)
-
-            # uploaded patient files (streamed; the dir may be large).
-            # dot-dirs are runtime staging (e.g. .import-*) — never archived
-            upload_dir = Path(settings.upload_dir)
-            if upload_dir.is_dir():
-                n_files = 0
-                for f in sorted(upload_dir.rglob("*")):
-                    if f.is_file() and not f.parent.name.startswith("."):
-                        arcname = f"uploads/{f.relative_to(upload_dir)}"
-                        member_sha[arcname] = sha256_file(f)
-                        tar.add(f, arcname=arcname)
-                        n_files += 1
-                manifest["uploads_files"] = n_files
-
-            m = json.dumps(manifest, ensure_ascii=False, indent=2).encode()
-            info = tarfile.TarInfo(name="manifest.json")
-            info.size = len(m)
-            from io import BytesIO
-
-            tar.addfile(info, BytesIO(m))
-
-        # encryption wraps the finished tarball; the plaintext is removed so
-        # only the encrypted artifact stays on disk
-        encrypted = False
-        if settings.backup_encryption_key:
-            enc_path = path + ".enc"
-            encrypt_file(path, enc_path, settings.backup_encryption_key)
-            os.unlink(path)
-            path = enc_path
-            encrypted = True
-        digest = sha256_file(path)
-
-        # atomic publish: <random>.part → the fixed final name (replaces the
-        # previous artifact — exactly one stays on disk, nothing accumulates);
         # a stale artifact of the OTHER kind (encryption toggled between runs)
-        # is removed too
-        final = out_dir / (ARTIFACT_NAME_ENC if encrypted else ARTIFACT_NAME)
-        os.replace(path, final)
-        path = None
+        # is removed too — exactly one backup is ever on disk
+        encrypted = bool(result["encrypted"])
         stale = out_dir / (ARTIFACT_NAME if encrypted else ARTIFACT_NAME_ENC)
         if stale.exists():
             with contextlib.suppress(OSError):
                 stale.unlink()
 
-        _record_backup_completed(final.stat().st_size, digest, encrypted)
+        _record_backup_completed(
+            int(result["size_bytes"]), str(result["sha256"]), encrypted
+        )
 
         with _status_lock:
             global _file_path
-            _file_path = str(final)
+            _file_path = str(result["path"])
             _status.update(
                 status="ready",
                 started_at=None,
                 finished_at=utc_now(),
                 error=None,
-                sha256=digest,
+                sha256=result["sha256"],
                 encrypted=encrypted,
             )
     except Exception as exc:  # noqa: BLE001 — the job thread must never crash loudly
@@ -262,9 +148,6 @@ def _run_backup() -> None:
                 status="error", started_at=None, finished_at=utc_now(), error=str(exc),
                 sha256=None, encrypted=False,
             )
-        if path and os.path.exists(path):
-            with contextlib.suppress(OSError):
-                os.unlink(path)
     finally:
         JOB_LOCK.release()
 
@@ -590,9 +473,13 @@ async def import_backup(
 
     Integrity: `expected_sha256` (optional, hex) is checked against the
     uploaded artifact before anything runs — a mismatch refuses the import
-    (422 checksum_mismatch). Encrypted artifacts (PRAXISBK magic) are
-    decrypted with BACKUP_ENCRYPTION_KEY; without a configured key, or with
-    the wrong one, the import refuses.
+    (422 checksum_mismatch). Encryption is detected from the artifact itself
+    (the PRAXISBK magic), not from its name: an unencrypted tarball is
+    accepted as-is (the site's own downloads are always encrypted when
+    BACKUP_ENCRYPTION_KEY is set, but `scripts/pack_backup.py` produces
+    plaintext tarballs too), while an encrypted one is decrypted with
+    BACKUP_ENCRYPTION_KEY — without a configured key, or with the wrong one,
+    the import refuses.
 
     Version handling: older tarball versions import via the manifest's
     column lists; a NEWER app_version refuses with 409 `newer_version`

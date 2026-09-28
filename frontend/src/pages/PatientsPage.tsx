@@ -14,13 +14,14 @@ import {
   Tag,
 } from 'antd'
 import { ClearOutlined } from '@ant-design/icons'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
 import type { NamedRef, Page, Patient } from '../api/types'
-import { toEnDigits, toFaDigits } from '../lib/jalali'
+import { toEnDigits } from '../lib/jalali'
 import { useIsMobile } from '../lib/useIsMobile'
 import { useUser } from '../components/AppLayout'
+import FaNumber from '../components/FaNumber'
 import PatientFormModal from '../components/PatientFormModal'
 import StackCell from '../components/StackCell'
 
@@ -50,6 +51,7 @@ const EMPTY_FILTERS: PatientFilters = {
 
 export default function PatientsPage() {
   const isMobile = useIsMobile()
+  const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   // advanced filters (all applied SQL-side; digits normalized to ASCII)
@@ -278,7 +280,11 @@ export default function PatientsPage() {
               pageSize: 20,
               total: data?.total ?? 0,
               onChange: setPage,
-              showTotal: (t) => `${toFaDigits(t)} بیمار`,
+              showTotal: (t) => (
+                <span>
+                  <FaNumber value={t} /> بیمار
+                </span>
+              ),
             }}
             columns={[
               isMobile
@@ -288,7 +294,8 @@ export default function PatientsPage() {
                       <StackCell
                         main={<Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>}
                         lines={[
-                          toFaDigits(p.national_id),
+                          <FaNumber key="nid" value={p.national_id} />,
+                          p.insurance || null,
                           p.tags.length + p.diagnoses.length > 0 ? (
                             <Space wrap size={4}>
                               {p.tags.map((t: NamedRef) => (
@@ -319,7 +326,12 @@ export default function PatientsPage() {
                     {
                       title: 'کد ملی',
                       dataIndex: 'national_id',
-                      render: (v: string) => toFaDigits(v),
+                      render: (v: string) => <FaNumber value={v} />,
+                    },
+                    {
+                      title: 'بیمه',
+                      dataIndex: 'insurance',
+                      render: (v: string | null) => v || '—',
                     },
                     {
                       title: 'برچسب‌ها',
@@ -377,9 +389,14 @@ export default function PatientsPage() {
           setModalOpen(false)
           setEditing(null)
         }}
-        onDone={() => {
+        onDone={(saved) => {
+          // capture before clearing: a create (no `editing`) opens the new
+          // patient's page so the next step — history, files, an appointment —
+          // is one click away instead of a search
+          const created = editing === null
           setModalOpen(false)
           setEditing(null)
+          if (created) navigate(`/patients/${saved.id}`)
         }}
       />
     </div>

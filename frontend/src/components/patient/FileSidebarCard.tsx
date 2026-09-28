@@ -3,6 +3,7 @@ import { PlusOutlined } from '@ant-design/icons'
 
 import type { Attachment } from '../../api/types'
 import { fileSize } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 import StackCell from '../StackCell'
 
 interface Props {
@@ -61,7 +62,7 @@ export default function FileSidebarCard({
                         file.description && file.original_filename
                           ? file.original_filename
                           : null,
-                        fileSize(file.size_bytes),
+                        <FaNumber value={fileSize(file.size_bytes)} />,
                       ]}
                     />
                   ),

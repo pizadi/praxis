@@ -39,14 +39,19 @@ export async function api<T = unknown>(
   return (await res.json()) as T
 }
 
-export async function apiPatient(nationalId?: string) {
-  return api<{ id: number; national_id: string }>('post', '/patients', {
-    national_id: nationalId ?? '1000000001',
-    first_name: 'بیمار',
-    last_name: 'تستی',
-    year_of_birth: '1370',
-    gender: 0,
-  })
+export async function apiPatient(nationalId?: string, extra: Record<string, unknown> = {}) {
+  return api<{ id: number; national_id: string; insurance: string | null }>(
+    'post',
+    '/patients',
+    {
+      national_id: nationalId ?? '1000000001',
+      first_name: 'بیمار',
+      last_name: 'تستی',
+      year_of_birth: '1370',
+      gender: 0,
+      ...extra,
+    },
+  )
 }
 
 export async function apiAppointment(patientId: number, when = '2099-01-01T09:00:00+03:30') {

@@ -22,7 +22,7 @@ import {
 import type { RcFile } from 'antd/es/upload'
 
 import { api, API_BASE, apiError } from '../api/client'
-import { toFaDigits } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { sha256File } from '../lib/sha256'
 
 interface BackupStatus {
@@ -54,8 +54,8 @@ interface ImportStatus {
 
 function fileSize(bytes: number | null): string {
   if (bytes == null) return '-'
-  if (bytes < 1024 * 1024) return `${toFaDigits((bytes / 1024).toFixed(0))} کیلوبایت`
-  return `${toFaDigits((bytes / 1024 / 1024).toFixed(1))} مگابایت`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} کیلوبایت`
+  return `${(bytes / 1024 / 1024).toFixed(1)} مگابایت`
 }
 
 export default function BackupPage() {
@@ -220,7 +220,11 @@ export default function BackupPage() {
             </Card>
             {st === 'ready' && (
               <Card size="small">
-                <Statistic title="حجم فایل" value={fileSize(status.data?.size_bytes ?? null)} />
+                <Statistic
+                  title="حجم فایل"
+                  value={status.data?.size_bytes ?? 0}
+                  valueRender={() => <FaNumber value={fileSize(status.data?.size_bytes ?? null)} />}
+                />
               </Card>
             )}
           </Space>
@@ -325,7 +329,15 @@ export default function BackupPage() {
           )}
           {hashPct != null && (
             <div>
-              <Progress percent={hashPct} size="small" format={(p) => `${toFaDigits((p ?? 0).toFixed(0))}٪`} />
+              <Progress
+                percent={hashPct}
+                size="small"
+                format={(p) => (
+                  <span>
+                    <FaNumber value={(p ?? 0).toFixed(0)} />٪
+                  </span>
+                )}
+              />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 محاسبهٔ کنترل مجموع (SHA-256)…
               </Typography.Text>
@@ -333,7 +345,14 @@ export default function BackupPage() {
           )}
           {uploadPct != null && (
             <div>
-              <Progress percent={uploadPct} format={(p) => `${toFaDigits((p ?? 0).toFixed(0))}٪`} />
+              <Progress
+                percent={uploadPct}
+                format={(p) => (
+                  <span>
+                    <FaNumber value={(p ?? 0).toFixed(0)} />٪
+                  </span>
+                )}
+              />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 در حال بارگذاری فایل پشتیبان… (فایل مستقیم به سرور جریان می‌یابد — تب را نبندید)
               </Typography.Text>
@@ -361,9 +380,12 @@ export default function BackupPage() {
               description={
                 <Space direction="vertical" size={4}>
                   <span>
-                    {toFaDigits(Object.keys(importStatus.data.summary.tables).length)} جدول
-                    بارگذاری شد — {toFaDigits(importStatus.data.summary.uploads_moved)} فایل
-                    بازگردانده شد.
+                    <FaNumber
+                      value={Object.keys(importStatus.data.summary.tables).length}
+                    />{' '}
+                    جدول بارگذاری شد —{' '}
+                    <FaNumber value={importStatus.data.summary.uploads_moved} /> فایل بازگردانده
+                    شد.
                   </span>
                   {importStatus.data.summary.skew &&
                     Object.keys(importStatus.data.summary.skew).length > 0 && (

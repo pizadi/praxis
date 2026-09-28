@@ -6,7 +6,8 @@ import { Link } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
 import type { AppointmentBrief, Page } from '../api/types'
-import { formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { formatJalali, formatJalaliTime } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { LAST_STAGE, stageOf } from '../lib/stages'
 import { localToday, serverToday } from '../lib/today'
 import { JalaliDatePicker } from '../components/JalaliDates'
@@ -68,7 +69,7 @@ export default function SchedulePage() {
             </Button>
           </Space>
           <Typography.Text strong style={{ fontSize: 16 }}>
-            {formatJalali(date)}
+            <FaNumber value={formatJalali(date)} />
           </Typography.Text>
           <List
             loading={isLoading}
@@ -102,13 +103,17 @@ export default function SchedulePage() {
                     title={
                       <Space size={8} wrap>
                         <span>
-                          {formatJalaliTime(a.scheduled_at)} — {a.patient_first_name}{' '}
-                          {a.patient_last_name}
+                          <FaNumber value={formatJalaliTime(a.scheduled_at)} /> —{' '}
+                          {a.patient_first_name} {a.patient_last_name}
                         </span>
                         <Tag color={stage.color}>{stage.label}</Tag>
                       </Space>
                     }
-                    description={`کد ملی: ${toFaDigits(a.patient_national_id)}`}
+                    description={
+                      <>
+                        کد ملی: <FaNumber value={a.patient_national_id} />
+                      </>
+                    }
                   />
                 </List.Item>
               )

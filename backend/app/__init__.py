@@ -169,7 +169,20 @@ Version history:
           permission labels split out, server-authoritative formula checks,
           domain-split schemas, and patient/questionnaire/appointment
           component extraction with regression guards
-   1.4.2  release
+  1.4.2  release
+  1.4.3.dev1  creating a patient opens that patient's page; the patient list shows
+          the insurance type; numbers display as Persian digits but copy as
+          ASCII (FaNumber: a transparent copyable layer under a non-selectable
+          Persian overlay, swept across every digit in the UI), so pasting a
+          national ID or an amount into a latin-only field works; the
+          appointment note fields (CC/HX/PX) align right or left from the first
+          letter of their content; the tarball writer is extracted into
+          services/backup_dump.py and scripts/pack_backup.py packages any
+          database + uploads directory into a website-ingestible tarball
+          (unencrypted by default, AES-256-GCM with a key; accounts excluded
+          unless --include-auth); the legacy import dates attachments from
+          their parent appointment instead of the migration day; a lost
+          check-then-insert race on a unique index returns 409 instead of 500
 """
 
-__version__ = "1.4.2"
+__version__ = "1.4.3.dev1"

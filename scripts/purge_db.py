@@ -41,6 +41,11 @@ from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
 
+# The compose stack's uploads volume (docker-compose.yml: `volumes: uploads`).
+# Only used to print a copy-pasteable command when --uploads cannot reach it
+# from the host (UPLOAD_DIR is the in-container path).
+UPLOADS_VOLUME = "praxis_uploads"
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT / "backend"))
@@ -64,7 +69,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--container",
-    default="new-patients-db-1",
+    default="praxis-db-1",
     help="docker container hosting PostgreSQL (for the snapshot)",
 )
 
@@ -234,7 +239,20 @@ def purge_uploads() -> None:
             else:
                 entry.unlink()
             count += 1
-    print(f"uploads: emptied {upload_dir} ({count} entries)")
+        print(f"uploads: emptied {upload_dir} ({count} entries)")
+        return
+    # UPLOAD_DIR is usually the path INSIDE the api container (/data/uploads,
+    # a named volume). Run from the host it simply does not exist — reporting
+    # "emptied 0 entries" there would be a silent lie, so say what happened
+    # and how to do it for real.
+    print(
+        f"uploads: NOTHING EMPTIED — {upload_dir} does not exist on this host.\n"
+        f"         UPLOAD_DIR is the container path (a named volume). To empty\n"
+        f"         the real one, go through a container that mounts it:\n"
+        f"           docker run --rm -v {UPLOADS_VOLUME}:/data/uploads --network host \\\n"
+        f"             alpine sh -c 'find /data/uploads -mindepth 1 -delete'",
+        file=sys.stderr,
+    )
 
 
 def main() -> int:

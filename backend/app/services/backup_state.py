@@ -31,12 +31,24 @@ DUMP_TABLES = (
     "refresh_tokens",
 )
 
+# Accounts + session state. Dumping these REPLACES them on import (the
+# importer truncates every table the tarball carries), so a tarball built from
+# a database that never ran bootstrap_admin() would wipe the site's admin and
+# lock everyone out. Standalone packers exclude them by default
+# (scripts/pack_backup.py --include-auth opts back in); the site's own backup
+# always includes them — it is a backup of itself.
+AUTH_TABLES = frozenset({"roles", "users", "login_audit", "refresh_tokens"})
+
 JOB_LOCK = threading.Lock()
 
 
-def psycopg2_url() -> str:
-    """asyncpg DSN → plain psycopg2 DSN (psycopg2 can't parse dialect schemes)."""
-    url = settings.database_url
+def psycopg2_url(url: str | None = None) -> str:
+    """asyncpg DSN → plain psycopg2 DSN (psycopg2 can't parse dialect schemes).
+
+    Defaults to the configured DSN; ``scripts/pack_backup.py`` passes the
+    database it was pointed at instead of the running site's.
+    """
+    url = url or settings.database_url
     if url.startswith("postgresql+asyncpg://"):
         return url.replace("postgresql+asyncpg://", "postgresql://", 1)
     if url.startswith("postgresql+psycopg2://"):

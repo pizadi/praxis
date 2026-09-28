@@ -4,7 +4,8 @@ import { Button, Card, Col, Row, Statistic, Table, Typography } from 'antd'
 
 import { api } from '../api/client'
 import type { StatsSummary } from '../api/types'
-import { formatMoney, toFaDigits } from '../lib/jalali'
+import { formatMoney } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { useUser } from '../components/AppLayout'
 import { JalaliRangePicker } from '../components/JalaliDates'
 
@@ -65,23 +66,36 @@ export default function StatsPage() {
           <Card loading={isLoading}>
             <Statistic
               title="تعداد نوبت"
-              value={toFaDigits(data?.num_appointments ?? 0)}
+              value={data?.num_appointments ?? 0}
+              valueRender={() => <FaNumber value={data?.num_appointments ?? 0} />}
             />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card loading={isLoading}>
-            <Statistic title="جمع درآمد" value={formatMoney(data?.total_amount ?? 0)} />
+            <Statistic
+              title="جمع درآمد"
+              value={data?.total_amount ?? 0}
+              valueRender={() => <FaNumber value={formatMoney(data?.total_amount ?? 0)} />}
+            />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card loading={isLoading}>
-            <Statistic title="کارت‌خوان" value={formatMoney(data?.pos_amount ?? 0)} />
+            <Statistic
+              title="کارت‌خوان"
+              value={data?.pos_amount ?? 0}
+              valueRender={() => <FaNumber value={formatMoney(data?.pos_amount ?? 0)} />}
+            />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card loading={isLoading}>
-            <Statistic title="نقدی" value={formatMoney(data?.cash_amount ?? 0)} />
+            <Statistic
+              title="نقدی"
+              value={data?.cash_amount ?? 0}
+              valueRender={() => <FaNumber value={formatMoney(data?.cash_amount ?? 0)} />}
+            />
           </Card>
         </Col>
       </Row>
@@ -93,8 +107,12 @@ export default function StatsPage() {
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'شرح', dataIndex: 'description' },
-            { title: 'تعداد', dataIndex: 'count', render: toFaDigits },
-            { title: 'جمع مبلغ', dataIndex: 'total_amount', render: formatMoney },
+            { title: 'تعداد', dataIndex: 'count', render: (v: number) => <FaNumber value={v} /> },
+            {
+              title: 'جمع مبلغ',
+              dataIndex: 'total_amount',
+              render: (v: number) => <FaNumber value={formatMoney(v)} />,
+            },
           ]}
         />
       </Card>

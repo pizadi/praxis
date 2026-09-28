@@ -1,7 +1,8 @@
 # Migration from the legacy system (SQLite → PostgreSQL)
 
-Tooling: `scripts/migrate_sqlite.py`, `scripts/check_files.py`,
-`scripts/verify_import.py`, `scripts/make_test_legacy_db.py`.
+Tooling: `scripts/migrate_sqlite.py`, `scripts/pack_backup.py`,
+`scripts/check_files.py`, `scripts/verify_import.py`,
+`scripts/make_test_legacy_db.py`.
 
 **Never point the script at the live DB.** Snapshot first:
 
@@ -13,19 +14,46 @@ cp -r /path/to/patient_files  snapshot/patient_files
 systemctl start old-patients  # old system keeps running meanwhile
 ```
 
-Then, from this repo (target the Postgres mapped to host port 5434):
+## Preferred path: migrate into a scratch DB, then import a clean tarball
+
+Migrating straight into the live database leaves the site's own state (and any
+half-finished earlier import) mixed with the legacy rows. The reliable route
+is to build the data in a **separate, empty database**, pack it into a
+tarball, and let the site ingest that — so the live database ends up exactly
+as the tarball says, with nothing carried over:
 
 ```bash
-# dry run (no writes) — counts, data-quality report, verification:
-.venv/bin/python scripts/migrate_sqlite.py \
-  --source snapshot/db.sqlite3 \
-  --files  snapshot/patient_files \
-  --database-url postgresql+asyncpg://clinic:PASS@localhost:5434/clinic \
-  --upload-dir /var/lib/clinic/uploads
+# 0) a scratch PostgreSQL database, empty and migrated to head
+createdb staging
+cd backend && DATABASE_URL=postgresql+asyncpg://u:p@localhost:5432/staging \
+  ../.venv/bin/alembic upgrade head && cd ..
 
-# real run (idempotent; safe to re-run):
-... --apply
+# 1) dry run, then the real run into the scratch DB
+.venv/bin/python scripts/migrate_sqlite.py \
+  --source snapshot/db.sqlite3 --files snapshot/patient_files \
+  --database-url postgresql+asyncpg://u:p@localhost:5432/staging \
+  --upload-dir work/legacy-uploads          # ... --apply
+
+# 2) pack it (unencrypted by default; add --encryption-key to wrap it)
+.venv/bin/python scripts/pack_backup.py \
+  --database-url postgresql+asyncpg://u:p@localhost:5432/staging \
+  --upload-dir work/legacy-uploads \
+  --out work/legacy-import.tar.gz
+
+# 3) snapshot the live DB, wipe it, then upload the tarball in the site's
+#    backup page (see docs/backup-import.md)
+.venv/bin/python scripts/snapshot_db.py --label pre-legacy-import
 ```
+
+Rehearse the whole thing on a second throwaway database before touching
+production: `alembic upgrade head` it and call `run_import()` on the tarball
+(`app.services.backup_import`), then compare the counts with the migration
+report. A rehearsal is the only proof that the tarball is ingestible.
+
+Migrating **into the live database directly** still works (the script is
+idempotent and skips existing rows), but note that attachment rows already
+present are skipped, so a re-run never repairs dates that an earlier version
+of the script stamped with the migration day.
 
 ## Behavior
 
@@ -37,6 +65,15 @@ Then, from this repo (target the Postgres mapped to host port 5434):
   Since 1.3 attachments belong to the **patient** — the legacy
   `Appointment_id` is resolved through the appointments table; an
   unresolvable reference **halts** `--apply` (corruption signal).
+- **Files are dated from their parent appointment.** The legacy
+  `website_attachfile` table has no date column — the appointment a file
+  hung off was the only thing that ever dated it. That appointment's
+  `Appointment_Date` becomes the row's `created_at`/`updated_at`. Without
+  it, every imported file gets the migration timestamp and the appointment
+  panel's same-day "files of this visit" tab then lists the patient's
+  entire file history under **every** visit. The post-apply verification
+  reports the busiest day as a share of all attachments and FAILs if one day
+  holds more than half of them.
 - **Legacy rx free text** is converted into structured prescriptions with
   the same frozen parser as the 1.3 Alembic migration
   (`app/services/rx_migration.py`): comma/newline items, trailing integer
@@ -51,8 +88,8 @@ Then, from this repo (target the Postgres mapped to host port 5434):
 - Legacy English payment descriptions (`Visit`/`Spiro`/`Other`) are
   translated to ویزیت/اسپیرو/سایر (case-insensitive; unmatched kept as-is).
 - Automatic verification compares per-table counts, POS/cash sums,
-  per-patient appointment counts, orphan FKs, and the planned
-  prescriptions/items/links counts. Exit code 0 only on PASS.
+  per-patient appointment counts, orphan FKs, the attachment date spread,
+  and the planned prescriptions/items/links counts. Exit code 0 only on PASS.
 - Post-cutover: keep the old system read-only for two weeks as fallback.
 
 After `--apply`, run the independent cross-check (does NOT share code with

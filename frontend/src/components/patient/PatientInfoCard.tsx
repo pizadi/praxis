@@ -2,7 +2,7 @@ import { Button, Card, Descriptions, Popconfirm, Space, Tag } from 'antd'
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 
 import type { NamedRef, Patient } from '../../api/types'
-import { toFaDigits } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 
 interface Props {
   patient: Patient
@@ -36,14 +36,14 @@ export default function PatientInfoCard({ patient, canDelete, onEdit, onDelete }
     >
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="کد ملی">
-          {toFaDigits(patient.national_id)}
+          <FaNumber value={patient.national_id} />
         </Descriptions.Item>
         <Descriptions.Item label="تلفن">
-          {toFaDigits(patient.phone_number) || '—'}
+          {patient.phone_number ? <FaNumber value={patient.phone_number} /> : '—'}
         </Descriptions.Item>
         <Descriptions.Item label="بیمه">{patient.insurance || '—'}</Descriptions.Item>
         <Descriptions.Item label="سال تولد">
-          {toFaDigits(patient.year_of_birth)}
+          <FaNumber value={patient.year_of_birth} />
         </Descriptions.Item>
         <Descriptions.Item label="جنسیت">
           {patient.gender === 0 ? 'مرد' : 'زن'}

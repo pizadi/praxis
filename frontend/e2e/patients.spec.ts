@@ -17,7 +17,7 @@ async function fillPatientModal(page: import('@playwright/test').Page, nationalI
 }
 
 test.describe('patients', () => {
-  test('create → appears in search → reopen', async ({ page }) => {
+  test('create → lands on the new patient\'s page', async ({ page }) => {
     await login(page)
     await page.goto('/#/patients')
     await page.click('button:has-text("بیمار جدید")')
@@ -25,10 +25,34 @@ test.describe('patients', () => {
     await page.locator('.ant-modal:visible .ant-modal-footer .ant-btn-primary').click()
     await expect(page.locator('.ant-message')).toContainText('ذخیره شد')
 
-    // search finds them
+    // the create flow ends ON the new patient, not back on the list
+    await page.waitForURL(/\/#\/patients\/\d+$/, { timeout: 10_000 })
+    await expect(page.locator('.ant-card-head-title:has-text("نیما مهربان")')).toBeVisible()
+
+    // ...and the record is findable from the list
+    await page.goto('/#/patients')
     const search = page.getByPlaceholder('جستجو بر اساس نام، کد ملی یا شماره تلفن…')
     await search.fill(`09${UNIQUE}`)
-    await expect(page.locator('.ant-table')).toContainText('نیما مهربان', { timeout: 10_000 })
+    await search.press('Enter') // Input.Search fires onSearch on Enter, not on fill
+    const row = page.locator('.ant-table-tbody tr.ant-table-row', { hasText: 'نیما مهربان' })
+    await expect(row).toBeVisible({ timeout: 10_000 })
+    // national IDs read as Persian digits on screen but copy as ASCII
+    await expect(row.locator('.fa-num-fa').first()).toContainText('۰۹')
+    await expect(row.locator('.fa-num-src').first()).toHaveText(`09${UNIQUE}`)
+  })
+
+  test('the list shows the insurance type', async ({ page }) => {
+    const p = await apiPatient('1000000077', { insurance: 'بیمه تکمیلی' })
+    await login(page)
+    await page.goto('/#/patients')
+    const search = page.getByPlaceholder('جستجو بر اساس نام، کد ملی یا شماره تلفن…')
+    await search.fill(p.national_id)
+    await search.press('Enter')
+    // .ant-table-row skips antd's hidden measure row
+    const row = page.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(row).toBeVisible({ timeout: 10_000 })
+    await expect(row.locator('.fa-num-src').first()).toHaveText(p.national_id)
+    await expect(row).toContainText('بیمه تکمیلی')
   })
 
   test('duplicate national id is refused (modal stays open with an error)', async ({ page }) => {
@@ -38,8 +62,11 @@ test.describe('patients', () => {
     await fillPatientModal(page, `08${UNIQUE}`, 'اول')
     await page.locator('.ant-modal:visible .ant-modal-footer .ant-btn-primary').click()
     await expect(page.locator('.ant-message')).toContainText('ذخیره شد')
+    await page.waitForURL(/\/#\/patients\/\d+$/, { timeout: 10_000 })
 
-    // same ID again → refused (the modal STAYS open with an error)
+    // same ID again → refused (the modal STAYS open with an error, and we
+    // stay on the list because nothing was created)
+    await page.goto('/#/patients')
     await page.click('button:has-text("بیمار جدید")')
     await fillPatientModal(page, `08${UNIQUE}`, 'دوم')
     await page.locator('.ant-modal:visible .ant-modal-footer .ant-btn-primary').click()

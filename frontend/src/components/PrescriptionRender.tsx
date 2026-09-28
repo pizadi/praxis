@@ -16,8 +16,9 @@ import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 
 import { api, apiError } from '../api/client'
 import type { NamedRef, Prescription, PrescriptionItemInput } from '../api/types'
-import { formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { formatJalali, formatJalaliTime } from '../lib/jalali'
 import { JalaliDateTimePicker } from './JalaliDates'
+import FaNumber from './FaNumber'
 
 /** One editable row of the prescription form. */
 export interface PrescriptionRow {
@@ -54,22 +55,28 @@ export function PrescriptionView({ rx, onEdit }: { rx: Prescription; onEdit?: ()
             <Space wrap size={4}>
               {rx.items.map((it) => (
                 <Tag key={it.id} color="geekblue" style={{ marginInlineEnd: 0 }}>
-                  {it.quantity != null
-                    ? `${it.item_name} × ${toFaDigits(String(it.quantity))}`
-                    : it.item_name}
+                  {it.quantity != null ? (
+                    <>
+                      {it.item_name} × <FaNumber value={it.quantity} />
+                    </>
+                  ) : (
+                    it.item_name
+                  )}
                 </Tag>
               ))}
             </Space>
           )}
         </Descriptions.Item>
         <Descriptions.Item label="زمان تجویز">
-          {formatJalali(rx.prescribed_at)} — ساعت {formatJalaliTime(rx.prescribed_at)}
+          <FaNumber value={formatJalali(rx.prescribed_at)} /> — ساعت{' '}
+          <FaNumber value={formatJalaliTime(rx.prescribed_at)} />
         </Descriptions.Item>
         <Descriptions.Item label="تجویزکننده">
           {rx.created_by_username ?? '—'}
           {rx.source_appointment_id != null && (
             <Typography.Text type="secondary" style={{ marginInlineStart: 8, fontSize: 12 }}>
-              (تبدیل‌شده از نسخه متنی نوبت شماره {toFaDigits(String(rx.source_appointment_id))})
+              (تبدیل‌شده از نسخه متنی نوبت شماره{' '}
+              <FaNumber value={rx.source_appointment_id} />)
             </Typography.Text>
           )}
         </Descriptions.Item>

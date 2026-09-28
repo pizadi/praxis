@@ -18,7 +18,8 @@ import { api } from '../api/client'
 import type { Page, QuestionnaireResponseReport, QuestionnaireTemplate } from '../api/types'
 import type { FormatDoc, MergedCell } from '../lib/questionnaire'
 import { mergeResponse } from '../lib/questionnaire'
-import { formatJalali, toFaDigits } from '../lib/jalali'
+import { formatJalali } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { useUser } from '../components/AppLayout'
 
 const PAGE_SIZE = 20
@@ -87,8 +88,8 @@ export default function QuestionnaireResponsesPage() {
         key: 'national_id',
         width: 130,
         render: (_, r) => (
-          <span dir="ltr" style={{ fontFamily: 'monospace' }}>
-            {toFaDigits(r.patient_national_id)}
+          <span style={{ fontFamily: 'monospace' }}>
+            <FaNumber value={r.patient_national_id} />
           </span>
         ),
       },
@@ -96,7 +97,7 @@ export default function QuestionnaireResponsesPage() {
         title: 'تاریخ',
         key: 'date',
         width: 110,
-        render: (_, r) => formatJalali(r.created_at),
+        render: (_, r) => <FaNumber value={formatJalali(r.created_at)} />,
       },
     ]
     for (const q of questions) {
@@ -255,8 +256,12 @@ export default function QuestionnaireResponsesPage() {
               pageSize: PAGE_SIZE,
               current: Math.floor(offset / PAGE_SIZE) + 1,
               showSizeChanger: false,
-              showTotal: (t, range) =>
-                `${toFaDigits(range[0])}–${toFaDigits(range[1])} از ${toFaDigits(t)}`,
+              showTotal: (t, range) => (
+                <span>
+                  <FaNumber value={range[0]} />–<FaNumber value={range[1]} /> از{' '}
+                  <FaNumber value={t} />
+                </span>
+              ),
               onChange: (_page, pageSize) => setOffset((pageSize - 1) * PAGE_SIZE),
             }}
           />

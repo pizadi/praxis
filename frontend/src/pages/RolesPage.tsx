@@ -19,7 +19,7 @@ import {
 
 import { api, apiError } from '../api/client'
 import type { Page, PermissionGroup, Role } from '../api/types'
-import { toFaDigits } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { useIsMobile } from '../lib/useIsMobile'
 import StackCell from '../components/StackCell'
 
@@ -121,7 +121,10 @@ export default function RolesPage() {
                       <StackCell
                         main={r.name}
                         lines={[
-                          `${toFaDigits((r.permissions ?? []).length)} دسترسی · ${toFaDigits(r.user_count ?? 0)} کاربر`,
+                          <span>
+                            <FaNumber value={(r.permissions ?? []).length} /> دسترسی ·{' '}
+                            <FaNumber value={r.user_count ?? 0} /> کاربر
+                          </span>,
                         ]}
                       />
                     ),

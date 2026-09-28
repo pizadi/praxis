@@ -1,7 +1,8 @@
 # مهاجرت از سامانهٔ قدیمی (SQLite → PostgreSQL)
 
-ابزارها: `scripts/migrate_sqlite.py`، `scripts/check_files.py`،
-`scripts/verify_import.py`، `scripts/make_test_legacy_db.py`.
+ابزارها: `scripts/migrate_sqlite.py`، `scripts/pack_backup.py`،
+`scripts/check_files.py`، `scripts/verify_import.py`،
+`scripts/make_test_legacy_db.py`.
 
 **اسکریپت را هرگز روی دیتابیس زنده نبرید.** اول اسنپ‌شات بگیرید:
 
@@ -13,19 +14,47 @@ cp -r /path/to/patient_files  snapshot/patient_files
 systemctl start old-patients  # سامانهٔ قدیمی همین‌طور به کار ادامه می‌دهد
 ```
 
-سپس از این مخزن (پستگرسِ مپ‌شده به پورت ۵۴۳۴):
+## روش پیشنهادی: مهاجرت به دیتابیس موقت، بعد واردسازی یک tarball تمیز
+
+اگر مستقیم روی دیتابیس زنده مهاجرت کنید، وضعیت خود سایت (و هر واردسازی
+نیمه‌کارهٔ قبلی) با داده‌های قدیمی قاطی می‌شود. راه مطمئن این است که داده
+را در یک دیتابیس **جداگانه و خالی** بسازید، در tarball بسته‌بندی کنید و
+بگذارید سایت همان را وارد کند — آن‌وقت دیتابیس زنده دقیقاً همان چیزی می‌شود
+که tarball می‌گوید:
 
 ```bash
-# اجرای خشک (بدون نوشتن) — شمارش‌ها، گزارش کیفیت داده، راستی‌آزمایی:
-.venv/bin/python scripts/migrate_sqlite.py \
-  --source snapshot/db.sqlite3 \
-  --files  snapshot/patient_files \
-  --database-url postgresql+asyncpg://clinic:PASS@localhost:5434/clinic \
-  --upload-dir /var/lib/clinic/uploads
+# ۰) یک دیتابیس پستگرس موقت، خالی و مهاجرت‌داده‌شده تا head
+createdb staging
+cd backend && DATABASE_URL=postgresql+asyncpg://u:p@localhost:5432/staging \
+  ../.venv/bin/alembic upgrade head && cd ..
 
-# اجرای واقعی (idempotent؛ تکرارش امن است):
-... --apply
+# ۱) اجرای خشک، بعد اجرای واقعی در دیتابیس موقت
+.venv/bin/python scripts/migrate_sqlite.py \
+  --source snapshot/db.sqlite3 --files snapshot/patient_files \
+  --database-url postgresql+asyncpg://u:p@localhost:5432/staging \
+  --upload-dir work/legacy-uploads          # ... --apply
+
+# ۲) بسته‌بندی (به‌طور پیش‌فرض متنی؛ با --encryption-key رمزنگاری می‌شود)
+.venv/bin/python scripts/pack_backup.py \
+  --database-url postgresql+asyncpg://u:p@localhost:5432/staging \
+  --upload-dir work/legacy-uploads \
+  --out work/legacy-import.tar.gz
+
+# ۳) از دیتابیس زنده اسنپ‌شات بگیرید، پاکش کنید، بعد tarball را در صفحهٔ
+#    پشتیبان‌گیری سایت بارگذاری کنید (docs/backup-import.md)
+.venv/bin/python scripts/snapshot_db.py --label pre-legacy-import
 ```
+
+پیش از دست‌زدن به محیط عملیاتی، کل این مسیر را روی یک دیتابیس موقت دوم
+تمرین کنید: `alembic upgrade head` و بعد `run_import()`
+(`app.services.backup_import`) را روی tarball صدا بزنید و شمارش‌ها را با
+گزارش مهاجرت مقایسه کنید. تمرین تنها دلیلی است که ثابت می‌کند فایل واقعاً
+قابل واردسازی است.
+
+مهاجرت **مستقیم به دیتابیس زنده** همچنان کار می‌کند (اسکریپت idempotent است
+و ردیف‌های موجود را رد می‌کند)، اما توجه کنید ردیف‌های فایلِ از قبل موجود
+رد می‌شوند؛ یعنی اجرای دوباره هرگز تاریخ‌هایی را که نسخهٔ قبلی اسکریپت با
+روزِ مهاجرت مهر زده بود ترمیم نمی‌کند.
 
 ## رفتار
 
@@ -37,6 +66,15 @@ systemctl start old-patients  # سامانهٔ قدیمی همین‌طور به
   گم نمی‌شوند). از نسخهٔ ۱٫۳ فایل‌ها به **بیمار** تعلق دارند —
   `Appointment_id` قدیمی از طریق جدول نوبت‌ها به بیمار تبدیل می‌شود؛
   مرجعِ بی‌صاحب `--apply` را **متوقف** می‌کند (نشانهٔ خرابی داده).
+- **تاریخ فایل‌ها از نوبتِ والدشان می‌آید.** جدول قدیمی
+  `website_attachfile` ستون تاریخ ندارد — تنها چیزی که هرگز فایل را تاریخ
+ ‌زده بود همان نوبتی بود که فایل به آن آویزان بود. تاریخ آن نوبت
+  (`Appointment_Date`) می‌شود `created_at`/`updated_at` ردیف. بدون این
+  کار، هر فایل واردشده تاریخ روزِ مهاجرت را می‌گیرد و تب «فایل‌های این
+  روز» در پنل نوبت، کل تاریخچهٔ فایل‌های بیمار را زیر **هر** نوبت نشان
+  می‌دهد. راستی‌آزمایی پس از اجرا، شلوغ‌ترین روز را به‌صورت نسبت به کل
+  فایل‌ها گزارش می‌کند و اگر یک روز بیش از نیمی از فایل‌ها را در بر گرفته
+  باشد FAIL می‌دهد.
 - **متن آزاد rx قدیمی** با همان پارسر ثابتِ مهاجرت ۱٫۳
   (`app/services/rx_migration.py`) به نسخه‌های ساختاریافته تبدیل می‌شود:
   اقلام با کاما/خط جدید، آخرین عدد مستقل → تعداد، ورود به فرهنگ فقط برای
@@ -50,8 +88,9 @@ systemctl start old-patients  # سامانهٔ قدیمی همین‌طور به
   ویزیت/اسپیرو/سایر ترجمه می‌شوند (بی‌حس به بزرگی/کوچکی حروف؛ نامترجمه‌ها
   دست‌نخورده).
 - راستی‌آزمایی خودکار شمارش جدول‌به‌جدول، جمع‌های POS/نقد، تعداد نوبت
-  هر بیمار، FKهای بی‌صاحب و شمارش‌های برنامه‌ریزی‌شدهٔ
-  نسخه‌ها/اقلام/اتصال‌ها را مقایسه می‌کند. کد خروج 0 فقط با PASS.
+  هر بیمار، FKهای بی‌صاحب، پراکندگی تاریخ فایل‌ها و شمارش‌های
+  برنامه‌ریزی‌شدهٔ نسخه‌ها/اقلام/اتصال‌ها را مقایسه می‌کند. کد خروج 0 فقط
+  با PASS.
 - پس از قطع‌سوییچ: سامانهٔ قدیمی را دو هفته فقط-خواندنی نگه دارید.
 
 بعد از `--apply`، راستی‌آزمایی مستقل را اجرا کنید (کد مشترکی با اسکریپت

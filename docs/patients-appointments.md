@@ -22,7 +22,14 @@
   (name reusable; trash can restore it pre-purge), all in one transaction,
   audited as action `merge`. API: `PATCH /tags/{id}?merge=true`.
 - National ID is 10 digits, unique among live patients (partial unique
-  index) — a deleted patient's ID is reusable.
+  index) — a deleted patient's ID is reusable. The database is the authority
+  (a lost check-then-insert race returns 409 `national_id_taken`, not a 500).
+- The list table shows name, national ID, insurance and tags/diagnoses; the
+  insurance type was added in 1.4.3. Every digit in it reads as Persian
+  numerals but copies as ASCII (see architecture.md).
+- Creating a patient navigates straight to that patient's page (history,
+  files, prescriptions) instead of dropping back on the list; editing one
+  stays where it is.
 - Deleting a patient is a soft delete: the whole subtree (appointments,
   files, payments, questionnaires) disappears from live views through join
   filtering and comes back on restore. See [trash-soft-delete.md](trash-soft-delete.md).
