@@ -3,6 +3,7 @@ import type { Rule } from 'antd/es/form'
 
 import {
   evaluateFormula,
+  faFormulaError,
   hasFormula,
   mergeResponse,
   questionRule,
@@ -132,5 +133,38 @@ describe('evaluateFormula', () => {
   it('never divides by zero', () => {
     const f = { ...NO_FORMULA, score_formula: 'a / 0' } as FormatDoc
     expect(evaluateFormula(f, { a: 1 })).toBeNull()
+  })
+})
+
+describe('faFormulaError (translates the server message for the builder)', () => {
+  it('strips the server wrapper prefix and translates the parser message', () => {
+    expect(faFormulaError('Invalid questionnaire formula: unexpected end of formula')).toBe(
+      'فرمول ناقص است',
+    )
+  })
+  it('translates the scoring.py message catalog', () => {
+    expect(faFormulaError('Invalid questionnaire formula: formula is empty')).toBe('فرمول خالی است')
+    expect(faFormulaError('Invalid questionnaire formula: unexpected trailing tokens')).toBe(
+      'پس از پایان فرمول، عبارت اضافه وجود دارد',
+    )
+    expect(
+      faFormulaError("Invalid questionnaire formula: unexpected character '$' at position 3"),
+    ).toBe("نویسه نامعتبر '$' در موقعیت 3")
+    expect(faFormulaError("Invalid questionnaire formula: expected ')'")).toBe("انتظار ')' بود")
+    expect(faFormulaError("Invalid questionnaire formula: unexpected token '+'")).toBe(
+      "عبارت نامعتبر '+'",
+    )
+    expect(faFormulaError('Invalid questionnaire formula: wrong number of arguments for min()')).toBe(
+      'تعداد آرگومان‌های min() نادرست است',
+    )
+    expect(faFormulaError('Invalid questionnaire formula: formula longer than 1000 characters')).toBe(
+      'فرمول بیش از حد طولانی است (حداکثر 1000 نویسه)',
+    )
+    expect(faFormulaError('Invalid questionnaire formula: unknown question key: q1')).toBe(
+      'کلید ناشناس در فرمول: q1',
+    )
+  })
+  it('passes through anything unrecognized (minus the prefix)', () => {
+    expect(faFormulaError('Invalid questionnaire formula: something new')).toBe('something new')
   })
 })

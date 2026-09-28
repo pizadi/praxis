@@ -295,6 +295,7 @@ export default function PatientsPage() {
                         main={<Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>}
                         lines={[
                           <FaNumber key="nid" value={p.national_id} />,
+                          p.phone_number ? <FaNumber key="phone" value={p.phone_number} /> : null,
                           p.insurance || null,
                           p.tags.length + p.diagnoses.length > 0 ? (
                             <Space wrap size={4}>
@@ -327,6 +328,11 @@ export default function PatientsPage() {
                       title: 'کد ملی',
                       dataIndex: 'national_id',
                       render: (v: string) => <FaNumber value={v} />,
+                    },
+                    {
+                      title: 'تلفن',
+                      dataIndex: 'phone_number',
+                      render: (v: string | null) => (v ? <FaNumber value={v} /> : '—'),
                     },
                     {
                       title: 'بیمه',

@@ -117,6 +117,25 @@ async def test_patient_search_all_in_sql(client):
     )
     assert r.json()["total"] == 0
 
+    # q matches the SPACE-JOINED fields: a first+last concatenation finds the
+    # patient even though neither single field contains the full query
+    r = await client.get(
+        "/api/v1/patients",
+        params={"q": "test ahmadi"},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 2
+    assert {i["last_name"] for i in r.json()["items"]} == {"Ahmadi", "Ahmadi-Sadegh"}
+
+    # q also matches inside the insurance field (it is part of the haystack)
+    r = await client.get(
+        "/api/v1/patients",
+        params={"q": "تامین اجتماعی"},
+        headers=auth(token),
+    )
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["last_name"] == "Ahmadi"
+
     # per-field searches
     r = await client.get(
         "/api/v1/patients", params={"first_name": "test"}, headers=auth(token)

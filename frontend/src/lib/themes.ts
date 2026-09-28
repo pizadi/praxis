@@ -35,6 +35,11 @@ export interface Palette {
   seed: Record<string, string | number>
   /** antd MAP tokens — exact overrides applied AFTER the antd algorithm runs */
   map: Record<string, string>
+  /** antd COMPONENT tokens — the ONLY place for tokens antd's alias stage
+   * re-derives after the map (Button.primaryColor ← colorTextLightSolid ←
+   * colorWhite: a map entry for it is silently discarded, which rendered
+   * graphite's near-white primary buttons with white text). */
+  components: Record<string, Record<string, string>>
 }
 
 const OKLCH_STATUS_FALLBACK = {
@@ -80,11 +85,15 @@ function palette(
       colorTextSecondary: hex.mutedFg,
       colorTextTertiary: hex.mutedFg,
       colorTextQuaternary: hex.mutedFg,
-      // text drawn on solid (primary/danger) fills — VibeFarsi primaries pair
-      // a light fill with dark text (graphite) or the reverse (pomegranate)
-      colorTextLightSolid: hex.primaryFg,
       colorBorderSecondary: hex.border,
       colorBorder: hex.input,
+    },
+    // text drawn on solid primary fills — VibeFarsi primaries pair a light
+    // fill with dark text (graphite) or the reverse (pomegranate). Set at the
+    // COMPONENT level: antd's alias stage re-derives colorTextLightSolid from
+    // colorWhite after the map, so a map entry never sticks.
+    components: {
+      Button: { primaryColor: hex.primaryFg },
     },
   }
 }
@@ -264,10 +273,14 @@ export const THEMES: Palette[] = [
   }),
 ]
 
-export const DEFAULT_THEME: ThemeId = 'graphite'
+export const DEFAULT_THEME: ThemeId = 'lapis'
 
 export function getTheme(id: string | null | undefined): Palette {
-  return THEMES.find((t) => t.id === id) ?? THEMES[0]
+  return (
+    THEMES.find((t) => t.id === id) ??
+    THEMES.find((t) => t.id === DEFAULT_THEME) ??
+    THEMES[0]
+  )
 }
 
 type AntdAlgorithm = typeof antdTheme.darkAlgorithm

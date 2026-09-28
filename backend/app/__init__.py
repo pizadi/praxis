@@ -183,6 +183,17 @@ Version history:
           unless --include-auth); the legacy import dates attachments from
           their parent appointment instead of the migration day; a lost
           check-then-insert race on a unique index returns 409 instead of 500
+  1.4.3.dev2  selecting a Persian number no longer double-exposes the latin
+          layer (::selection re-colored it); the «همه فایل‌ها» list stacks
+          title + upload date over filename + size; questionnaire builder
+          formula errors are translated to Persian; the patient table shows
+          the phone number; omnibox search matches the space-joined patient
+          fields (first/last/national ID/phone/insurance) so a first+last
+          concatenation is found; graphite's primary buttons get their dark
+          text back (antd's alias stage re-derives colorTextLightSolid, the
+          text now rides on Button.primaryColor per palette); scored
+          questionnaires show their total in the patient list; the default
+          theme is لاجورد
 """
 
-__version__ = "1.4.3.dev1"
+__version__ = "1.4.3.dev2"

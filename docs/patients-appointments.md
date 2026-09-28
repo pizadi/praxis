@@ -2,11 +2,13 @@
 
 ## Patients
 
-- CRUD at `/patients` with omnibox search (`q`): first/last name via
-  `ILIKE`, national ID and phone number via `like` (equivalent for their
-  digits-only values). Advanced filters: first/last name, insurance,
-  year of birth, gender, national-ID substring, phone substring, and
-  multi-select tags/diagnoses (patients must have ALL selected).
+- CRUD at `/patients` with omnibox search (`q`): the query is matched against
+  the SPACE-JOINED patient fields — first/last name, national ID, phone
+  number and insurance — via `ILIKE`, so a «نام + نام خانوادگی» concatenation
+  matches even though neither field contains it alone. Advanced filters:
+  first/last name, insurance, year of birth, gender, national-ID substring,
+  phone substring, and multi-select tags/diagnoses (patients must have ALL
+  selected).
 - Patient form: users holding `taxonomies.write` can create a new
   tag/diagnosis inline — typing a name that matches nothing offers
   «افزودن «…»»; the entry is created (audited) right before the patient

@@ -274,6 +274,14 @@ body,
 
 .fa-num-src {
   color: transparent;
+  /* a selection re-colors the text (overriding `color: transparent`), which
+     used to double-expose the latin layer under the Persian overlay — keep
+     the ASCII glyphs invisible while selected; the highlight background (and
+     the Persian overlay on top of it) still renders */
+}
+
+.fa-num-src::selection {
+  color: transparent;
 }
 
 .fa-num-fa {

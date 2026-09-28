@@ -857,6 +857,8 @@ async def test_import_unencrypted_tarball_while_a_key_is_configured(client, monk
     from app.core.config import settings as cfg
     from app.services.backup_dump import build_backup_tarball
 
+    from app import __version__ as app_version
+
     token, _ = await login(client)
     r = await client.post(
         "/api/v1/patients",
@@ -873,7 +875,7 @@ async def test_import_unencrypted_tarball_while_a_key_is_configured(client, monk
         out = Path(d) / "packed.tar.gz"
         result = build_backup_tarball(
             database_url=cfg.database_url, upload_dir=cfg.upload_dir, out_path=out,
-            app_version="1.4.3",  # unencrypted: no key
+            app_version=app_version,  # current, so the import passes the version gate
         )
         assert result["encrypted"] is False
         blob = out.read_bytes()

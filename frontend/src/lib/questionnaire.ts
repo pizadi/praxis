@@ -99,16 +99,30 @@ export function faAnswerError(msg: string): string {
 }
 
 /** Persian message for a backend formula-validation error (the server owns
- * validation; this only translates its message for the builder). */
+ * validation; this only translates its message for the builder). The server
+ * wraps parser errors as «Invalid questionnaire formula: <scoring.py
+ * message>» — strip the prefix and map every scoring.py message. */
 export function faFormulaError(msg: string): string {
-  const unknown = msg.match(/unknown question key: (.+)$/)
+  const inner = msg.replace(/^Invalid questionnaire formula: /, '')
+  const unknown = inner.match(/unknown question key: (.+)$/)
   if (unknown) return `کلید ناشناس در فرمول: ${unknown[1]}`
-  const nonNumeric = msg.match(/question (.+) is not numeric/)
+  const nonNumeric = inner.match(/question (.+) is not numeric/)
   if (nonNumeric) return `پرسش متنی در فرمول قابل استفاده نیست: ${nonNumeric[1]}`
-  if (msg.includes('formula is empty')) return 'فرمول خالی است'
-  if (msg.includes('formula is too deeply nested')) return 'فرمول بیش از حد تودرتو است'
-  if (msg.includes('longer than')) return 'فرمول بیش از حد طولانی است'
-  return msg
+  if (inner === 'formula is empty') return 'فرمول خالی است'
+  if (inner === 'formula is too deeply nested') return 'فرمول بیش از حد تودرتو است'
+  const tooLong = inner.match(/^formula longer than (\d+) characters$/)
+  if (tooLong) return `فرمول بیش از حد طولانی است (حداکثر ${tooLong[1]} نویسه)`
+  const unexpectedChar = inner.match(/^unexpected character (.+) at position (\d+)$/)
+  if (unexpectedChar) return `نویسه نامعتبر ${unexpectedChar[1]} در موقعیت ${unexpectedChar[2]}`
+  const expected = inner.match(/^expected (.+)$/)
+  if (expected) return `انتظار ${expected[1]} بود`
+  if (inner === 'unexpected end of formula') return 'فرمول ناقص است'
+  if (inner === 'unexpected trailing tokens') return 'پس از پایان فرمول، عبارت اضافه وجود دارد'
+  const unexpectedToken = inner.match(/^unexpected token (.+)$/)
+  if (unexpectedToken) return `عبارت نامعتبر ${unexpectedToken[1]}`
+  const wrongArgs = inner.match(/^wrong number of arguments for (.+)\(\)$/)
+  if (wrongArgs) return `تعداد آرگومان‌های ${wrongArgs[1]}() نادرست است`
+  return inner
 }
 
 function invalidReason(q: Question, v: AnswerValue): string {
