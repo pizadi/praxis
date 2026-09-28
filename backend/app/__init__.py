@@ -199,6 +199,12 @@ Version history:
           still receives ASCII via a copy hook, and the national ID / phone
           number — in the patients list and on the patient card — carry a
           one-click copy button
+  1.4.3.dev4  manual copy actually lands ASCII now: Chromium answers
+          clipboardData.getData() with '' inside a copy event, so the hook
+          read nothing and the default Persian copy went through — it reads
+          the selection itself and the hook lives at document level, since a
+          hand-dragged selection makes the event fire at an ancestor, not at
+          the number's own span
 """
 
-__version__ = "1.4.3.dev3"
+__version__ = "1.4.3.dev4"

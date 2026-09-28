@@ -25,22 +25,55 @@ describe('FaNumber', () => {
   it('rewrites the clipboard to ASCII when the selection is copied', () => {
     const setData = vi.fn()
     const { container } = render(<FaNumber value="09121234567" />)
-    fireEvent.copy(container.querySelector('.fa-num') as Element, {
-      clipboardData: {
-        getData: () => 'متن ۰۹۱۲۱۲۳۴۵۶۷',
-        setData,
-      },
+    const num = container.querySelector('.fa-num') as Element
+    // a REAL selection over the digits (as a user's drag would make) — the
+    // hook reads sel.toString(): Chromium returns '' from clipboardData
+    // getData() inside a copy event
+    const range = document.createRange()
+    range.selectNodeContents(num)
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    fireEvent.copy(num, {
+      clipboardData: { setData },
     })
-    // Persian digit characters swap to ASCII; everything else is untouched
-    expect(setData).toHaveBeenCalledWith('text/plain', 'متن 09121234567')
+    expect(setData).toHaveBeenCalledWith('text/plain', '09121234567')
   })
 
-  it('leaves the clipboard alone when nothing was copied', () => {
+  it('catches copies whose selection merely intersects the number (drag starts outside)', () => {
     const setData = vi.fn()
-    const { container } = render(<FaNumber value="1234" />)
-    fireEvent.copy(container.querySelector('.fa-num') as Element, {
-      clipboardData: { getData: () => '', setData },
-    })
+    const { container } = render(
+      <div>
+        <span>before </span>
+        <FaNumber value="0912" />
+      </div>,
+    )
+    const outer = container.querySelector('div') as Element
+    // drag from the surrounding text INTO the number: the copy event fires at
+    // the ancestor div, not at the number's span
+    const range = document.createRange()
+    range.selectNodeContents(outer)
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    fireEvent.copy(outer, { clipboardData: { setData } })
+    expect(setData).toHaveBeenCalledWith('text/plain', 'before 0912')
+  })
+
+  it('leaves copies of ordinary text alone', () => {
+    const setData = vi.fn()
+    render(
+      <div>
+        <span>متن بدون رقم</span>
+      </div>,
+    )
+    const span = document.querySelector('span') as Element
+    const range = document.createRange()
+    range.selectNodeContents(span)
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    fireEvent.copy(span, { clipboardData: { setData } })
     expect(setData).not.toHaveBeenCalled()
   })
 
