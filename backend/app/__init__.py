@@ -205,6 +205,7 @@ Version history:
           the selection itself and the hook lives at document level, since a
           hand-dragged selection makes the event fire at an ancestor, not at
           the number's own span
+  1.4.3  release
 """
 
-__version__ = "1.4.3.dev4"
+__version__ = "1.4.3"
