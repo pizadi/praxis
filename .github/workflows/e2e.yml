@@ -22,6 +22,11 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
       - run: npm ci
+      # vite preview serves dist/ — without a build it stays up and 404s every
+      # request (its banner is on ignored stdout), and playwright's url poll
+      # only accepts a <404 status, so the webServer waits out its full 120 s
+      # and times out. Build first.
+      - run: npm run build
       # CI CAN download browsers (the sandbox cannot); the config reads
       # E2E_CHROMIUM_PATH — set to the playwright-installed chromium
       - run: npx playwright install chromium
