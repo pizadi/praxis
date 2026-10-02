@@ -100,6 +100,92 @@ async def test_build_backup_tarball_round_trip(client):
     assert r.content == b"packed-content"
 
 
+def _manifest_tarball(schema_version: int) -> bytes:
+    manifest = json.dumps({
+        "schema_version": schema_version,
+        "app_version": "1.4.5",
+        "tables": {},
+    })
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = manifest.encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+async def test_import_merge_guards(client):
+    """Unknown modes are refused, and pre-1.3 tarballs cannot merge (their
+    legacy rx rows would resurrect next to the re-derived prescriptions)."""
+    token, _ = await login(client)
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", _manifest_tarball(4), "application/gzip")},
+        data={"mode": "bogus"},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "invalid_mode"
+
+    r = await client.post(
+        "/api/v1/admin/backup/import",
+        files={"file": ("b.tar.gz", _manifest_tarball(2), "application/gzip")},
+        data={"mode": "merge"},
+        headers=auth(token),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "merge_unsupported"
+
+
+async def test_import_merge_unions_instead_of_replacing(client):
+    """Merge mode is a union, not a wipe: colliding primary keys take the
+    backup's row, backup-only rows are added, live-only rows survive."""
+    from app.services.backup_import import run_import
+
+    token, pid, fid = await _seed(client)
+
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "pack.tar.gz"
+        build_backup_tarball(
+            database_url=cfg.database_url,
+            upload_dir=cfg.upload_dir,
+            out_path=out,
+            app_version="1.4.5",
+        )
+
+        # diverge from the snapshot: mutate the colliding row, add live-only rows
+        r = await client.patch(
+            f"/api/v1/patients/{pid}",
+            json={"first_name": "Changed"},
+            headers=auth(token),
+        )
+        assert r.status_code == 200
+        r = await client.post(
+            "/api/v1/patients",
+            json={"national_id": "9999999999", "first_name": "Live", "last_name": "Only",
+                  "year_of_birth": "1380", "gender": 1},
+            headers=auth(token),
+        )
+        live_pid = r.json()["id"]
+
+        summary = run_import(str(out), mode="merge")
+        assert summary["mode"] == "merge"
+
+    # the colliding patient took the backup's value again
+    r = await client.get(f"/api/v1/patients/{pid}", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["first_name"] == "Parham"
+    # ...the live-only patient survived (replace would have wiped it)...
+    r = await client.get(f"/api/v1/patients/{live_pid}", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["first_name"] == "Live"
+    # ...and the backup's attachment is intact
+    r = await client.get(f"/api/v1/files/{fid}/download", headers=auth(token))
+    assert r.status_code == 200
+    assert r.content == b"packed-content"
+
+
 async def test_build_backup_tarball_encrypts_and_leaves_no_plaintext(client):
     """With a key: AES-256-GCM wrapper, the plaintext is unlinked, and the
     reported sha256 is of the FINAL (encrypted) artifact — the value a client

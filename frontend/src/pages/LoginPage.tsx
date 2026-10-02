@@ -37,11 +37,12 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
       navigate('/')
     } catch (err) {
       const e = apiError(err)
-      message.error(
-        e.code === 'login_locked'
-          ? 'تلاش‌های ناموفق بیش از حد مجاز؛ کمی بعد دوباره تلاش کنید'
-          : e.message,
-      )
+      // the API's message is English by contract; user-facing copy is Persian
+      const fa: Partial<Record<string, string>> = {
+        login_locked: 'تلاش‌های ناموفق بیش از حد مجاز؛ کمی بعد دوباره تلاش کنید',
+        invalid_credentials: 'نام کاربری یا گذرواژه اشتباه است',
+      }
+      message.error(fa[e.code] ?? e.message)
     } finally {
       setLoading(false)
     }

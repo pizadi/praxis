@@ -8,7 +8,7 @@ from pathlib import Path
 import jwt
 from fastapi import Depends, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -144,6 +144,11 @@ def delete_stored_file(stored_filename: str | None) -> None:
 
 # --- Refresh-token helpers ----------------------------------------------------
 
+# Multi-tab browsers race the same refresh cookie (every page load rotates
+# it); the loser of the race used to be logged out. Reuse within this window
+# is treated as such a race, not token theft — past it, reuse stays rejected.
+REFRESH_REUSE_GRACE = dt.timedelta(seconds=60)
+
 
 async def issue_refresh_token(db: AsyncSession, user: User) -> str:
     from app.core.security import create_refresh_token
@@ -173,9 +178,35 @@ async def rotate_refresh_token(db: AsyncSession, raw_token: str) -> User:
     if row is None:
         raise invalid()
     expires_at = _as_utc(row.expires_at)
-    if row.revoked_at is not None or expires_at is None or expires_at < now:
+    if expires_at is None or expires_at < now:
         raise invalid()
-    row.revoked_at = now
+    if row.revoked_at is not None:
+        # Reuse of a rotated token is theft — unless it was rotated moments
+        # ago by a sibling tab: every page load rotates the shared refresh
+        # cookie, so two tabs racing it is normal and the loser must not be
+        # logged out. The grant needs a LIVE successor created after the
+        # revocation (rotation always issues one; logout does not — logging
+        # out must kill the session instantly). The 5s fudge absorbs app/DB
+        # clock skew between the revoke UPDATE and the successor's now().
+        revoked_at = _as_utc(row.revoked_at)
+        successors = 0
+        if revoked_at is not None and now - revoked_at < REFRESH_REUSE_GRACE:
+            successors = (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(RefreshToken)
+                    .where(
+                        RefreshToken.user_id == row.user_id,
+                        RefreshToken.revoked_at.is_(None),
+                        RefreshToken.created_at
+                        >= revoked_at - dt.timedelta(seconds=5),
+                    )
+                )
+            ) or 0
+        if not successors:
+            raise invalid()
+    else:
+        row.revoked_at = now
     user = await db.scalar(select(User).where(User.id == row.user_id))
     if user is None or not user.is_active or user.deleted_at is not None:
         raise invalid()

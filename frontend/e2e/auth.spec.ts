@@ -11,6 +11,10 @@ test.describe('auth', () => {
     await expect(page.locator('input#username')).toBeVisible() // still the form
     // no menu appeared
     await expect(page.locator('.ant-menu')).toHaveCount(0)
+    // the toast is Persian, not the API's English message
+    await expect(page.locator('.ant-message')).toContainText(
+      'نام کاربری یا گذرواژه اشتباه است',
+    )
   })
 
   test('unknown user gets the SAME generic error (no enumeration)', async ({ page }) => {

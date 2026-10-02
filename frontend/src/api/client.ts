@@ -100,8 +100,12 @@ async function refreshAccessToken(): Promise<string | null> {
     )
     accessToken = res.data.access_token as string
     return accessToken
-  } catch {
-    return null
+  } catch (err) {
+    // A definitive rejection (expired/revoked session) may log the user out;
+    // a transient failure (network blip, 5xx) must not — the session is
+    // likely still valid, so this surfaces as a thrown error instead.
+    if (axios.isAxiosError(err) && err.response?.status === 401) return null
+    throw err
   }
 }
 
@@ -135,10 +139,16 @@ api.interceptors.response.use(
       !isAuthEndpoint
     ) {
       original._retried = true
-      const token = await refreshOnce()
-      if (token) {
-        original.headers.set('Authorization', `Bearer ${token}`)
-        return api(original)
+      try {
+        const token = await refreshOnce()
+        if (token) {
+          original.headers.set('Authorization', `Bearer ${token}`)
+          return api(original)
+        }
+      } catch {
+        // transient refresh failure (network/5xx): fail this request, don't
+        // log the user out of their still-valid session
+        return Promise.reject(error)
       }
       clearAuth()
       window.location.hash = '#/login'

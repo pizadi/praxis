@@ -214,6 +214,16 @@ Version history:
           Persian-glyph display over ASCII copy); the daily schedule shows
           the phone number (copyable) and insurance; the patients list is
           ordered newest-first (created_at desc)
+  1.4.5  multi-tab session kicks fixed: a refresh token rotated seconds ago
+          may be reused once (the sibling tab's refresh is a race, not
+          theft — the grant needs a live successor token, so logout still
+          kills the session instantly; past the 60s window reuse stays a
+          401), and a transient refresh failure no longer logs the user
+          out; the login error toast is Persian («نام کاربری یا گذرواژه
+          اشتباه است»); backup import gains an optional merge mode — the
+          tarball's rows are upserted (same-PK rows take the backup's
+          version) without wiping current data, replace stays the default
+          (and the only mode for pre-1.3 tarballs)
 """
 
-__version__ = "1.4.4"
+__version__ = "1.4.5"

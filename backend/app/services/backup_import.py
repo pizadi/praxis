@@ -152,17 +152,25 @@ def _verify_member_hashes(tar_path: str, expected: dict[str, str]) -> None:
         raise ValueError(f"tarball is missing hashed members: {sorted(remaining)}")
 
 
-def run_import(tar_path: str) -> dict:
+def run_import(tar_path: str, mode: str = "replace") -> dict:
     """Execute the import; raises on any unresolvable error (the caller's
-    DB transaction/lock discipline makes failures non-destructive)."""
+    DB transaction/lock discipline makes failures non-destructive).
+
+    mode="replace" (the default) wipes every table the tarball carries and
+    restores it from the dump. mode="merge" unions the dump into the live
+    tables instead: rows whose primary key collides are overwritten by the
+    backup's row, backup-only rows are added, live-only rows and tables
+    absent from the dump are left untouched.
+    """
     manifest = read_manifest(tar_path)
     _verify_member_hashes(tar_path, manifest.get("member_sha256") or {})
 
     summary = (
-        _import_postgres(tar_path)
+        _import_postgres(tar_path, mode)
         if settings.database_url.startswith("postgres")
-        else _import_sqlite(tar_path)
+        else _import_sqlite(tar_path, mode)
     )
+    summary["mode"] = mode
 
     # uploads: staging inside UPLOAD_DIR (same volume/filesystem), moved
     # into place after the DB transaction has committed
@@ -189,7 +197,37 @@ def _pg_fallback_expr(data_type: str) -> str:
     return "NULL"
 
 
-def _import_postgres(tar_path: str) -> dict:
+def _pg_pk_cols(cur, table: str) -> list[str]:
+    """Primary-key columns of a live table, in key order (composite PKs
+    included — the M2M link tables have no id column)."""
+    cur.execute(
+        "SELECT a.attname FROM pg_index i "
+        "JOIN pg_class c ON c.oid = i.indrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+        "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
+        "WHERE i.indisprimary AND c.relname = %s AND n.nspname = 'public' "
+        "ORDER BY k.ord",
+        (table,),
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
+def _upsert_suffix(pk: list[str], set_cols: list[str]) -> str:
+    """SQL tail turning an INSERT into a merge-mode upsert ("" without a PK —
+    a collision then fails loudly). Only dump-carried columns are overwritten;
+    on a pure-PK table (the plain link tables) a collision is a no-op."""
+    if not pk:
+        return ""
+    target = ", ".join(f'"{c}"' for c in pk)
+    updates = [c for c in set_cols if c not in pk]
+    if not updates:
+        return f" ON CONFLICT ({target}) DO NOTHING"
+    set_sql = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in updates)
+    return f" ON CONFLICT ({target}) DO UPDATE SET {set_sql}"
+
+
+def _import_postgres(tar_path: str, mode: str = "replace") -> dict:
     import psycopg2
 
     from app.services.backup_state import psycopg2_url
@@ -244,7 +282,7 @@ def _import_postgres(tar_path: str) -> dict:
                     and m.name.lstrip("./").endswith(".copy")
                 }
                 to_replace = existing & dumped_tables
-                if to_replace:
+                if to_replace and mode != "merge":
                     cur.execute(
                         f'TRUNCATE {", ".join(to_replace)} CASCADE'  # noqa: S608
                     )
@@ -337,7 +375,15 @@ def _import_postgres(tar_path: str) -> dict:
                         loaded[t] = -1  # filled with real counts below
                         continue
 
-                    if cols and len(cols) < len(live):
+                    # merge mode always stages + upserts (COPY cannot resolve
+                    # conflicts); replace stages only when the dump lacks
+                    # columns of the live table
+                    suffix = (
+                        _upsert_suffix(_pg_pk_cols(cur, t), cols or [])
+                        if mode == "merge"
+                        else ""
+                    )
+                    if cols and (suffix or len(cols) < len(live)):
                         # the dump lacks columns of the live table: stage into a
                         # constraint-free temp table, then INSERT with type-aware
                         # fallbacks for the columns the dump doesn't carry
@@ -366,7 +412,7 @@ def _import_postgres(tar_path: str) -> dict:
                         ]
                         cur.execute(
                             f'INSERT INTO "{t}" ({", ".join(target_cols)}) '  # noqa: S608
-                            f"SELECT {', '.join(select_exprs)} FROM \"{tmp}\""
+                            f"SELECT {', '.join(select_exprs)} FROM \"{tmp}\"" + suffix
                         )
                         cur.execute(f'DROP TABLE "{tmp}"')  # noqa: S608
                     else:
@@ -600,7 +646,19 @@ def _rederive_prescriptions_sqlite(con: sqlite3.Connection) -> tuple[int, int, i
     return (n_rx, n_items, n_links)
 
 
-def _import_sqlite(tar_path: str) -> dict:
+def _sqlite_upsert_suffix(pk_cols: list[str], set_cols: list[str]) -> str:
+    """SQLite twin of _upsert_suffix for merge mode ("" without a PK)."""
+    if not pk_cols:
+        return ""
+    target = ", ".join(f'"{c}"' for c in pk_cols)
+    updates = [c for c in set_cols if c not in pk_cols]
+    if not updates:
+        return f" ON CONFLICT ({target}) DO NOTHING"
+    set_sql = ", ".join(f'"{c}" = excluded."{c}"' for c in updates)
+    return f" ON CONFLICT ({target}) DO UPDATE SET {set_sql}"
+
+
+def _import_sqlite(tar_path: str, mode: str = "replace") -> dict:
     db_file = settings.database_url.split("///", 1)[-1]
     aux_path: str | None = None
     # uri=True enables URI filenames on this connection — required for
@@ -657,9 +715,11 @@ def _import_sqlite(tar_path: str) -> dict:
             con.execute("BEGIN")
             summary_skew: dict[str, dict] = {}
             try:
-                # clear only the dump's tables (absent tables keep their data)
-                for t in set(aux_tables) & live_tables:
-                    con.execute(f'DELETE FROM main."{_qi(t)}"')  # noqa: S608
+                # clear only the dump's tables (absent tables keep their data);
+                # merge mode keeps even those and upserts instead
+                if mode != "merge":
+                    for t in set(aux_tables) & live_tables:
+                        con.execute(f'DELETE FROM main."{_qi(t)}"')  # noqa: S608
                 loaded = {}
                 skew: dict[str, dict] = {}
                 for t in aux_tables:
@@ -704,9 +764,24 @@ def _import_sqlite(tar_path: str) -> dict:
                     sel_sql = ", ".join(f'"{c}"' for c in common) + (
                         (", " + ", ".join(fill_exprs)) if fill_exprs else ""
                     )
+                    # merge mode: upsert the union (SQLite demands `WHERE true`
+                    # between a SELECT and the ON CONFLICT clause); colliding
+                    # PKs take the backup's dump-carried columns, live-only
+                    # rows and columns survive
+                    suffix = ""
+                    if mode == "merge":
+                        pk_cols = [
+                            r[1]
+                            for r in sorted(
+                                (r for r in live_info if r[5] > 0), key=lambda r: r[5]
+                            )
+                        ]
+                        suffix = _sqlite_upsert_suffix(pk_cols, common)
                     cur = con.execute(
                         f'INSERT INTO main."{_qi(t)}" ({col_sql}) '  # noqa: S608
                         f'SELECT {sel_sql} FROM aux."{_qi(t)}"'
+                        + (" WHERE true" if suffix else "")
+                        + suffix
                     )
                     loaded[t] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
                 # importing a pre-1.3 backup: prescriptions are absent from

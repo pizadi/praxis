@@ -178,6 +178,22 @@ uploads/<name>           the uploaded patient files
   (`manifest.json`, `db/…`, `uploads/…`), zip-slip guards, size caps —
   invalid → 422 `invalid_backup`.
 
+### Import modes (replace vs merge)
+
+- `mode=replace` (default) wipes every table the tarball carries and restores
+  it from the dump — the classic restore.
+- `mode=merge` is a **union**: the dump's rows are upserted instead — a row
+  whose primary key collides (single `id` PKs and the composite link-table
+  PKs alike) is **overwritten by the backup's row**, backup-only rows are
+  added, and live-only rows plus tables absent from the dump are left
+  untouched. Columns the dump doesn't carry keep their live values on
+  conflict. Nothing is truncated, so a partial tarball merges naturally.
+  Merging mixes two snapshots' histories by ID — merge between backups of
+  the same lineage; cross-lineage merges can point old IDs at different
+  entities (no FK error, but semantics move). **Pre-1.3 tarballs cannot
+  merge** (422 `merge_unsupported`): their legacy `rx` rows would resurrect
+  next to the re-derived prescriptions.
+
 ### Version rules
 
 - `schema_version` **newer than supported** (currently 4) → 422
@@ -204,11 +220,14 @@ uploads/<name>           the uploaded patient files
 ### Mechanics
 
 - PostgreSQL: one REPEATABLE READ transaction — `TRUNCATE` the dump's
-  tables (CASCADE), `COPY` each with the manifest column list, re-sync
-  serial sequences from `max(id)`, commit.
+  tables (CASCADE) in replace mode, `COPY`/upsert each with the manifest
+  column list (merge mode stages into a temp table and
+  `INSERT … ON CONFLICT DO UPDATE`), re-sync serial sequences from
+  `max(id)`, commit.
 - SQLite (dev/tests): `ATTACH` the archived database read-only and
   `INSERT … SELECT` table-by-table in one transaction (no file swapping —
-  safe against the live connection pool).
+  safe against the live connection pool); replace deletes the dump's rows
+  first, merge appends `ON CONFLICT … DO UPDATE` instead.
 - uploads/: extracted into `UPLOAD_DIR/.import-<ts>/` staging, then moved
   into place after the DB commit (merge — pre-existing files not in the
   tarball stay until the automatic purge reclaims them).

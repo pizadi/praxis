@@ -5,6 +5,7 @@ import {
   App as AntApp,
   Button,
   Card,
+  Checkbox,
   Progress,
   Space,
   Spin,
@@ -135,11 +136,14 @@ export default function BackupPage() {
 
   const [uploadPct, setUploadPct] = useState<number | null>(null)
   const [hashPct, setHashPct] = useState<number | null>(null)
+  // false = replace (wipe + restore, the classic restore), true = merge (union)
+  const [merge, setMerge] = useState(false)
 
   const doImport = async (f: RcFile, force: boolean, sha256?: string) => {
     const fd = new FormData()
     fd.append('file', f)
     fd.append('force', force ? 'true' : 'false')
+    fd.append('mode', merge ? 'merge' : 'replace')
     if (sha256) fd.append('expected_sha256', sha256)
     setUploadPct(0)
     try {
@@ -317,11 +321,25 @@ export default function BackupPage() {
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            پروندهٔ پشتیبان (tar.gz) داده‌های فعلی را جایگزین می‌کند: پایگاه داده و
-            فایل‌های بارگذاری‌شده به حالت زمان ساخت پشتیبان برمی‌گردند. پشتیبان‌های
-            نسخه‌های قدیمی‌تر پذیرفته می‌شوند؛ پشتیبانِ ساخته‌شده با نسخهٔ جدیدتر
-            سامانه، پیش از واردسازی تأیید جداگانه می‌خواهد.
+            پروندهٔ پشتیبان (tar.gz) به‌صورت پیش‌فرض داده‌های فعلی را جایگزین می‌کند:
+            پایگاه داده و فایل‌های بارگذاری‌شده به حالت زمان ساخت پشتیبان برمی‌گردند.
+            پشتیبان‌های نسخه‌های قدیمی‌تر پذیرفته می‌شوند؛ پشتیبانِ ساخته‌شده با نسخهٔ
+            جدیدتر سامانه، پیش از واردسازی تأیید جداگانه می‌خواهد.
           </Typography.Text>
+          <Checkbox
+            checked={merge}
+            onChange={(e) => setMerge(e.target.checked)}
+            disabled={ist === 'importing' || uploadPct != null}
+          >
+            ادغام با داده‌های فعلی
+          </Checkbox>
+          {merge && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              در حالت ادغام داده‌های فعلی پاک نمی‌شوند: ردیف‌های پشتیبان اضافه می‌شوند و
+              ردیف‌های هم‌کلید با نسخهٔ پشتیبان بازنویسی می‌شوند؛ بقیهٔ داده‌های فعلی
+              دست‌نخورده می‌مانند.
+            </Typography.Text>
+          )}
           {importFile && (
             <Typography.Text style={{ fontSize: 12 }}>
               فایل انتخاب‌شده: {importFile.name}

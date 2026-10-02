@@ -4,12 +4,6 @@ import { apiAppointment, apiPatient, login } from './helpers'
 
 const UNIQUE = Date.now().toString().slice(-8)
 
-/** ASCII digits → Persian, mirroring the UI's FaNumber rendering. */
-function toFa(s: string): string {
-  const fa = '۰۱۲۳۴۵۶۷۸۹'
-  return s.replace(/[0-9]/g, (d) => fa[Number(d)])
-}
-
 /** Fill the patient modal: the gender Select is the first .ant-select and is
  * REQUIRED — the form submits only once it carries a value. */
 async function fillPatientModal(page: import('@playwright/test').Page, nationalId: string, firstName: string) {
@@ -42,9 +36,9 @@ test.describe('patients', () => {
     await search.press('Enter') // Input.Search fires onSearch on Enter, not on fill
     const row = page.locator('.ant-table-tbody tr.ant-table-row', { hasText: 'نیما مهربان' })
     await expect(row).toBeVisible({ timeout: 10_000 })
-    // national IDs read as Persian digits — real, selectable text; the ASCII
-    // clipboard form is pinned by the FaNumber unit tests (copy hook + button)
-    await expect(row.locator('.fa-num').first()).toContainText('۰۹')
+    // national IDs display as ASCII digits since 1.4.4 (copyable as-is);
+    // the Persian-glyph layer is pinned by the FaNumber unit tests
+    await expect(row.locator('.fa-num').first()).toContainText(`09${UNIQUE}`)
   })
 
   test('the list shows the insurance type', async ({ page }) => {
@@ -57,7 +51,7 @@ test.describe('patients', () => {
     // .ant-table-row skips antd's hidden measure row
     const row = page.locator('.ant-table-tbody tr.ant-table-row').first()
     await expect(row).toBeVisible({ timeout: 10_000 })
-    await expect(row.locator('.fa-num').first()).toHaveText(toFa(p.national_id))
+    await expect(row.locator('.fa-num').first()).toHaveText(p.national_id)
     await expect(row).toContainText('بیمه تکمیلی')
   })
 

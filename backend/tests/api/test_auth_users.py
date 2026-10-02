@@ -69,7 +69,10 @@ async def test_refresh_rotation(client):
     assert new_csrf and new_csrf != old_csrf
     assert "refresh_token" not in r.json()
 
-    # The old refresh cookie must now be rejected (single use).
+    # The old refresh cookie, replayed at once, is inside the reuse grace
+    # window (two tabs racing the same cookie must not log each other out):
+    # it is honored once — a live successor from the rotation exists — and
+    # gets its own fresh token.
     client.cookies.clear()
     client.cookies.set(
         "praxis_refresh", old_refresh, domain="test.local", path="/api/v1/auth"
@@ -77,6 +80,29 @@ async def test_refresh_rotation(client):
     client.cookies.set("praxis_csrf", new_csrf or "", domain="test.local", path="/")
     r = await client.post(
         "/api/v1/auth/refresh", headers={"X-CSRF-Token": new_csrf or ""}
+    )
+    assert r.status_code == 200
+    grace_refresh = r.cookies.get("praxis_refresh")
+    assert grace_refresh and grace_refresh not in (old_refresh, new_refresh)
+
+    # Past the grace window the same replay is theft again: backdate the
+    # revocation beyond it.
+    client.cookies.set(
+        "praxis_refresh", old_refresh, domain="test.local", path="/api/v1/auth"
+    )
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as db:
+        await db.execute(
+            text(
+                "UPDATE refresh_tokens SET revoked_at = :t WHERE revoked_at IS NOT NULL"
+            ),
+            {"t": dt.datetime.now(dt.UTC) - dt.timedelta(minutes=5)},
+        )
+        await db.commit()
+    r = await client.post(
+        "/api/v1/auth/refresh",
+        headers={"X-CSRF-Token": client.cookies.get("praxis_csrf") or ""},
     )
     assert r.status_code == 401
 

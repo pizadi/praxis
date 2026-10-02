@@ -465,6 +465,7 @@ async def import_backup(
     request: Request,
     file: UploadFile = File(...),
     force: bool = Form(False),
+    mode: str = Form("replace"),
     expected_sha256: str = Form(""),
     db=Depends(get_db),
     user: User = Depends(require_perm("backup.manage")),
@@ -485,6 +486,14 @@ async def import_backup(
     column lists; a NEWER app_version refuses with 409 `newer_version`
     unless force=true — and even then any unresolvable error rolls the
     whole import back.
+
+    Modes: "replace" (default) wipes every table the tarball carries and
+    restores it from the dump. "merge" unions the dump into the live tables
+    instead — rows whose primary key collides are overwritten by the
+    backup's row, backup-only rows are added, live-only rows and tables
+    absent from the dump are left untouched (pre-1.3 tarballs cannot merge:
+    their legacy rx rows would resurrect next to the re-derived
+    prescriptions).
     """
     if not JOB_LOCK.acquire(blocking=False):
         raise ConflictError("A backup or import job is already running", code="backup_running")
@@ -538,6 +547,17 @@ async def import_backup(
                 f"Invalid backup tarball: {exc}", code="invalid_backup"
             ) from None
 
+        if mode not in ("replace", "merge"):
+            raise BusinessRuleError(
+                f"Unknown import mode: {mode}", code="invalid_mode"
+            )
+        if mode == "merge" and manifest.get("schema_version", 1) < 3:
+            raise BusinessRuleError(
+                "Merge import needs a current-schema (v1.3+) backup; "
+                "pre-1.3 tarballs can only replace the database",
+                code="merge_unsupported",
+            )
+
         newer = import_version_gate(manifest, force)
         if newer is not None:
             os.unlink(tar_path)
@@ -546,7 +566,7 @@ async def import_backup(
         import_status_update("importing", summary=None, error=None)
         threading.Thread(
             target=_run_import_job,
-            args=(tar_path, manifest.get("app_version"), force),
+            args=(tar_path, manifest.get("app_version"), force, mode),
             name="clinic-import",
             daemon=True,
         ).start()
@@ -569,6 +589,7 @@ async def import_backup(
             "app_version": manifest.get("app_version"),
             "schema_version": manifest.get("schema_version", 1),
             "forced": force,
+            "mode": mode,
             "encrypted": was_encrypted,
             "checksum_verified": bool(expected_sha256.strip()),
         },
@@ -608,9 +629,11 @@ def import_version_gate(manifest: dict, force: bool) -> Exception | None:
     return None
 
 
-def _run_import_job(tar_path: str, producer_version: str | None, forced: bool) -> None:
+def _run_import_job(
+    tar_path: str, producer_version: str | None, forced: bool, mode: str = "replace"
+) -> None:
     try:
-        summary = run_import(tar_path)
+        summary = run_import(tar_path, mode=mode)
         import_status_update("done", summary=summary, error=None)
         logging.getLogger("clinic.backup").info("import finished: %s", summary)
     except Exception as exc:  # noqa: BLE001 — the job thread must never crash loudly

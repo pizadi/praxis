@@ -33,6 +33,14 @@
 - `/auth/login` and `/auth/refresh` return only the access token; refresh
   tokens rotate in cookies. Reusing a rotated token → 401; the newest token
   stays valid (no token-family revocation — accepted at this scale).
+  **Multi-tab grace:** every page load rotates the shared cookie, so two
+  tabs racing the same refresh is normal — a reuse within
+  `REFRESH_REUSE_GRACE` (60s) of its rotation is honored **once** when a
+  live successor token exists (rotation always issues one; logout does
+  not, so logout kills the session instantly). Past the window, reuse is
+  a 401 again (theft detection). The client also never logs the user out
+  on a *transient* refresh failure (network blip / 5xx) — only a
+  definitive 401 does.
 - `POST /auth/logout` requires the CSRF header, revokes the cookie's refresh
   token, clears both session cookies, and writes an `audit_log` row (action
   `logout`, entity `session`).
