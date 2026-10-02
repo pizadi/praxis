@@ -206,6 +206,14 @@ Version history:
           hand-dragged selection makes the event fire at an ancestor, not at
           the number's own span
   1.4.3  release
+  1.4.4  today's payments: the grand total (and the POS/cash day totals) come
+          from the unpaged summary endpoint (a page-items reduce only ever
+          summed the first 50 rows) and the table's page navigator actually
+          refetches (offset wired, reset on day change); national IDs and
+          phone numbers render as ASCII digits everywhere (no more
+          Persian-glyph display over ASCII copy); the daily schedule shows
+          the phone number (copyable) and insurance; the patients list is
+          ordered newest-first (created_at desc)
 """
 
-__version__ = "1.4.3"
+__version__ = "1.4.4"

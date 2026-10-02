@@ -295,9 +295,9 @@ export default function PatientsPage() {
                       <StackCell
                         main={<Link to={`/patients/${p.id}`}>{`${p.first_name} ${p.last_name}`}</Link>}
                         lines={[
-                          <CopyNumber key="nid" value={p.national_id} />,
+                          <CopyNumber key="nid" value={p.national_id} ascii />,
                           p.phone_number ? (
-                            <CopyNumber key="phone" value={p.phone_number} />
+                            <CopyNumber key="phone" value={p.phone_number} ascii />
                           ) : null,
                           p.insurance || null,
                           p.tags.length + p.diagnoses.length > 0 ? (
@@ -330,12 +330,12 @@ export default function PatientsPage() {
                     {
                       title: 'کد ملی',
                       dataIndex: 'national_id',
-                      render: (v: string) => <CopyNumber value={v} />,
+                      render: (v: string) => <CopyNumber value={v} ascii />,
                     },
                     {
                       title: 'تلفن',
                       dataIndex: 'phone_number',
-                      render: (v: string | null) => (v ? <CopyNumber value={v} /> : '—'),
+                      render: (v: string | null) => (v ? <CopyNumber value={v} ascii /> : '—'),
                     },
                     {
                       title: 'بیمه',

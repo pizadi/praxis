@@ -12,6 +12,7 @@ import { LAST_STAGE, stageOf } from '../lib/stages'
 import { localToday, serverToday } from '../lib/today'
 import { JalaliDatePicker } from '../components/JalaliDates'
 import { useUser } from '../components/AppLayout'
+import CopyNumber from '../components/CopyNumber'
 
 function shiftDay(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00`) // midday avoids DST boundary issues
@@ -110,9 +111,17 @@ export default function SchedulePage() {
                       </Space>
                     }
                     description={
-                      <>
-                        کد ملی: <FaNumber value={a.patient_national_id} />
-                      </>
+                      <Space size={12} wrap>
+                        <span>
+                          کد ملی: <CopyNumber value={a.patient_national_id} ascii />
+                        </span>
+                        {a.patient_phone_number ? (
+                          <span>
+                            تلفن: <CopyNumber value={a.patient_phone_number} ascii />
+                          </span>
+                        ) : null}
+                        {a.patient_insurance ? <span>بیمه: {a.patient_insurance}</span> : null}
+                      </Space>
                     }
                   />
                 </List.Item>

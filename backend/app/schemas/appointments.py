@@ -36,6 +36,8 @@ class AppointmentBrief(BaseModel):
     patient_first_name: str
     patient_last_name: str
     patient_national_id: str
+    patient_phone_number: str
+    patient_insurance: str | None
 
 
 class AppointmentOut(BaseModel):

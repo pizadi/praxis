@@ -153,7 +153,7 @@ async def list_patients(
         ).group_by(Patient.id).having(
             func.count(func.distinct(Diagnosis.id)) == len(set(diags))
         )
-    stmt = stmt.order_by(Patient.last_name, Patient.first_name)
+    stmt = stmt.order_by(Patient.created_at.desc(), Patient.id.desc())
     limit, offset = clamp_limit_offset(limit, offset)
     items, total = await paginate(db, stmt, limit=limit, offset=offset)
     return Page(

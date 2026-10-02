@@ -56,7 +56,7 @@ export default function DashboardPage() {
                 description={
                   <>
                     ساعت <FaNumber value={formatJalaliTime(a.scheduled_at)} /> — کد ملی{' '}
-                    <FaNumber value={a.patient_national_id} />
+                    <FaNumber value={a.patient_national_id} ascii />
                   </>
                 }
               />

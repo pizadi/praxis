@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { api, apiAppointment, apiPatient, login } from './helpers'
+import { apiAppointment, apiPatient, login } from './helpers'
 
 const UNIQUE = Date.now().toString().slice(-8)
 

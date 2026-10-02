@@ -39,14 +39,21 @@ function shiftDay(iso: string, days: number): string {
 
 export default function TodayPaymentsPage() {
   const [date, setDate] = useState<string>(localToday())
+  const [page, setPage] = useState(1)
   useEffect(() => {
     serverToday().then(setDate)
   }, [])
+  // a new day starts at page 1
+  useEffect(() => {
+    setPage(1)
+  }, [date])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['payments', date],
+    queryKey: ['payments', date, page],
     queryFn: async () =>
-      (await api.get<Page<PatientPayment>>('/payments', { params: { date } })).data,
+      (await api.get<Page<PatientPayment>>('/payments', {
+        params: { date, limit: 50, offset: (page - 1) * 50 },
+      })).data,
   })
 
   const summary = useQuery({
@@ -56,7 +63,12 @@ export default function TodayPaymentsPage() {
   })
 
   const items = data?.items ?? []
-  const total = items.reduce((s, p) => s + p.amount, 0)
+  // day-wide aggregates come from the unpaged summary endpoint — reducing the
+  // current page's items would only ever sum the first 50 rows
+  const rows = summary.data ?? []
+  const dayTotal = rows.reduce((s, r) => s + r.total_amount, 0)
+  const posTotal = rows.reduce((s, r) => s + r.pos_amount, 0)
+  const cashTotal = rows.reduce((s, r) => s + r.cash_amount, 0)
 
   return (
     <div>
@@ -81,21 +93,39 @@ export default function TodayPaymentsPage() {
             <FaNumber value={formatJalali(date)} />
           </Typography.Text>
           <Row gutter={[16, 16]}>
-            <Col xs={24} sm={12} md={8}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="جمع پرداخت‌ها"
-                  value={total}
-                  valueRender={() => <FaNumber value={formatMoney(total)} />}
+                  value={dayTotal}
+                  valueRender={() => <FaNumber value={formatMoney(dayTotal)} />}
                 />
               </Card>
             </Col>
-            <Col xs={24} sm={12} md={8}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="تعداد تراکنش‌ها"
                   value={data?.total ?? 0}
                   valueRender={() => <FaNumber value={data?.total ?? 0} />}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Card>
+                <Statistic
+                  title="کارت‌خوان"
+                  value={posTotal}
+                  valueRender={() => <FaNumber value={formatMoney(posTotal)} />}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Card>
+                <Statistic
+                  title="نقدی"
+                  value={cashTotal}
+                  valueRender={() => <FaNumber value={formatMoney(cashTotal)} />}
                 />
               </Card>
             </Col>
@@ -135,9 +165,14 @@ export default function TodayPaymentsPage() {
             dataSource={items}
             locale={{ emptyText: 'پرداختی در این روز ثبت نشده است' }}
             scroll={{ x: 'max-content' }}
-            pagination={
-              (data?.total ?? 0) > 50 ? { pageSize: 50, total: data?.total } : false
-            }
+            pagination={{
+              current: page,
+              pageSize: 50,
+              total: data?.total ?? 0,
+              onChange: setPage,
+              hideOnSinglePage: true,
+              showSizeChanger: false,
+            }}
             columns={[
               {
                 title: 'ساعت',

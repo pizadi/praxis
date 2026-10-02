@@ -67,15 +67,19 @@ export default function FaNumber({
   className,
   style,
   title,
+  ascii = false,
 }: {
   value: string | number | null | undefined
   className?: string
   style?: CSSProperties
   title?: string
+  /** Render ASCII digits instead of Persian (national IDs, phone numbers —
+   * read/copied as-is, no copy-hook translation needed). */
+  ascii?: boolean
 }): ReactElement | null {
   installCopyHook()
   if (value === null || value === undefined || value === '') return null
-  const ascii = toEnDigits(String(value))
+  const asciiText = toEnDigits(String(value))
   return (
     <span
       className={className ? `fa-num ${className}` : 'fa-num'}
@@ -86,7 +90,7 @@ export default function FaNumber({
       // bidi run (a stray number must not reorder the text around it)
       dir="ltr"
     >
-      {toFaDigits(ascii)}
+      {ascii ? asciiText : toFaDigits(asciiText)}
     </span>
   )
 }

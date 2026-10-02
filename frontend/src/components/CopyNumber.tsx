@@ -15,9 +15,12 @@ import FaNumber from './FaNumber'
 export default function CopyNumber({
   value,
   title,
+  ascii = false,
 }: {
   value: string | number | null | undefined
   title?: string
+  /** Render ASCII digits instead of Persian (national IDs, phone numbers). */
+  ascii?: boolean
 }) {
   const { message } = AntApp.useApp()
   const { token } = antdTheme.useToken()
@@ -36,7 +39,7 @@ export default function CopyNumber({
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-      <FaNumber value={value} title={title} />
+      <FaNumber value={value} title={title} ascii={ascii} />
       <Button
         type="text"
         size="small"

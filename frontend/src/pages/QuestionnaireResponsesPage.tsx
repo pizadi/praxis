@@ -89,7 +89,7 @@ export default function QuestionnaireResponsesPage() {
         width: 130,
         render: (_, r) => (
           <span style={{ fontFamily: 'monospace' }}>
-            <FaNumber value={r.patient_national_id} />
+            <FaNumber value={r.patient_national_id} ascii />
           </span>
         ),
       },

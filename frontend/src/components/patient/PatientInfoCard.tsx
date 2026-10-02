@@ -37,10 +37,10 @@ export default function PatientInfoCard({ patient, canDelete, onEdit, onDelete }
     >
       <Descriptions bordered column={1} size="small">
         <Descriptions.Item label="کد ملی">
-          <CopyNumber value={patient.national_id} />
+          <CopyNumber value={patient.national_id} ascii />
         </Descriptions.Item>
         <Descriptions.Item label="تلفن">
-          {patient.phone_number ? <CopyNumber value={patient.phone_number} /> : '—'}
+          {patient.phone_number ? <CopyNumber value={patient.phone_number} ascii /> : '—'}
         </Descriptions.Item>
         <Descriptions.Item label="بیمه">{patient.insurance || '—'}</Descriptions.Item>
         <Descriptions.Item label="سال تولد">
