@@ -22,7 +22,7 @@ import {
 
 import { api, apiError } from '../api/client'
 import type { Page, QuestionnaireTemplate } from '../api/types'
-import { toFaDigits } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import type { FormatDoc } from '../lib/questionnaire'
 import { useIsMobile } from '../lib/useIsMobile'
 import StackCell from '../components/StackCell'
@@ -218,7 +218,9 @@ export default function QuestionnairesPage() {
                         main={template.name}
                         lines={[
                           template.description || null,
-                          `${toFaDigits((template.format?.questions ?? []).length)} پرسش`,
+                          <span>
+                            <FaNumber value={(template.format?.questions ?? []).length} /> پرسش
+                          </span>,
                         ]}
                       />
                     ),

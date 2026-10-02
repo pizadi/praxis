@@ -258,3 +258,15 @@ body,
 .q-gap:hover .ant-btn {
   opacity: 1;
 }
+
+/* --- FaNumber ---------------------------------------------------------------
+   Persian digits on screen, ASCII digits in the clipboard: the digits are
+   REAL (selectable) Persian text and a `copy` listener on the element swaps
+   the clipboard back to ASCII as the selection leaves. See
+   components/FaNumber.tsx. */
+.fa-num {
+  /* numbers read left-to-right even inside RTL text: 1,250,000 not 000,052,1 */
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+}

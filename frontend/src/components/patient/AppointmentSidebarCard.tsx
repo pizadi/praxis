@@ -8,6 +8,7 @@ import { theme as antdTheme } from 'antd'
 
 import type { AppointmentBrief } from '../../api/types'
 import { formatJalali, formatJalaliTime } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 import { LAST_STAGE, stageOf } from '../../lib/stages'
 
 interface Props {
@@ -66,7 +67,7 @@ export default function AppointmentSidebarCard({
                 <Space direction="vertical" size={0}>
                   <Space size={6} wrap>
                     <Typography.Text strong>
-                      {formatJalali(appointment.scheduled_at)}
+                      <FaNumber value={formatJalali(appointment.scheduled_at)} />
                     </Typography.Text>
                     <Tag
                       color={stage.color}
@@ -76,7 +77,7 @@ export default function AppointmentSidebarCard({
                     </Tag>
                   </Space>
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    ساعت {formatJalaliTime(appointment.scheduled_at)}
+                    ساعت <FaNumber value={formatJalaliTime(appointment.scheduled_at)} />
                   </Typography.Text>
                 </Space>
                 <Space>

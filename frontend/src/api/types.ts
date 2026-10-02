@@ -82,6 +82,8 @@ export interface AppointmentBrief {
   patient_first_name: string
   patient_last_name: string
   patient_national_id: string
+  patient_phone_number: string
+  patient_insurance: string | null
 }
 
 export interface Transaction {

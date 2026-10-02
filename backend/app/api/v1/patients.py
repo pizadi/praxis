@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_perm
@@ -65,7 +65,9 @@ async def list_patients(
 ):
     """Search patients. All filtering happens in SQL.
 
-    q: fuzzy across first/last/national id/phone; phone: digits-contains;
+    q: fuzzy across the SPACE-JOINED patient fields (first/last name,
+    national id, phone, insurance) — so «علی رضایی» matches a first+last
+    concatenation, not just single fields; phone: digits-contains;
     insurance: ilike contains; year_of_birth: digits-contains;
     gender: exact (0=male, 1=female);
     tag_ids/diagnosis_ids: comma lists, patients must have ALL of them.
@@ -74,14 +76,18 @@ async def list_patients(
     stmt = select(Patient).where(Patient.deleted_at.is_(None))
     if q:
         like = like_contains(q)
-        stmt = stmt.where(
-            or_(
-                Patient.first_name.ilike(like, escape=LIKE_ESCAPE),
-                Patient.last_name.ilike(like, escape=LIKE_ESCAPE),
-                Patient.national_id.like(like, escape=LIKE_ESCAPE),
-                Patient.phone_number.like(like, escape=LIKE_ESCAPE),
-            )
+        haystack = (
+            func.coalesce(Patient.first_name, "")
+            + " "
+            + func.coalesce(Patient.last_name, "")
+            + " "
+            + func.coalesce(Patient.national_id, "")
+            + " "
+            + func.coalesce(Patient.phone_number, "")
+            + " "
+            + func.coalesce(Patient.insurance, "")
         )
+        stmt = stmt.where(haystack.ilike(like, escape=LIKE_ESCAPE))
     if national_id:
         stmt = stmt.where(
             Patient.national_id.like(
@@ -147,7 +153,7 @@ async def list_patients(
         ).group_by(Patient.id).having(
             func.count(func.distinct(Diagnosis.id)) == len(set(diags))
         )
-    stmt = stmt.order_by(Patient.last_name, Patient.first_name)
+    stmt = stmt.order_by(Patient.created_at.desc(), Patient.id.desc())
     limit, offset = clamp_limit_offset(limit, offset)
     items, total = await paginate(db, stmt, limit=limit, offset=offset)
     return Page(

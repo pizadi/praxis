@@ -32,9 +32,8 @@ import type {
 } from '../api/types'
 import type { Answers, FormatDoc } from '../lib/questionnaire'
 import { faAnswerError, mergeResponse } from '../lib/questionnaire'
-import { useUser } from '../components/AppLayout'
 import { useBeforeUnloadGuard, useNavGuard } from '../components/NavGuard'
-import { useIsMobile } from '../lib/useIsMobile'
+import { useUser } from '../components/AppLayout'
 import { JalaliDateTimePicker } from '../components/JalaliDates'
 import AppointmentPanel, { type AppointmentPanelHandle } from '../components/AppointmentPanel'
 import FileDetailPane from '../components/FileDetailPane'
@@ -67,7 +66,6 @@ export default function PatientDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { hasPerm } = useUser()
-  const isMobile = useIsMobile()
   const { message } = AntApp.useApp()
   const qc = useQueryClient()
 
@@ -582,7 +580,6 @@ export default function PatientDetailPage() {
               loading={allFiles.isLoading}
               selectedId={selectedFileId}
               canWrite={hasPerm('files.write')}
-              isMobile={isMobile}
               onSelect={setSelectedFileId}
               onNew={() => setUploadOpen(true)}
             />
@@ -613,6 +610,7 @@ export default function PatientDetailPage() {
               selectedId={qSelectedId}
               canFill={qCanFill}
               templatesTotal={qTemplates.data?.total ?? 0}
+              templates={qTemplates.data?.items ?? []}
               onSelect={(responseId) => {
                 setQSelectedId(responseId)
                 setQMode('view')

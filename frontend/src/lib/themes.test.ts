@@ -20,11 +20,11 @@ describe('vibefarsi palettes', () => {
     ])
   })
 
-  it('defaults to graphite and falls back to it on unknown ids', () => {
-    expect(DEFAULT_THEME).toBe('graphite')
-    expect(getTheme('graphite').id).toBe('graphite')
-    expect(getTheme('nonexistent')).toBe(THEMES[0])
-    expect(getTheme(null)).toBe(THEMES[0])
+  it('defaults to lapis and falls back to it on unknown ids', () => {
+    expect(DEFAULT_THEME).toBe('lapis')
+    expect(getTheme('lapis').id).toBe('lapis')
+    expect(getTheme('nonexistent')).toBe(getTheme('lapis'))
+    expect(getTheme(null)).toBe(getTheme('lapis'))
   })
 
   it('has exactly one light scheme (paper) and defaults to dark', () => {
@@ -70,10 +70,15 @@ describe('vibefarsi palettes', () => {
     }
   })
 
-  it('pairs a text-on-solid color with the primary (light primary → dark text)', () => {
+  it('pairs the solid-button text color with the primary (light primary → dark text)', () => {
     for (const t of THEMES) {
       const primary = t.seed.colorPrimary as string
-      const solid = t.map.colorTextLightSolid
+      // set at the COMPONENT level: antd's alias stage re-derives
+      // colorTextLightSolid from colorWhite AFTER the map, so a map entry
+      // would be silently discarded (graphite's white-on-white bug)
+      const solid = t.components.Button.primaryColor
+      expect(solid, `${t.id} sets Button.primaryColor`).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(t.map.colorTextLightSolid, `${t.id} map must not carry a dead token`).toBeUndefined()
       // the pair must differ strongly: crude luminance check via hex distance
       const dist = (a: string, b: string) => {
         const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16))
@@ -98,6 +103,5 @@ describe('vibefarsi palettes', () => {
     const fakeSeed = { colorPrimary: '#000000' } as unknown as Parameters<typeof algo>[0]
     const result = algo(fakeSeed) as unknown as Record<string, string>
     expect(result.colorBgLayout).toBe(paper.map.colorBgLayout)
-    expect(result.colorTextLightSolid).toBe(paper.map.colorTextLightSolid)
   })
 })

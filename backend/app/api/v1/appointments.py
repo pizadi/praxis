@@ -80,6 +80,8 @@ def _brief(appt: Appointment) -> AppointmentBrief:
             "patient_first_name": appt.patient.first_name,
             "patient_last_name": appt.patient.last_name,
             "patient_national_id": appt.patient.national_id,
+            "patient_phone_number": appt.patient.phone_number,
+            "patient_insurance": appt.patient.insurance,
         }
     )
 

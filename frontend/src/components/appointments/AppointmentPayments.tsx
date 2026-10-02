@@ -18,6 +18,7 @@ import { api, apiError } from '../../api/client'
 import type { Transaction } from '../../api/types'
 import DigitInput from '../DigitInput'
 import { formatMoney } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 
 interface Props {
   appointmentId: number
@@ -69,7 +70,14 @@ export default function AppointmentPayments({ appointmentId }: Props) {
           <Card>
             <Statistic
               title="جمع کل"
-              value={formatMoney(items.reduce((sum, transaction) => sum + transaction.amount, 0))}
+              value={items.reduce((sum, transaction) => sum + transaction.amount, 0)}
+              valueRender={() => (
+                <FaNumber
+                  value={formatMoney(
+                    items.reduce((sum, transaction) => sum + transaction.amount, 0),
+                  )}
+                />
+              )}
             />
           </Card>
         </Col>
@@ -123,7 +131,11 @@ export default function AppointmentPayments({ appointmentId }: Props) {
         scroll={{ x: 'max-content' }}
         columns={[
           { title: 'شرح', dataIndex: 'description' },
-          { title: 'مبلغ', dataIndex: 'amount', render: formatMoney },
+          {
+            title: 'مبلغ',
+            dataIndex: 'amount',
+            render: (v: number) => <FaNumber value={formatMoney(v)} />,
+          },
           {
             title: 'نوع',
             dataIndex: 'pos',

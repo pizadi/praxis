@@ -34,7 +34,8 @@ backend/app
                  system.py (users/roles/auth/audit)
   schemas/       Pydantic v2 request/response models, split per API domain
   services/      audit trail, questionnaire format validation, score
-                 formulas, backup import, uploads purge
+                 formulas, backup dump (the tarball writer, shared with
+                 scripts/pack_backup.py), backup import, uploads purge
   alembic/       migrations (auto-applied at container boot; safe to
                  re-run on a live DB — additive except documented
                  legacy-column drops)
@@ -43,7 +44,8 @@ frontend/src
   components/    shared panels (AppointmentPanel, FileDetailPane, ...)
   api/           axios client (token refresh), types mirroring backend
   lib/           pure helpers: jalali dates, questionnaire logic, downloads
-scripts/         legacy SQLite→Postgres migration + verification tooling
+scripts/         legacy SQLite→Postgres migration, tarball packing
+                 (pack_backup.py) + verification tooling
 deploy/          production nginx config
 docs/, docs_fa/  feature documentation (English / Persian)
 ```
@@ -64,7 +66,23 @@ docs/, docs_fa/  feature documentation (English / Persian)
   display/input is Jalali. Day-boundary logic uses `APP_TZ` (Asia/Tehran).
 - **Errors**: uniform envelope `{"error": {"code", "message", "details"}}`
   via `app/core/errors.py` — 409 `ConflictError`, 422 `BusinessRuleError`,
-  404 `NotFoundError`, plus typed auth/authorization/upload errors.
+  404 `NotFoundError`, plus typed auth/authorization/upload errors. A
+  database **unique** violation is the authority on uniqueness: the endpoints
+  pre-check for a friendly message, and a lost race trips the partial unique
+  index, which the global `IntegrityError` handler maps back to the same 409
+  envelope (`national_id_taken`, `name_taken`, …) instead of a 500. NOT
+  NULL / FK violations stay 500s — they are server bugs.
+- **Digits display as Persian but copy as ASCII**: `components/FaNumber.tsx`
+  renders a transparent-but-selectable ASCII layer under a `user-select: none`
+  Persian-digit overlay, so pasting a national ID, phone or amount into a
+  field that only accepts latin script works; the clipboard and screen
+  readers get ASCII. Use it instead of a bare `toFaDigits(...)` in rendered
+  output (`toEnDigits` remains the input-side normalizer).
+- **Free-text clinical notes follow their own content**: `lib/textDir.ts`
+  decides `rtl`/`ltr` from the first alphabetic character and
+  `components/DirectedTextArea.tsx` applies it to `dir` + `text-align`, so a
+  note that starts with a Latin drug name aligns left instead of being
+  mangled by the RTL default.
 - **Docs gate**: `/docs`, `/redoc`, and `/openapi.json` are disabled when
   `CLINIC_ENV=production`.
 - **Documentation pairs**: `scripts/check_doc_pairs.py` guards the English /

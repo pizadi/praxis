@@ -15,6 +15,7 @@ import {
 import { api, apiError } from '../api/client'
 import type { Page } from '../api/types'
 import { formatJalali } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { useIsMobile } from '../lib/useIsMobile'
 import { useUser } from '../components/AppLayout'
 import StackCell from '../components/StackCell'
@@ -113,7 +114,7 @@ function TrashTable({
                     main={item.title}
                     lines={[
                       item.subtitle || null,
-                      formatJalali(item.deleted_at, true),
+                      <FaNumber value={formatJalali(item.deleted_at, true)} />,
                       item.parent_deleted ? (
                         <Tag color="orange">والد هم حذف است</Tag>
                       ) : (
@@ -155,7 +156,7 @@ function TrashTable({
               {
                 title: 'زمان حذف',
                 dataIndex: 'deleted_at',
-                render: (v: string) => formatJalali(v, true),
+                render: (v: string) => <FaNumber value={formatJalali(v, true)} />,
               },
               {
                 title: 'وضعیت',

@@ -2,7 +2,8 @@ import { Button, Card, Table, Typography } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 
 import type { Attachment } from '../../api/types'
-import { fileSize } from '../../lib/jalali'
+import { fileSize, formatJalali } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 import StackCell from '../StackCell'
 
 interface Props {
@@ -10,18 +11,19 @@ interface Props {
   loading: boolean
   selectedId: number | null
   canWrite: boolean
-  isMobile: boolean
   onSelect: (fileId: number) => void
   onNew: () => void
 }
 
-/** Patient-level file list; the detail pane is rendered by the parent page. */
+/** Patient-level file list; the detail pane is rendered by the parent page.
+ * One stacked column everywhere (no desktop/mobile split): row 1 is the
+ * title + upload date, row 2 the filename + size (or «بدون فایل» for a
+ * note-only row). */
 export default function FileSidebarCard({
   files,
   loading,
   selectedId,
   canWrite,
-  isMobile,
   onSelect,
   onNew,
 }: Props) {
@@ -43,41 +45,50 @@ export default function FileSidebarCard({
         loading={loading}
         dataSource={files}
         locale={{ emptyText: 'فایلی موجود نیست' }}
-        scroll={isMobile ? undefined : { x: 'max-content' }}
         rowClassName={(file) => (selectedId === file.id ? 'ant-table-row-selected' : '')}
         onRow={(file) => ({
           onClick: () => onSelect(file.id),
           style: { cursor: 'pointer' },
         })}
-        columns={
-          isMobile
-            ? [
-                {
-                  title: 'فایل',
-                  render: (_, file) => (
-                    <StackCell
-                      main={file.description || file.original_filename || 'یادداشت'}
-                      lines={[
-                        file.description && file.original_filename
-                          ? file.original_filename
-                          : null,
-                        fileSize(file.size_bytes),
-                      ]}
-                    />
-                  ),
-                },
-              ]
-            : [
-                { title: 'شرح', dataIndex: 'description' },
-                {
-                  title: 'نام فایل',
-                  dataIndex: 'original_filename',
-                  render: (name: string | null) =>
-                    name ?? <Typography.Text type="secondary">بدون فایل</Typography.Text>,
-                },
-                { title: 'حجم', dataIndex: 'size_bytes', render: fileSize },
-              ]
-        }
+        columns={[
+          {
+            title: 'فایل',
+            render: (_, file) => {
+              const title = file.description || file.original_filename || 'یادداشت'
+              return (
+                <StackCell
+                  main={
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <Typography.Text ellipsis>{title}</Typography.Text>
+                      <Typography.Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                        <FaNumber value={formatJalali(file.created_at)} />
+                      </Typography.Text>
+                    </div>
+                  }
+                  lines={[
+                    file.original_filename ? (
+                      <span key="name">
+                        {file.original_filename}
+                        {' — '}
+                        <FaNumber value={fileSize(file.size_bytes)} />
+                      </span>
+                    ) : (
+                      'بدون فایل'
+                    ),
+                  ]}
+                />
+              )
+            },
+          },
+        ]}
       />
     </Card>
   )

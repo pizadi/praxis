@@ -169,7 +169,51 @@ Version history:
           permission labels split out, server-authoritative formula checks,
           domain-split schemas, and patient/questionnaire/appointment
           component extraction with regression guards
-   1.4.2  release
+  1.4.2  release
+  1.4.3.dev1  creating a patient opens that patient's page; the patient list shows
+          the insurance type; numbers display as Persian digits but copy as
+          ASCII (FaNumber: a transparent copyable layer under a non-selectable
+          Persian overlay, swept across every digit in the UI), so pasting a
+          national ID or an amount into a latin-only field works; the
+          appointment note fields (CC/HX/PX) align right or left from the first
+          letter of their content; the tarball writer is extracted into
+          services/backup_dump.py and scripts/pack_backup.py packages any
+          database + uploads directory into a website-ingestible tarball
+          (unencrypted by default, AES-256-GCM with a key; accounts excluded
+          unless --include-auth); the legacy import dates attachments from
+          their parent appointment instead of the migration day; a lost
+          check-then-insert race on a unique index returns 409 instead of 500
+  1.4.3.dev2  selecting a Persian number no longer double-exposes the latin
+          layer (::selection re-colored it); the «همه فایل‌ها» list stacks
+          title + upload date over filename + size; questionnaire builder
+          formula errors are translated to Persian; the patient table shows
+          the phone number; omnibox search matches the space-joined patient
+          fields (first/last/national ID/phone/insurance) so a first+last
+          concatenation is found; graphite's primary buttons get their dark
+          text back (antd's alias stage re-derives colorTextLightSolid, the
+          text now rides on Button.primaryColor per palette); scored
+          questionnaires show their total in the patient list; the default
+          theme is لاجورد
+  1.4.3.dev3  numbers are real selectable Persian text again (the transparent
+          ASCII underlayer made the visible digits unselectable); the clipboard
+          still receives ASCII via a copy hook, and the national ID / phone
+          number — in the patients list and on the patient card — carry a
+          one-click copy button
+  1.4.3.dev4  manual copy actually lands ASCII now: Chromium answers
+          clipboardData.getData() with '' inside a copy event, so the hook
+          read nothing and the default Persian copy went through — it reads
+          the selection itself and the hook lives at document level, since a
+          hand-dragged selection makes the event fire at an ancestor, not at
+          the number's own span
+  1.4.3  release
+  1.4.4  today's payments: the grand total (and the POS/cash day totals) come
+          from the unpaged summary endpoint (a page-items reduce only ever
+          summed the first 50 rows) and the table's page navigator actually
+          refetches (offset wired, reset on day change); national IDs and
+          phone numbers render as ASCII digits everywhere (no more
+          Persian-glyph display over ASCII copy); the daily schedule shows
+          the phone number (copyable) and insurance; the patients list is
+          ordered newest-first (created_at desc)
 """
 
-__version__ = "1.4.2"
+__version__ = "1.4.4"

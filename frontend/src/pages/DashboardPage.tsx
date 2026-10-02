@@ -5,7 +5,8 @@ import { Link } from 'react-router-dom'
 
 import { api } from '../api/client'
 import type { AppointmentBrief, Page } from '../api/types'
-import { formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { formatJalaliTime } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { localToday, serverToday } from '../lib/today'
 
 export default function DashboardPage() {
@@ -30,7 +31,11 @@ export default function DashboardPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={8}>
           <Card>
-            <Statistic title="نوبت‌های امروز" value={toFaDigits(data?.total ?? 0)} />
+            <Statistic
+              title="نوبت‌های امروز"
+              value={data?.total ?? 0}
+              valueRender={() => <FaNumber value={data?.total ?? 0} />}
+            />
           </Card>
         </Col>
       </Row>
@@ -48,9 +53,12 @@ export default function DashboardPage() {
             >
               <List.Item.Meta
                 title={`${a.patient_first_name} ${a.patient_last_name}`}
-                description={`ساعت ${formatJalaliTime(a.scheduled_at)} — کد ملی ${toFaDigits(
-                  a.patient_national_id,
-                )}`}
+                description={
+                  <>
+                    ساعت <FaNumber value={formatJalaliTime(a.scheduled_at)} /> — کد ملی{' '}
+                    <FaNumber value={a.patient_national_id} ascii />
+                  </>
+                }
               />
             </List.Item>
           )}

@@ -4,6 +4,7 @@ import { theme as antdTheme } from 'antd'
 
 import type { Prescription } from '../../api/types'
 import { formatJalali } from '../../lib/jalali'
+import FaNumber from '../FaNumber'
 
 interface Props {
   prescriptions: Prescription[]
@@ -60,7 +61,7 @@ export default function PrescriptionSidebarCard({
                     : '(بدون قلم)'}
                 </Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {formatJalali(prescription.prescribed_at)}
+                  <FaNumber value={formatJalali(prescription.prescribed_at)} />
                   {prescription.created_by_username
                     ? ` — ${prescription.created_by_username}`
                     : ''}

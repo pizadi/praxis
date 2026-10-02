@@ -5,7 +5,7 @@ import { apiPatient, apiTemplate, login } from './helpers'
 test.describe('questionnaire fill', () => {
   test('valid submission saves; out-of-range shows the Persian inline error', async ({ page }) => {
     const patient = await apiPatient('1300000031')
-    const template = await apiTemplate()
+    await apiTemplate()
 
     await login(page)
     await page.goto(`/#/patients/${patient.id}`)

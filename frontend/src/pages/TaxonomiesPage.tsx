@@ -18,7 +18,7 @@ import type { ColumnsType } from 'antd/es/table'
 
 import { api, apiError } from '../api/client'
 import type { NamedRef, Page } from '../api/types'
-import { toFaDigits } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { useUser } from '../components/AppLayout'
 
 const PAGE_SIZE = 20
@@ -194,7 +194,11 @@ function TaxonomyPanel({
           pageSize: PAGE_SIZE,
           current: page,
           showSizeChanger: false,
-          showTotal: (t) => `${toFaDigits(t)} مورد`,
+          showTotal: (t) => (
+            <span>
+              <FaNumber value={t} /> مورد
+            </span>
+          ),
           onChange: (p) => setPage(p),
         }}
       />

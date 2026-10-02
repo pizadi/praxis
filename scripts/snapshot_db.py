@@ -16,7 +16,7 @@ success.
 
 Rollback (PostgreSQL), from the repo root:
   docker compose stop api
-  docker exec -i new-patients-db-1 sh -c \
+  docker exec -i praxis-db-1 sh -c \
       'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
       < work/db-snapshots/<snapshot>.dump
   docker compose start api
@@ -35,7 +35,10 @@ import time
 from pathlib import Path
 
 MAGIC = b"PGDMP"
-CONTAINER = "new-patients-db-1"
+# The compose stack in this repo is the `praxis` project (its volumes are
+# praxis_pgdata / praxis_uploads), so the db service container is praxis-db-1.
+# Override with --container if the stack runs under another project name.
+CONTAINER = "praxis-db-1"
 
 
 def snapshot_dir() -> Path:

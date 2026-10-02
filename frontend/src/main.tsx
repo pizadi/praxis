@@ -32,8 +32,10 @@ function Root() {
             ...palette.seed,
           },
           // palette seed tokens drive the base light/dark algorithm, then the
-          // palette's exact surface/text/border tokens are applied on top
+          // palette's exact surface/text/border tokens are applied on top;
+          // component tokens come last (they must survive antd's alias stage)
           algorithm: algorithmFor(palette),
+          components: palette.components,
         }}
       >
         <AntApp>

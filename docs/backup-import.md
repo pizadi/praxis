@@ -6,6 +6,10 @@
   `backup_running` if one is already running); `GET /admin/backup` polls;
   `GET /admin/backup/download` streams the tar.gz; `DELETE` discards.
   Perm: `backup.manage`; audited.
+- The archive itself is written by **`app/services/backup_dump.py`**
+  (`build_backup_tarball`) — the single implementation of the format. The
+  site's job and the standalone `scripts/pack_backup.py` (below) both call
+  it, so there is only ever one manifest format in the project.
 - The api container has no `pg_dump` — the DB is dumped via psycopg2
   `COPY ... TO STDOUT` per table (FK order, REPEATABLE READ snapshot).
   The DSN is converted from `postgresql+asyncpg://` to plain
@@ -13,6 +17,55 @@
 - Tables are staged in `SpooledTemporaryFile`s and uploads are streamed —
   the archive is never fully in memory.
 - SQLite (dev) databases are archived as the raw file.
+- The site never produces an unencrypted artifact when
+  `BACKUP_ENCRYPTION_KEY` is set; it **does** accept one on import (see
+  "Encryption").
+
+## Packing a database into an importable tarball (`scripts/pack_backup.py`)
+
+For a database that is **not** the running site — most importantly a legacy
+import staged into a scratch database, so the live one can be wiped and
+restored from a clean artifact:
+
+```bash
+# 1) migrate the legacy snapshot into an EMPTY scratch database
+python scripts/migrate_sqlite.py --source old_database/db.sqlite3 \
+    --files old_database/patient_files \
+    --database-url postgresql+asyncpg://u:p@localhost:5432/staging \
+    --upload-dir work/legacy-uploads --apply
+
+# 2) pack that database + uploads dir into a tarball the site can ingest
+python scripts/pack_backup.py --database-url postgresql+asyncpg://u:p@localhost:5432/staging \
+    --upload-dir work/legacy-uploads --out work/legacy-import.tar.gz
+#    [--encryption-key KEY]  →  work/legacy-import.tar.gz.enc
+#    [--include-auth] [--app-version X] [--force]
+```
+
+- Output is the same manifest-v4 tarball the backup button produces, so
+  `POST /admin/backup/import` ingests it with **no site change**. The
+  script prints the artifact path, size, SHA-256 (paste it into the import
+  form's `expected_sha256`) and whether it is encrypted, plus a per-table
+  row-count listing.
+- **Unencrypted by default** — the artifact stays on the machine you packed
+  it on until you choose to upload it. `--encryption-key` (or
+  `BACKUP_ENCRYPTION_KEY`) wraps it in AES-256-GCM instead; the `.enc`
+  suffix is appended automatically.
+- **Accounts are excluded by default.** The importer truncates every table
+  a tarball carries, so packing a database that never ran
+  `bootstrap_admin()` would ship an empty `users` table and delete the
+  site's admin on import (and `TRUNCATE roles CASCADE` would take `users`
+  with it). Excluded: `roles`, `users`, `login_audit`, `refresh_tokens`
+  (`backup_state.AUTH_TABLES`). `--include-auth` opts back in for a true
+  full mirror.
+- **PostgreSQL only.** The importer reads `db/<table>.copy` members; a
+  `db/clinic.sqlite3` member is ignored when the site runs on PostgreSQL,
+  so packing a SQLite database would produce a tarball that imports
+  nothing. The script refuses a non-PostgreSQL DSN up front.
+- It also refuses to overwrite an existing `--out` without `--force`, and
+  fails early (before packing) if the source database is not migrated to
+  head or is missing a table it is about to dump.
+- `skip_tables` is honoured by the PostgreSQL path only — a SQLite
+  database is archived as a single file and cannot be filtered.
 
 ## Artifact persistence (survives restarts)
 
@@ -86,8 +139,16 @@ uploads/<name>           the uploaded patient files
   artifact stays on disk.
 - **Losing the key means losing the backups** — it both encrypts new ones
   and unlocks importing encrypted ones. Store it in a password manager.
-- Importing an encrypted artifact without a configured key (or with the
-  wrong one) refuses with 422 `invalid_backup` and a clear message.
+- **Whether an uploaded artifact is encrypted is decided from its bytes**,
+  not its name and not whether a key is configured: the importer sniffs the
+  `PRAXISBK` magic (`backup_crypto.sniff_and_decrypt`). A plaintext tarball
+  is imported as-is even when `BACKUP_ENCRYPTION_KEY` is set — that is how
+  `scripts/pack_backup.py` output is accepted. Importing an *encrypted*
+  artifact without a configured key (or with the wrong one) refuses with
+  422 `invalid_backup` and a clear message. The import audit row records
+  the `encrypted` verdict.
+- The site's own downloads are always encrypted when a key is configured;
+  the packer script writes plaintext unless told otherwise.
 
 ## Stale-backup warning
 

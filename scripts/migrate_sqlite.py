@@ -15,7 +15,9 @@ Design constraints:
   legacy English types ("Visit"/"Spiro"/"Other") to their current Persian
   variants (ویزیت/اسپیرو/سایر); unmatched values are kept as-is. Legacy
   attachments hang off appointments and are re-parented to the patient
-  (resolved via the appointment); legacy free-text rx is converted into
+  (resolved via the appointment) AND stamped with that appointment's date —
+  the legacy attachfile table has no date column, so the appointment is the
+  only thing that ever dated a file; legacy free-text rx is converted into
   prescriptions with the same frozen parser as the 1.3 Alembic migration
   (backend/app/services/rx_migration.py).
 - Halts ONLY on duplicate national IDs or attachments with unresolvable
@@ -212,23 +214,49 @@ def load_source(source_path: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def resolve_attachment_patients(tables: dict[str, list[dict[str, Any]]]) -> list[int]:
-    """Fill attachments.patient_id from the legacy appointment's patient.
+    """Fill attachments.patient_id AND attachments.created_at from the legacy
+    appointment they hung off.
 
     Returns the ids of attachments that could not be resolved (dangling
     appointment reference — FK integrity of the legacy DB makes this a
     corruption signal; the caller halts).
+
+    The legacy schema attached every file to an APPOINTMENT, and that
+    appointment is the only thing that ever dated the file — the attachfile
+    table itself has no date column. The new schema hangs files off the
+    PATIENT (1.3), so the appointment's date is carried over as the row's
+    created_at. Without it every imported file would be stamped with the day
+    the migration ran, and the appointment panel's same-day "files" tab would
+    then list every one of the patient's files under EVERY visit.
     """
-    appt_patient = {
-        (a.get("id") or a.get("index")): a.get("patient_id")
-        for a in tables["appointments"]
-    }
+    appt_patient: dict[Any, int] = {}
+    appt_date: dict[Any, dt.datetime | None] = {}
+    for a in tables["appointments"]:
+        aid = a.get("id") or a.get("index")
+        appt_patient[aid] = a.get("patient_id")
+        try:
+            appt_date[aid] = to_utc(parse_legacy_date(a.get("scheduled_at")))
+        except (TypeError, ValueError):  # unparseable legacy date — see log below
+            appt_date[aid] = None
     unresolved: list[int] = []
+    undated = 0
     for a in tables["attachments"]:
         pid = appt_patient.get(a.get("legacy_appointment_id"))
         if pid is None:
             unresolved.append(a.get("id"))
             continue
         a["patient_id"] = pid
+        when = appt_date.get(a.get("legacy_appointment_id"))
+        a["created_at"] = when
+        a["updated_at"] = when
+        if when is None:
+            undated += 1
+    if undated:
+        log.warning(
+            "%d attachment(s) have no usable parent-appointment date — they "
+            "will be stamped with the migration time",
+            undated,
+        )
     return unresolved
 
 
@@ -417,15 +445,21 @@ async def import_rows(
             r[0] for r in await conn.execute(text("SELECT id FROM appointments"))
         }
     new_rows = []
+    now_utc = dt.datetime.now(dt.UTC)
     for a in tables["appointments"]:
         aid = a.get("id") or a.get("index")
         if aid in existing_appts:
             continue
+        scheduled = to_utc(parse_legacy_date(a.get("scheduled_at")))
         new_rows.append(
             {
                 "id": aid,
                 "patient_id": a.get("patient_id"),
-                "scheduled_at": to_utc(parse_legacy_date(a.get("scheduled_at"))),
+                "scheduled_at": scheduled,
+                # stage has NO server default (NOT NULL) — mirror the
+                # d2e3f4a5b6c7 backfill: past visits land as FINISHED,
+                # future ones as RESERVED (raw SQL, so no ORM default).
+                "stage": 3 if scheduled < now_utc else 0,
                 "notes": a.get("notes") or "",
                 "cm": a.get("cm") or "",
                 "hx": a.get("hx") or "",
@@ -438,7 +472,17 @@ async def import_rows(
         await insert_batch(
             conn,
             "appointments",
-            ["id", "patient_id", "scheduled_at", "notes", "cm", "hx", "px", "rx"],
+            [
+                "id",
+                "patient_id",
+                "scheduled_at",
+                "stage",
+                "notes",
+                "cm",
+                "hx",
+                "px",
+                "rx",
+            ],
             new_rows,
         )
     c.inserted = len(new_rows)
@@ -481,6 +525,7 @@ async def import_rows(
             r[0] for r in await conn.execute(text("SELECT id FROM attachments"))
         }
     new_rows = []
+    undated_rows = []
     for a in tables["attachments"]:
         if a.get("id") in existing_atts:
             continue
@@ -491,23 +536,31 @@ async def import_rows(
                 f"attachment {a.get('id')} has no resolvable patient "
                 f"(legacy appointment {a.get('legacy_appointment_id')})"
             )
-        new_rows.append(
-            {
-                "id": a.get("id"),
-                "patient_id": a.get("patient_id"),
-                "description": a.get("description") or "",
-                "notes": a.get("notes") or "",
-                # original_filename kept only for rows that ever had a file;
-                # the relocation pass fills stored/mime/size and clears
-                # missing_file for files actually copied.
-                "original_filename": legacy or None,
-                "missing_file": bool(legacy),
-                "stored_filename": None,
-                "mime_type": None,
-                "size_bytes": None,
-            }
-        )
-    c.skipped_existing = len(tables["attachments"]) - len(new_rows)
+        row = {
+            "id": a.get("id"),
+            "patient_id": a.get("patient_id"),
+            "description": a.get("description") or "",
+            "notes": a.get("notes") or "",
+            # original_filename kept only for rows that ever had a file;
+            # the relocation pass fills stored/mime/size and clears
+            # missing_file for files actually copied.
+            "original_filename": legacy or None,
+            "missing_file": bool(legacy),
+            "stored_filename": None,
+            "mime_type": None,
+            "size_bytes": None,
+        }
+        # created_at/updated_at carry the parent legacy APPOINTMENT's date
+        # (see resolve_attachment_patients) — NOT the migration time, or every
+        # file would file itself under the current day in the visit tabs.
+        # Rows whose appointment has no usable date keep the column default.
+        if a.get("created_at") is None:
+            undated_rows.append(row)
+        else:
+            row["created_at"] = a["created_at"]
+            row["updated_at"] = a["updated_at"]
+            new_rows.append(row)
+    c.skipped_existing = len(tables["attachments"]) - len(new_rows) - len(undated_rows)
     async with engine.begin() as conn:
         await insert_batch(
             conn,
@@ -522,10 +575,28 @@ async def import_rows(
                 "mime_type",
                 "size_bytes",
                 "missing_file",
+                "created_at",
+                "updated_at",
             ],
             new_rows,
         )
-    c.inserted = len(new_rows)
+        await insert_batch(
+            conn,
+            "attachments",
+            [
+                "id",
+                "patient_id",
+                "description",
+                "notes",
+                "stored_filename",
+                "original_filename",
+                "mime_type",
+                "size_bytes",
+                "missing_file",
+            ],
+            undated_rows,
+        )
+    c.inserted = len(new_rows) + len(undated_rows)
     results["attachments"] = c
 
     # --- prescriptions (from legacy rx free text) ---------------------------------
@@ -626,7 +697,7 @@ async def import_rx_prescriptions(
         # not re-insert links of prescriptions that already have them —
         # uq_prescription_item_links_pair would reject the duplicates);
         # planned links are already deduped per prescription by normalized key
-        new_appt_ids = {p.appointment_id for p in new_rx_rows}
+        new_appt_ids = {r["source_appointment_id"] for r in new_rx_rows}
         rx_id_by_appt = {
             int(r[0]): int(r[1])
             for r in await conn.execute(
@@ -966,6 +1037,29 @@ async def verify(
             print(
                 f"  [{'OK ' if link_ok else 'FAIL'}] dangling {link_table}: {dangling}"
             )
+
+        # Attachment dating: files inherit their legacy appointment's date, so
+        # they spread across the visit history. If ONE day holds the majority,
+        # every row was stamped with the migration timestamp instead (the 1.3
+        # re-parenting bug) and the same-day file tabs are useless.
+        spread = await conn.execute(
+            text(
+                "SELECT DATE(created_at) d, COUNT(*) n FROM attachments"
+                " GROUP BY d ORDER BY n DESC LIMIT 1"
+            )
+        )
+        top_day, top_n = spread.first() or (None, 0)
+        total_atts = int(
+            (await conn.execute(text("SELECT COUNT(*) FROM attachments"))).scalar()
+        )
+        dated_ok = total_atts == 0 or int(top_n) <= total_atts // 2
+        if not dated_ok:
+            ok = False
+        print(
+            f"  [{'OK ' if dated_ok else 'FAIL'}] attachment dates spread:"
+            f" busiest day {top_day} holds {top_n}/{total_atts}"
+            + ("" if dated_ok else " — files look stamped with the migration date")
+        )
     return ok
 
 

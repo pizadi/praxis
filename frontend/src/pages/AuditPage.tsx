@@ -5,6 +5,7 @@ import { Card, Select, Table, Tag, Typography } from 'antd'
 import { api } from '../api/client'
 import type { Page } from '../api/types'
 import { formatJalali } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { useIsMobile } from '../lib/useIsMobile'
 import StackCell from '../components/StackCell'
 
@@ -125,7 +126,10 @@ export default function AuditPage() {
                             {ACTION_LABELS[r.action]?.label ?? r.action}
                           </Tag>
                         }
-                        lines={[formatJalali(r.created_at, true), r.username]}
+                        lines={[
+                          <FaNumber value={formatJalali(r.created_at, true)} />,
+                          r.username,
+                        ]}
                       />
                     ),
                   },
@@ -146,7 +150,7 @@ export default function AuditPage() {
                   {
                     title: 'زمان',
                     dataIndex: 'created_at',
-                    render: (v: string) => formatJalali(v, true),
+                    render: (v: string) => <FaNumber value={formatJalali(v, true)} />,
                   },
                   { title: 'کاربر', dataIndex: 'username' },
                   {

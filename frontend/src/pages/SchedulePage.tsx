@@ -6,11 +6,13 @@ import { Link } from 'react-router-dom'
 
 import { api, apiError } from '../api/client'
 import type { AppointmentBrief, Page } from '../api/types'
-import { formatJalali, formatJalaliTime, toFaDigits } from '../lib/jalali'
+import { formatJalali, formatJalaliTime } from '../lib/jalali'
+import FaNumber from '../components/FaNumber'
 import { LAST_STAGE, stageOf } from '../lib/stages'
 import { localToday, serverToday } from '../lib/today'
 import { JalaliDatePicker } from '../components/JalaliDates'
 import { useUser } from '../components/AppLayout'
+import CopyNumber from '../components/CopyNumber'
 
 function shiftDay(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00`) // midday avoids DST boundary issues
@@ -68,7 +70,7 @@ export default function SchedulePage() {
             </Button>
           </Space>
           <Typography.Text strong style={{ fontSize: 16 }}>
-            {formatJalali(date)}
+            <FaNumber value={formatJalali(date)} />
           </Typography.Text>
           <List
             loading={isLoading}
@@ -102,13 +104,25 @@ export default function SchedulePage() {
                     title={
                       <Space size={8} wrap>
                         <span>
-                          {formatJalaliTime(a.scheduled_at)} — {a.patient_first_name}{' '}
-                          {a.patient_last_name}
+                          <FaNumber value={formatJalaliTime(a.scheduled_at)} /> —{' '}
+                          {a.patient_first_name} {a.patient_last_name}
                         </span>
                         <Tag color={stage.color}>{stage.label}</Tag>
                       </Space>
                     }
-                    description={`کد ملی: ${toFaDigits(a.patient_national_id)}`}
+                    description={
+                      <Space size={12} wrap>
+                        <span>
+                          کد ملی: <CopyNumber value={a.patient_national_id} ascii />
+                        </span>
+                        {a.patient_phone_number ? (
+                          <span>
+                            تلفن: <CopyNumber value={a.patient_phone_number} ascii />
+                          </span>
+                        ) : null}
+                        {a.patient_insurance ? <span>بیمه: {a.patient_insurance}</span> : null}
+                      </Space>
+                    }
                   />
                 </List.Item>
               )
